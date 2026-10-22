@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Local app state + encryption key (contains live workspace data)
+.data/
+data/
+
+# Runtime-downloaded article media (rebuilt automatically)
+public/media/
+
+# Build + deploy output
+.vercel/
+.output/
+dist/
+build/
+
+# Vendored external skill repo (ships with its own .git; MIT, cloned upstream)
+knowledge-base/blader-humanizer/
+
+# Captured live session cookies
+knowledge-base/cookies.json
+
+# Logs and OS/editor junk
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

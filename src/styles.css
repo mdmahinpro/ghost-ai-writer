@@ -1,0 +1,460 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --tracking-tight: -0.02em;
+
+  --color-bg: #09090b;
+  --color-elev: #111114;
+  --color-surface: #18181c;
+  --color-surface-2: #242429;
+  --color-line: #303036;
+  --color-line-strong: #474750;
+  --color-fg: #f4f4f5;
+  --color-muted: #b4b4bd;
+  --color-faint: #8c8c98;
+  --color-brass: #818cf8;
+  --color-brass-2: #c7d2fe;
+  --color-ink: #101020;
+  --color-ok: #3dcfb0;
+  --color-danger: #fb7185;
+  --color-paper: #f4f7fb;
+  --color-paper-ink: #0d1524;
+  --color-paper-muted: #52627a;
+
+  --radius-lg: 0.9rem;
+}
+
+html[data-theme="midnight"] {
+  --color-bg: #09090b;
+  --color-elev: #111114;
+  --color-surface: #18181c;
+  --color-surface-2: #242429;
+  --color-line: #303036;
+  --color-line-strong: #474750;
+  --color-fg: #f4f4f5;
+  --color-muted: #b4b4bd;
+  --color-faint: #8c8c98;
+  --color-brass: #818cf8;
+  --color-brass-2: #c7d2fe;
+  --color-ink: #101020;
+  --color-ok: #3dcfb0;
+  --color-danger: #fb7185;
+  --color-paper: #f4f7fb;
+  --color-paper-ink: #0d1524;
+  --color-paper-muted: #52627a;
+}
+
+html[data-theme="paper"] {
+  --color-bg: #fafafa;
+  --color-elev: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-2: #f4f4f5;
+  --color-line: #e4e4e7;
+  --color-line-strong: #a1a1aa;
+  --color-fg: #18181b;
+  --color-muted: #52525b;
+  --color-faint: #71717a;
+  --color-brass: #4338ca;
+  --color-brass-2: #312e81;
+  --color-ink: #ffffff;
+  --color-ok: #0f8f72;
+  --color-danger: #c4364e;
+  --color-paper: #ffffff;
+  --color-paper-ink: #0d1524;
+  --color-paper-muted: #52627a;
+  color-scheme: light;
+}
+
+html[data-theme="forest"] {
+  --color-bg: #0c1410;
+  --color-elev: #121c16;
+  --color-surface: #17261c;
+  --color-surface-2: #203528;
+  --color-line: #2c4636;
+  --color-line-strong: #3d6450;
+  --color-fg: #e7f5ec;
+  --color-muted: #a3c4b0;
+  --color-faint: #7d9e8c;
+  --color-brass: #3ecf8e;
+  --color-brass-2: #b7f0d2;
+  --color-ink: #052016;
+  --color-ok: #5ee0a0;
+  --color-danger: #ff8b7a;
+  --color-paper: #f3faf5;
+  --color-paper-ink: #122117;
+  --color-paper-muted: #3f5c4c;
+  color-scheme: dark;
+}
+
+html[data-theme="rose"] {
+  --color-bg: #fbf4f6;
+  --color-elev: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-2: #f6e4ea;
+  --color-line: #ecd3dc;
+  --color-line-strong: #d7aebc;
+  --color-fg: #2a1219;
+  --color-muted: #6b3c4b;
+  --color-faint: #8a5566;
+  --color-brass: #be3a5a;
+  --color-brass-2: #6e1e34;
+  --color-ink: #fff7f8;
+  --color-ok: #0f7a56;
+  --color-danger: #a61b32;
+  --color-paper: #fff8fa;
+  --color-paper-ink: #2a1219;
+  --color-paper-muted: #6d4554;
+  color-scheme: light;
+}
+
+html[data-theme="sepia"] {
+  --color-bg: #f4efe4;
+  --color-elev: #fffaf3;
+  --color-surface: #fffaf3;
+  --color-surface-2: #efe4d2;
+  --color-line: #e0d0b8;
+  --color-line-strong: #c4ae8e;
+  --color-fg: #2a2118;
+  --color-muted: #5e4b38;
+  --color-faint: #74604c;
+  --color-brass: #8a5424;
+  --color-brass-2: #5c3816;
+  --color-ink: #fff8ee;
+  --color-ok: #2f6b45;
+  --color-danger: #9c2f2f;
+  --color-paper: #fbf6ee;
+  --color-paper-ink: #2a2118;
+  --color-paper-muted: #5e4e3c;
+  color-scheme: light;
+}
+
+html[data-theme="ocean"] {
+  --color-bg: #06141c;
+  --color-elev: #0a1c28;
+  --color-surface: #0e2433;
+  --color-surface-2: #143246;
+  --color-line: #1e4660;
+  --color-line-strong: #2d6588;
+  --color-fg: #e7f4fb;
+  --color-muted: #9ec0d4;
+  --color-faint: #7d9eb3;
+  --color-brass: #2aa7c9;
+  --color-brass-2: #9be4f5;
+  --color-ink: #041018;
+  --color-ok: #3dcfb0;
+  --color-danger: #ff8a9a;
+  --color-paper: #f3f9fc;
+  --color-paper-ink: #0c1c28;
+  --color-paper-muted: #3e5a6c;
+  color-scheme: dark;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-bg);
+    background-image: none;
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.65;
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-brass) 35%, transparent);
+    color: var(--color-fg);
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-brass) 82%, var(--color-fg));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  /* Rule 7: crisp tabular numerals for metrics, tokens, and counters. */
+  .tnum,
+  .font-mono,
+  table td,
+  table th,
+  [data-metric],
+  [data-stage],
+  [data-surface="badge"] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  .tnum,
+  [data-metric],
+  [data-stage] { font-family: var(--font-mono); }
+
+  table { border-collapse: separate; border-spacing: 0; width: 100%; }
+  table th { position: sticky; top: 0; z-index: 1; background: var(--color-elev); color: var(--color-muted); font-size: max(0.75rem, 1em); font-weight: 600; text-align: left; }
+  table th, table td { border-bottom: 1px solid color-mix(in oklab, var(--color-line) 60%, transparent); padding: 0.9rem 0.85rem; }
+  table tbody tr:hover { background: color-mix(in oklab, var(--color-surface-2) 55%, transparent); }
+
+  .reading-prose { max-width: 70ch; font-size: 1rem; line-height: 1.75; overflow-wrap: anywhere; }
+  .reading-prose p { margin-block: 0 1.35em; }
+  .reading-prose h1, .reading-prose h2, .reading-prose h3 { line-height: 1.25; margin-block: 1.7em 0.65em; }
+  .reading-prose h1 { font-size: clamp(2rem, 4vw, 3rem); }
+  .reading-prose h2 { font-size: 1.65rem; }
+  .reading-prose h3 { font-size: 1.3rem; }
+  .reading-prose blockquote { margin-block: 1.75em; padding: 0.35em 1.25em; border-left: 3px solid var(--color-brass); background: color-mix(in oklab, var(--color-brass) 7%, transparent); font-style: italic; }
+  .reading-prose figure { margin-block: 2em; }
+  .reading-prose img { max-width: 100%; height: auto; border-radius: 0.75rem; }
+  .reading-prose :is(ul, ol) { margin-block: 1em 1.5em; padding-left: 1.5em; }
+  .reading-prose ul { list-style: disc; }
+  .reading-prose ol { list-style: decimal; }
+  .reading-prose li { margin-block: 0.35em; }
+  .reading-prose li.task-item { list-style: none; }
+  /* Tables: a scroll wrapper carries overflow so the table keeps its own layout. */
+  .reading-prose .table-scroll { overflow-x: auto; margin-block: 1.6em; -webkit-overflow-scrolling: touch; }
+  .reading-prose table { display: table; width: 100%; border-collapse: collapse; border-spacing: 0; font-size: 0.95rem; }
+  .reading-prose thead th { position: static; background: transparent; font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-muted); }
+  .reading-prose :is(th, td) { border: 1px solid color-mix(in oklab, var(--color-line) 70%, transparent); padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+  .reading-prose tbody tr:hover { background: color-mix(in oklab, var(--color-surface-2) 40%, transparent); }
+  .reading-prose pre { margin-block: 1.5em; padding: 0.9rem 1.1rem; overflow-x: auto; background: var(--color-elev); border: 1px solid color-mix(in oklab, var(--color-line) 60%, transparent); border-radius: 0.6rem; }
+  .reading-prose code { font-family: var(--font-mono); font-size: 0.9em; background: var(--color-elev); border-radius: 0.35rem; padding: 0.1em 0.35em; }
+  .reading-prose pre code { display: block; background: none; padding: 0; font-size: 0.9rem; white-space: pre; }
+  .reading-prose figure.code-block { margin-block: 1.5em; }
+  .reading-prose figure.code-block figcaption { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.35rem; }
+  .reading-prose hr { border: 0; border-top: 1px solid color-mix(in oklab, var(--color-line) 70%, transparent); margin-block: 2em; }
+  .reading-prose del { color: var(--color-muted); }
+  .reading-prose aside.callout { margin-block: 1.5em; padding: 0.85rem 1.1rem; border: 1px solid color-mix(in oklab, var(--color-line) 60%, transparent); border-radius: 0.6rem; background: color-mix(in oklab, var(--color-surface-2) 45%, transparent); }
+  .reading-prose aside.callout .callout-title { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; margin: 0 0 0.35rem; }
+  .reading-prose aside.callout p:last-child { margin-bottom: 0; }
+  .reading-prose aside.callout-note, .reading-prose aside.callout-important, .reading-prose aside.callout-tip { border-left: 3px solid var(--color-brass); }
+  .reading-prose aside.callout-warning { border-left: 3px solid #b45309; }
+  .reading-prose aside.callout-caution { border-left: 3px solid #b91c1c; }
+  .reading-prose .footnotes { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid color-mix(in oklab, var(--color-line) 60%, transparent); font-size: 0.9rem; }
+  .reading-prose sup.fn-ref a { text-decoration: none; font-size: 0.7em; }
+
+  /* Rule 7: smooth micro-transitions (≤200ms) on every interactive surface. */
+  button,
+  a,
+  [role="button"],
+  [role="tab"],
+  [role="switch"],
+  input,
+  select,
+  textarea,
+  summary {
+    transition:
+      background-color 160ms cubic-bezier(0.2, 0, 0, 1),
+      border-color 160ms cubic-bezier(0.2, 0, 0, 1),
+      color 160ms cubic-bezier(0.2, 0, 0, 1),
+      box-shadow 180ms cubic-bezier(0.2, 0, 0, 1),
+      transform 160ms cubic-bezier(0.2, 0, 0, 1),
+      opacity 160ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  button:active:not(:disabled),
+  [role="button"]:active,
+  [role="switch"]:active {
+    transform: translateY(1px) scale(0.995);
+  }
+
+  /* Rule 7: refined surface hierarchy — elevated cards with subtle mixed borders. */
+  .card,
+  [data-surface="card"] {
+    border-color: color-mix(in oklab, var(--color-line) 82%, var(--color-fg));
+    box-shadow:
+      0 1px 0 color-mix(in oklab, var(--color-fg) 4%, transparent) inset,
+      0 18px 36px -28px color-mix(in oklab, var(--color-bg) 88%, black);
+    transition:
+      border-color 180ms cubic-bezier(0.2, 0, 0, 1),
+      box-shadow 200ms cubic-bezier(0.2, 0, 0, 1),
+      transform 180ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .card:hover,
+  [data-surface="card"]:hover {
+    border-color: color-mix(in oklab, var(--color-brass) 42%, var(--color-line));
+    box-shadow:
+      0 1px 0 color-mix(in oklab, var(--color-fg) 6%, transparent) inset,
+      0 22px 46px -30px color-mix(in oklab, var(--color-brass) 45%, transparent);
+  }
+
+  /* Rule 7: ambient header glow (own identity — not a copied banner treatment). */
+  header[data-shell-header] {
+    position: relative;
+    border-bottom-color: color-mix(in oklab, var(--color-line) 70%, transparent);
+  }
+
+  header[data-shell-header]::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 -1px 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-brass) 55%, transparent), transparent);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+}
+
+/* Rule 7: skeleton shimmer for loading placeholders (motion-safe). */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-surface-2) 70%, var(--color-surface));
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-fg) 10%, transparent), transparent);
+  animation: shimmer 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+    opacity: 0.35;
+  }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+.rise {
+  animation: rise 420ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.stagger > * {
+  animation: rise 460ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.stagger > *:nth-child(2) {
+  animation-delay: 50ms;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 100ms;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 150ms;
+}
+.stagger > *:nth-child(5) {
+  animation-delay: 200ms;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+.segmented {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--color-line) 65%, transparent);
+  border-radius: 0.75rem;
+  background: var(--color-elev);
+}
+
+.segmented button {
+  flex: none;
+  min-height: 2.25rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.5rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.segmented button:hover { color: var(--color-fg); background: var(--color-surface); }
+.segmented button[aria-pressed="true"] {
+  color: var(--color-fg);
+  background: var(--color-surface-2);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--color-bg) 40%, transparent);
+}
+
+.studio-mark {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  perspective: 280px;
+}
+
+.studio-mark svg {
+  width: 100%;
+  height: 100%;
+  transform: rotateX(var(--ty, 0deg)) rotateY(var(--tx, 0deg));
+  transition: transform 180ms ease;
+}
+
+.mark-spin {
+  transform-origin: 32px 32px;
+  animation: mark-spin 9s linear infinite;
+}
+
+@keyframes mark-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
