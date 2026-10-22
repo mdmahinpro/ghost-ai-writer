@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-BtH0gOTJ.js";import{a as t}from"./index-CNCXIYZ0.js";import{n}from"./authors-DK_cwySq.js";var r=e(),i=function(){let{id:e}=t.useParams();return(0,r.jsx)(n,{id:e})};export{i as component};

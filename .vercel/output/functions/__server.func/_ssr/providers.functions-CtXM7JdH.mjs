@@ -1,0 +1,162 @@
+import { n as __exportAll } from "../_runtime.mjs";
+import { Ut as __exportAll$1 } from "./engine-DWsB6FrJ.mjs";
+import { t as createServerFn } from "./ssr.mjs";
+import { t as createSsrRpc } from "./ops.functions-CQ9mdiWn.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/providers.functions-CtXM7JdH.js
+var providers_functions_CtXM7JdH_exports = /* @__PURE__ */ __exportAll({
+	a: () => providers_functions_exports,
+	c: () => testCustomModel,
+	i: () => listCustomModels,
+	n: () => generateDraft,
+	o: () => scrapePage,
+	r: () => generateIdeas,
+	s: () => tavilySearch,
+	t: () => firecrawlSearch
+});
+var providers_functions_exports = /* @__PURE__ */ __exportAll$1({
+	firecrawlSearch: () => firecrawlSearch,
+	generateDraft: () => generateDraft,
+	generateIdeas: () => generateIdeas,
+	getEmbedding: () => getEmbedding,
+	listCustomModels: () => listCustomModels,
+	scrapePage: () => scrapePage,
+	tavilySearch: () => tavilySearch,
+	testCustomModel: () => testCustomModel
+});
+/** Long-form generation budget: real 2,500–4,000 token drafts plus 2-pass
+*  Blader revisions routinely run for minutes, so every chat/completion call
+*  gets a 3-minute ceiling instead of the old 10–45s abort. */
+/**
+* Opt-in escape hatch for LOCAL model runners (Ollama, LM Studio, llama.cpp,
+* and test mocks): when LLM_ALLOW_PRIVATE_HOST=1, private-network and plain-
+* http LLM endpoints are permitted. Production deployments leave it unset and
+* keep the strict https + public-host SSRF guard.
+*/
+/**
+* Resolve any operator-entered base URL to the exact /chat/completions endpoint:
+* - "https://api.example.com"            → /v1/chat/completions (bare host)
+* - "https://api.example.com/v1"         → /v1/chat/completions
+* - "https://api.example.com/v1/custom"  → /v1/custom/chat/completions
+* - "https://api.example.com/v1/chat/completions" → unchanged
+*/
+/**
+* Resolve any operator-entered base URL to the exact /models endpoint that lists
+* the provider's model ids:
+* - "https://api.example.com"            → /v1/models (bare host)
+* - "https://api.example.com/v1"         → /v1/models
+* - "https://api.example.com/v1/custom"  → /v1/custom/models
+* - "https://api.example.com/v1/models"  → unchanged
+*/
+function readModel(input) {
+	const o = input;
+	const baseUrl = typeof o?.baseUrl === "string" ? o.baseUrl.trim() : "";
+	const apiKey = typeof o?.apiKey === "string" ? o.apiKey.trim() : "";
+	const model = typeof o?.model === "string" ? o.model.trim() : "";
+	if (!baseUrl || !apiKey || !model) throw new Error("Base URL, API key, and model name are required.");
+	return {
+		baseUrl,
+		apiKey,
+		model,
+		prompt: typeof o?.prompt === "string" ? o.prompt : void 0
+	};
+}
+/** The old embeddingsEndpoint — superseded by the normalized version below. */
+var testCustomModel = createServerFn({ method: "POST" }).validator(readModel).handler(createSsrRpc("58109030f1785b371dd86ad88a716e8657a2162ba1f3bfb4c49d6712cc2b0829"));
+/**
+* Live model discovery for a custom OpenAI-compatible endpoint. Requests
+* `{normalizedBaseUrl}/models` with `Authorization: Bearer {apiKey}` and returns
+* the parsed `data[].id` list so the operator can pick the exact model id.
+* Manual typing stays available when a provider does not expose /models.
+*/
+var listCustomModels = createServerFn({ method: "POST" }).validator((input) => {
+	const o = input;
+	const baseUrl = typeof o?.baseUrl === "string" ? o.baseUrl.trim() : "";
+	const apiKey = typeof o?.apiKey === "string" ? o.apiKey.trim() : "";
+	if (!baseUrl || !apiKey) throw new Error("Base URL and API key are required to fetch models.");
+	return {
+		baseUrl,
+		apiKey
+	};
+}).handler(createSsrRpc("99f4984e83a6b9d6b2445c90982c80b1a46843f0ff6121e3cfe571b37b2a60e8"));
+var getEmbedding = createServerFn({ method: "POST" }).validator((input) => {
+	const base = readModel(input);
+	const o = input;
+	const text = typeof o.input === "string" ? o.input.trim().slice(0, 8e3) : "";
+	if (!text) throw new Error("Nothing to embed.");
+	return {
+		...base,
+		input: text
+	};
+}).handler(createSsrRpc("f85a590559bd04a4d53e9d9e9fb5f508f20bafaff4355d13a66f81bd0f9a3f50"));
+var generateDraft = createServerFn({ method: "POST" }).validator((input) => {
+	const base = readModel(input);
+	const o = input;
+	const system = typeof o.system === "string" ? o.system.slice(0, 4e3) : "";
+	const user = typeof o.user === "string" ? o.user.slice(0, 14e3) : "";
+	if (!system || !user) throw new Error("Prompt is empty.");
+	return {
+		...base,
+		system,
+		user
+	};
+}).handler(createSsrRpc("ff9fe4d17f7009129ef0ab0ce8c8e0ee32a3536baaa9d1753d1d9f3b4619f5c4"));
+var generateIdeas = createServerFn({ method: "POST" }).validator((input) => {
+	const base = readModel(input);
+	const o = input;
+	const niche = typeof o.niche === "string" ? o.niche.trim().slice(0, 500) : "";
+	if (niche.length < 3) throw new Error("Niche is too short.");
+	const corpus = Array.isArray(o.corpus) ? o.corpus.slice(0, 160).map((item) => ({
+		title: String(item.title ?? "").slice(0, 180),
+		slug: String(item.slug ?? "").slice(0, 180),
+		permalink: String(item.permalink ?? "").slice(0, 300)
+	})).filter((item) => item.title) : [];
+	return {
+		...base,
+		niche,
+		corpus
+	};
+}).handler(createSsrRpc("0620b4cabe2bd16e83c6a7edaeb88207ce01036d4dd9afe07cc9c61f82820b58"));
+var scrapePage = createServerFn({ method: "POST" }).validator((input) => {
+	const o = input;
+	const apiKey = typeof o?.apiKey === "string" ? o.apiKey.trim() : "";
+	const url = typeof o?.url === "string" ? o.url.trim() : "";
+	if (!apiKey || !url) throw new Error("Firecrawl key and URL are required.");
+	return {
+		apiKey,
+		url
+	};
+}).handler(createSsrRpc("af8f40e213312ca4942fe6995119351cf411d24bf280ce4a919cb270dcd28d08"));
+/**
+* Rule 5 — Tavily web search.
+* https://docs.tavily.com — POST /search with the key in the body (classic) and
+* an Authorization bearer header (current). SSRF is not relevant here because the
+* provider is a fixed host, but the query is length-capped.
+*/
+var tavilySearch = createServerFn({ method: "POST" }).validator((input) => {
+	const o = input;
+	const apiKey = typeof o?.apiKey === "string" ? o.apiKey.trim() : "";
+	const query = typeof o?.query === "string" ? o.query.trim().slice(0, 400) : "";
+	if (!apiKey || !query) throw new Error("Tavily key and query are required.");
+	return {
+		apiKey,
+		query,
+		maxResults: Math.min(10, Math.max(1, Math.round(Number(o?.maxResults) || 5)))
+	};
+}).handler(createSsrRpc("48a3318f029d5c5582346277b69de7e60ad5911f9d55bdb65e28976a1b575f7b"));
+/**
+* Rule 5 — Firecrawl web search (as opposed to scrape of one URL).
+* POST https://api.firecrawl.dev/v1/search
+*/
+var firecrawlSearch = createServerFn({ method: "POST" }).validator((input) => {
+	const o = input;
+	const apiKey = typeof o?.apiKey === "string" ? o.apiKey.trim() : "";
+	const query = typeof o?.query === "string" ? o.query.trim().slice(0, 400) : "";
+	if (!apiKey || !query) throw new Error("Firecrawl key and query are required.");
+	return {
+		apiKey,
+		query,
+		maxResults: Math.min(10, Math.max(1, Math.round(Number(o?.maxResults) || 5)))
+	};
+}).handler(createSsrRpc("41f8e2001e8bbb6f6104d21a4d44df3762728d1351f200c247433e77d3e33128"));
+//#endregion
+export { providers_functions_CtXM7JdH_exports as a, testCustomModel as c, listCustomModels as i, generateDraft as n, scrapePage as o, generateIdeas as r, tavilySearch as s, firecrawlSearch as t };
