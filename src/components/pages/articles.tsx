@@ -145,7 +145,7 @@ export function ArticlesPage() {
             .filter((group) => group.count > 0)
             .map((group) => (
               <section key={group.key}>
-                <header className="sticky top-14 z-10 flex h-8 items-center gap-2 border-b border-line bg-surface/90 px-2.5 backdrop-blur">
+                <header className="sticky top-14 z-10 flex h-8 items-center gap-2 border-b border-line-strong/50 bg-surface-2/60 px-2.5 backdrop-blur">
                   <StatusGlyph status={group.key} />
                   <span className="text-[12px] font-medium text-fg">{group.label}</span>
                   <span className="num text-[11px] text-faint">{group.count}</span>

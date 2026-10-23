@@ -282,7 +282,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               setPalette(true);
               setQuery("");
             }}
-            className="flex min-h-9 min-w-0 flex-1 max-w-md items-center gap-2 rounded-md border border-line bg-elev px-2.5 text-left text-[13px] text-muted hover:border-line-strong"
+            className="flex min-h-9 min-w-0 flex-1 max-w-md items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-left text-[13px] text-muted hover:border-line-strong hover:bg-surface-2/60"
           >
             <Search className="size-4 shrink-0" />
             <span className="truncate">Search or jump</span>
@@ -493,7 +493,7 @@ function CreateButton() {
     <div className="px-3 pb-2">
       <Link
         to="/create"
-        className="flex min-h-8 w-full items-center gap-2 rounded-md border border-line bg-elev px-2 text-[13px] font-medium text-fg shadow-xs transition-colors hover:border-accent/50 hover:text-accent"
+        className="flex min-h-8 w-full items-center gap-2 rounded-md border border-line-strong/70 px-2 text-[13px] font-medium text-fg transition-colors hover:border-accent/60 hover:bg-accent/[0.06] hover:text-accent"
       >
         <Plus className="size-4 shrink-0 text-accent" />
         New article
@@ -564,7 +564,7 @@ function NavLink({ item, path, onNavigate }: { item: (typeof NAV)[number]; path:
       className={cn(
         "flex min-h-8 items-center gap-2 rounded-sm px-2 text-[13px] font-medium transition-colors duration-150",
         on
-          ? "bg-accent/10 font-semibold text-fg shadow-[inset_2px_0_0_var(--color-accent)]"
+          ? "bg-accent/14 font-semibold text-fg shadow-[inset_2px_0_0_var(--color-accent)]"
           : "text-muted hover:bg-surface-2/70 hover:text-fg",
       )}
     >

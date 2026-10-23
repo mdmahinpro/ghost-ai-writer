@@ -30,7 +30,7 @@ export const Route = createRootRoute({
         <script
           dangerouslySetInnerHTML={{
             __html:
-              '(function(){try{var raw=localStorage.getItem("gaw-theme");var t=raw;if(t==="light")t="paper";if(t==="dark"||!t)t="midnight";var ok={midnight:1,paper:1,forest:1,rose:1,sepia:1,ocean:1};if(!ok[t])t="midnight";if(raw!==t)localStorage.setItem("gaw-theme",t);var el=document.documentElement;el.setAttribute("data-theme",t);el.classList.remove("light");var c={midnight:"#09090b",paper:"#fafafa",forest:"#0c1410",rose:"#fbf4f6",sepia:"#f4efe4",ocean:"#06141c"}[t];var m=document.querySelector(\'meta[name="theme-color"]\');if(m)m.setAttribute("content",c);}catch(e){}})();',
+              '(function(){try{var raw=localStorage.getItem("gaw-theme");var t=raw;if(t==="light")t="paper";if(t==="dark")t="midnight";if(!t)t="paper";var ok={midnight:1,paper:1,forest:1,rose:1,sepia:1,ocean:1};if(!ok[t])t="paper";if(raw!==t)localStorage.setItem("gaw-theme",t);var el=document.documentElement;el.setAttribute("data-theme",t);el.classList.remove("light");var c={midnight:"#151817",paper:"#f2f4f1",forest:"#0c1410",rose:"#fbf4f6",sepia:"#f4efe4",ocean:"#06141c"}[t];var m=document.querySelector(\'meta[name="theme-color"]\');if(m)m.setAttribute("content",c);}catch(e){}})();',
           }}
         />
         <HeadContent />

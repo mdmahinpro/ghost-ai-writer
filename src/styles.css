@@ -11,32 +11,32 @@
   --tracking-caption: 0.08em;
 
   /* --- surfaces ------------------------------------------------------ */
-  --color-bg: #101010;
-  --color-elev: #171715;
-  --color-surface: #1f1f1c;
-  --color-surface-2: #272724;
-  --color-line: #2c2c27;
-  --color-line-strong: #45453e;
+  --color-bg: #151817;
+  --color-elev: #1b1f1d;
+  --color-surface: #212623;
+  --color-surface-2: #282e2a;
+  --color-line: #2c332f;
+  --color-line-strong: #3e4742;
 
   /* --- text ---------------------------------------------------------- */
-  --color-fg: #f2efe8;
-  --color-muted: #bab6ad;
-  --color-faint: #918d84;
+  --color-fg: #e5e7e2;
+  --color-muted: #a7aea7;
+  --color-faint: #8b938c;
   /* brass / brass-2 / ink are legacy aliases of accent / accent-hover / on-accent */
 
   /* --- accent (actions, links, live status) -------------------------- */
-  --color-accent: #55c79b;
-  --color-accent-hover: #7ddcb4;
+  --color-accent: #78c0ab;
+  --color-accent-hover: #8fd3bf;
   --color-on-accent: #08110d;
   /* legacy aliases: older screens reference brass / brass-2 / ink */
-  --color-brass: #55c79b;
-  --color-brass-2: #7ddcb4;
+  --color-brass: #78c0ab;
+  --color-brass-2: #8fd3bf;
   --color-ink: #08110d;
 
   /* --- semantic ------------------------------------------------------ */
-  --color-ok: #55c79b;
-  --color-warn: #e0a86a;
-  --color-danger: #f2877c;
+  --color-ok: #78c0ab;
+  --color-warn: #d8b183;
+  --color-danger: #e9948c;
   --color-paper: #16161a;
   --color-paper-ink: #f2efe8;
   --color-paper-muted: #a8a49b;
@@ -54,17 +54,17 @@
 /* Base ramp: midnight (dark). Every theme below mirrors this structure so the
    same contrast relationships hold in all six. */
 html[data-theme="midnight"] {
-  --color-bg: #101010;
-  --color-elev: #171715;
-  --color-surface: #1f1f1c;
-  --color-surface-2: #272724;
-  --color-line: #2c2c27;
-  --color-line-strong: #45453e;
-  --color-fg: #f2efe8;
-  --color-muted: #bab6ad;
-  --color-faint: #918d84;
-  --color-accent: #55c79b;
-  --color-accent-hover: #7ddcb4;
+  --color-bg: #151817;
+  --color-elev: #1b1f1d;
+  --color-surface: #212623;
+  --color-surface-2: #282e2a;
+  --color-line: #2c332f;
+  --color-line-strong: #3e4742;
+  --color-fg: #e5e7e2;
+  --color-muted: #a7aea7;
+  --color-faint: #8b938c;
+  --color-accent: #78c0ab;
+  --color-accent-hover: #8fd3bf;
   --color-on-accent: #08110d;
   --color-brass: #55c79b;
   --color-brass-2: #7ddcb4;
@@ -81,17 +81,17 @@ html[data-theme="midnight"] {
 }
 
 html[data-theme="paper"] {
-  --color-bg: #fbfaf7;
-  --color-elev: #ffffff;
-  --color-surface: #f5f3ee;
-  --color-surface-2: #edeae3;
-  --color-line: #e3dfd6;
-  --color-line-strong: #cfc9bc;
-  --color-fg: #171613;
-  --color-muted: #5e594f;
-  --color-faint: #6b655c;
-  --color-accent: #14654a;
-  --color-accent-hover: #0e4b37;
+  --color-bg: #f2f4f1;
+  --color-elev: #fdfdfb;
+  --color-surface: #eaece8;
+  --color-surface-2: #e1e5e0;
+  --color-line: #dde2dd;
+  --color-line-strong: #c3cac4;
+  --color-fg: #1f2421;
+  --color-muted: #545c56;
+  --color-faint: #5e655f;
+  --color-accent: #2f6e62;
+  --color-accent-hover: #255a50;
   --color-on-accent: #ffffff;
   --color-brass: #14654a;
   --color-brass-2: #0e4b37;

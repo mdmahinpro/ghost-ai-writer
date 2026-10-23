@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { applyTheme, readStoredTheme, THEMES, type ThemeId } from "@/lib/themes";
 
 export function ThemePicker({ variant = "menu" }: { variant?: "menu" | "section" }) {
-  const [theme, setTheme] = useState<ThemeId>("midnight");
+  const [theme, setTheme] = useState<ThemeId>("paper");
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
