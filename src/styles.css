@@ -42,10 +42,10 @@
   --color-paper-muted: #a8a49b;
 
   /* --- radii, elevation, motion -------------------------------------- */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 0.875rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
   --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.24);
   --shadow-sm: 0 2px 6px rgb(0 0 0 / 0.28), 0 1px 2px rgb(0 0 0 / 0.24);
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);

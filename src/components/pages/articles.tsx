@@ -12,7 +12,7 @@ import { applyFetchedImages } from "@/lib/media-html";
 import { articleImageSrc } from "@/lib/image-urls";
 import { useApp, useHydrated } from "@/lib/store";
 import type { Article } from "@/lib/types";
-import { Badge, Button, Card, Empty, PageIntro, SkeletonRows, StateNote, statusTone, fieldClass } from "@/components/ui";
+import { Badge, Button, Card, Empty, PageIntro, SkeletonRows, StateNote, StatusGlyph, statusTone, fieldClass, fieldCompact } from "@/components/ui";
 import { relTime } from "@/lib/utils";
 
 export function ArticlesPage() {
@@ -66,60 +66,82 @@ export function ArticlesPage() {
           />
         </div>
       ) : null}
-      <div className="mb-4 flex flex-wrap gap-2">
-        <input className={`${fieldClass} max-w-sm`} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, slug, keyword" aria-label="Filter articles" />
-        <select className={`${fieldClass} max-w-40`} value={status} onChange={(e) => setStatus(e.target.value as typeof status)} aria-label="Status">
-          <option value="all">All statuses</option>
-          <option value="draft">Draft</option>
-          <option value="published">Published</option>
-        </select>
-        <select className={`${fieldClass} max-w-40`} value={engine} onChange={(e) => setEngine(e.target.value as typeof engine)} aria-label="Engine">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          className={`${fieldCompact} w-56`}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search title, slug, keyword"
+          aria-label="Filter articles"
+        />
+        <div className="flex items-center gap-0.5 rounded-md border border-line bg-surface/60 p-0.5" role="tablist" aria-label="Status">
+          {([
+            ["all", "All", articles.length],
+            ["draft", "Draft", articles.filter((a) => a.status === "draft").length],
+            ["published", "Published", articles.filter((a) => a.status === "published").length],
+          ] as const).map(([value, label, count]) => (
+            <button
+              key={value}
+              role="tab"
+              aria-selected={status === value}
+              onClick={() => setStatus(value)}
+              className={`inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-[12px] transition-colors ${
+                status === value ? "bg-elev font-medium text-fg shadow-xs" : "text-muted hover:text-fg"
+              }`}
+            >
+              {label}
+              <span className="num text-[11px] text-faint">{count}</span>
+            </button>
+          ))}
+        </div>
+        <select
+          className={`${fieldCompact} w-36`}
+          value={engine}
+          onChange={(e) => setEngine(e.target.value as typeof engine)}
+          aria-label="Engine"
+        >
           <option value="all">All engines</option>
           <option value="llm">LLM</option>
           <option value="fallback">Fallback</option>
         </select>
-        <Button variant="ghost" onClick={exportCsv} disabled={!rows.length}>
-          Export CSV
-        </Button>
-        <Button
-          variant="ghost"
-          disabled={!picked.length}
-          onClick={() => {
-            deleteArticles(picked);
-            setPicked([]);
-          }}
-        >
-          Delete selected{picked.length ? ` (${picked.length})` : ""}
-        </Button>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" onClick={exportCsv} disabled={!rows.length}>
+            Export CSV
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!picked.length}
+            onClick={() => {
+              deleteArticles(picked);
+              setPicked([]);
+            }}
+          >
+            Delete{picked.length ? ` (${picked.length})` : ""}
+          </Button>
+        </div>
       </div>
       {!rows.length ? (
         <Empty title="No articles" body="Completed jobs land here with a Ghost ledger, downloaded photos, and internal links." />
       ) : (
-        <Card className="overflow-x-auto">
-          <table className="w-full min-w-xl text-left text-sm">
-            <thead className="border-b border-line text-xs uppercase tracking-widest text-faint">
-              <tr>
-                <th className="px-3 py-3 font-medium">
-                  <input
-                    type="checkbox"
-                    aria-label="Select all shown articles"
-                    checked={rows.length > 0 && rows.every((article) => picked.includes(article.id))}
-                    onChange={(event) => setPicked(event.target.checked ? rows.map((article) => article.id) : [])}
-                  />
-                </th>
-                <th className="px-4 py-3 font-medium">Title</th>
-                <th className="px-3 py-3 font-medium">Engine</th>
-                <th className="px-3 py-3 font-medium">Status</th>
-                <th className="px-3 py-3 font-medium">Links</th>
-                <th className="px-3 py-3 font-medium">Images</th>
-                <th className="px-3 py-3 font-medium">Unique</th>
-                <th className="px-3 py-3 font-medium">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((article) => (
-                <tr key={article.id} className="border-b border-line last:border-0">
-                  <td className="px-3 py-3">
+        <div className="overflow-hidden rounded-lg border border-line bg-elev">
+          {(["published", "draft"] as const)
+            .map((key) => ({
+              key,
+              label: key === "published" ? "Published" : "Draft",
+              count: rows.filter((article) => article.status === key).length,
+              rows: rows.filter((article) => article.status === key),
+            }))
+            .filter((group) => group.count > 0)
+            .map((group) => (
+              <section key={group.key}>
+                <header className="sticky top-14 z-10 flex h-8 items-center gap-2 border-b border-line bg-surface/90 px-2.5 backdrop-blur">
+                  <StatusGlyph status={group.key} />
+                  <span className="text-[12px] font-medium text-fg">{group.label}</span>
+                  <span className="num text-[11px] text-faint">{group.count}</span>
+                </header>
+                {group.rows.map((article) => (
+                  <div key={article.id} className="group flex items-center gap-2.5 border-b border-line/70 px-2.5 last:border-0 hover:bg-surface/70">
                     <input
                       type="checkbox"
                       aria-label={`Select ${article.title}`}
@@ -127,46 +149,49 @@ export function ArticlesPage() {
                       onChange={(event) =>
                         setPicked((current) => (event.target.checked ? [...current, article.id] : current.filter((id) => id !== article.id)))
                       }
+                      className="size-3.5 shrink-0 accent-[var(--color-accent)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100"
                     />
-                  </td>
-                  <td className="px-4 py-3">
-                    <Link to="/articles/$id" params={{ id: article.id }} className="font-medium">
+                    <span className="num hidden w-16 shrink-0 text-[11px] text-faint sm:inline">{article.id.replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase()}</span>
+                    <StatusGlyph status={article.status} className="sm:hidden" />
+                    <Link
+                      to="/articles/$id"
+                      params={{ id: article.id }}
+                      className="min-w-0 flex-1 truncate py-2 text-[13px] font-medium text-fg hover:text-accent"
+                      title={article.title}
+                    >
                       {article.title}
                     </Link>
-                    <div className="text-xs text-faint">/{article.slug}{article.authorName ? ` · ${article.authorName}` : ""}</div>
-                  </td>
-                  <td className="px-3 py-3">{article.engine}</td>
-                  <td className="px-3 py-3">
-                    <Badge tone={statusTone(article.status)}>{article.status}</Badge>
-                  </td>
-                  <td className="px-3 py-3">
-                    {article.links.length} out · {inboundCount(articles, article.slug)} in
-                  </td>
-                  <td className="px-3 py-3">{article.images.filter((image) => image.selected).length}</td>
-                  <td className="px-3 py-3">
-                    {Math.round(
-                      uniquenessAgainst(
-                        article.title,
-                        article.keyword,
-                        articles
-                          .filter((other) => other.id !== article.id)
-                          .map((other) => ({
-                            keyword: other.keyword,
-                            title: other.title,
-                            slug: other.slug,
-                            sample: `${other.title}. ${other.sections.map((section) => section.heading).join(". ")}`,
-                          })),
-                        article.sections,
-                      ) * 100,
-                    )}
-                    %
-                  </td>
-                  <td className="px-3 py-3 text-muted">{relTime(article.publishedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+                    <span className="hidden max-w-40 shrink-0 truncate text-[11px] text-faint lg:inline">/{article.slug}</span>
+                    <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted md:inline-flex" title="Outbound · inbound links">
+                      {article.links.length} out · {inboundCount(articles, article.slug)} in
+                    </span>
+                    <span className="hidden w-14 shrink-0 text-right text-[11px] text-muted sm:inline" title="Selected images">
+                      {article.images.filter((image) => image.selected).length} img
+                    </span>
+                    <span className="num hidden w-12 shrink-0 text-right text-[11px] text-muted sm:inline" title="Uniqueness">
+                      {Math.round(
+                        uniquenessAgainst(
+                          article.title,
+                          article.keyword,
+                          articles
+                            .filter((other) => other.id !== article.id)
+                            .map((other) => ({
+                              keyword: other.keyword,
+                              title: other.title,
+                              slug: other.slug,
+                              sample: `${other.title}. ${other.sections.map((section) => section.heading).join(". ")}`,
+                            })),
+                          article.sections,
+                        ) * 100,
+                      )}
+                      %
+                    </span>
+                    <span className="w-16 shrink-0 text-right text-[11px] text-faint">{relTime(article.publishedAt)}</span>
+                  </div>
+                ))}
+              </section>
+            ))}
+        </div>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components -- Rule 7 design system: tokens, badge helpers, and primitives intentionally live together. */
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { CheckCircle2, CircleDashed, CircleDot, Loader2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -83,6 +84,18 @@ export function Badge({
   );
 }
 
+/**
+ * Status glyph — a shape, not just a colour (Linear grammar): dashed = draft,
+ * spinner = running, half-filled = held for review, check = done, cross = failed.
+ * Always paired with a word so colour is never the only signal.
+ */
+export function StatusGlyph({ status, className }: { status: string; className?: string }) {
+  const tone = statusTone(status);
+  const color = tone === "ok" ? "text-ok" : tone === "danger" ? "text-danger" : tone === "brass" ? "text-warn" : "text-faint";
+  const Icon = tone === "ok" ? CheckCircle2 : tone === "danger" ? XCircle : tone === "brass" ? CircleDot : status === "running" || status === "queued" ? Loader2 : CircleDashed;
+  return <Icon aria-hidden="true" strokeWidth={1.75} className={cn("size-3.5 shrink-0", color, className)} />;
+}
+
 export function statusTone(status: string): "ok" | "danger" | "brass" | "muted" {
   const ok = ["completed", "succeeded", "connected", "verified", "published", "PUBLISHED", "done", "STATIC_CONFIRMED", "GHOST_CONFIRMED", "draft-saved"];
   const bad = ["failed", "refused", "error", "disconnected", "BROKEN", "FAILED", "cancelled"];
@@ -116,6 +129,10 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
     </label>
   );
 }
+
+/** Compact inline field for toolbars: no w-full, so it sits on one row. */
+export const fieldCompact =
+  "h-8 rounded-md border border-line bg-elev px-2 text-[13px] text-fg outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-accent/20";
 
 export const fieldClass =
   "min-h-11 w-full rounded-md border border-line bg-elev px-3 py-2 text-sm text-fg outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-accent/20";

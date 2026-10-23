@@ -238,7 +238,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
-       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-line/70 bg-surface/50 md:flex">
+       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-surface/60 md:flex">
         <Brand />
         <CreateButton />
         <SidebarNav path={path} />
@@ -493,7 +493,7 @@ function CreateButton() {
     <div className="px-3 pb-2">
       <Link
         to="/create"
-        className="flex min-h-9 w-full items-center gap-2 rounded-md border border-line bg-elev px-2.5 text-[13px] font-medium text-fg shadow-xs transition-colors hover:border-accent/50 hover:text-accent"
+        className="flex min-h-8 w-full items-center gap-2 rounded-md border border-line bg-elev px-2 text-[13px] font-medium text-fg shadow-xs transition-colors hover:border-accent/50 hover:text-accent"
       >
         <Plus className="size-4 shrink-0 text-accent" />
         New article
@@ -515,7 +515,7 @@ function SidebarNav({ path, onNavigate }: { path: string; onNavigate?: () => voi
         const isOpen = Boolean(expanded[group]);
         return (
           <section key={group} className="mb-3">
-            <button type="button" aria-expanded={isOpen} aria-controls={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} onClick={() => setExpanded((previous) => ({ ...previous, [group]: !previous[group] }))} className="flex min-h-8 w-full items-center justify-between rounded-sm px-2 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-faint hover:text-fg">
+            <button type="button" aria-expanded={isOpen} aria-controls={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} onClick={() => setExpanded((previous) => ({ ...previous, [group]: !previous[group] }))} className="flex min-h-7 w-full items-center justify-between rounded-sm px-2 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-faint hover:text-fg">
               {group}<ChevronDown aria-hidden="true" className={cn("size-3.5 transition-transform", !isOpen && "-rotate-90")} />
             </button>
             <div id={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} hidden={!isOpen} className="mt-0.5 space-y-px pb-2">
@@ -562,13 +562,13 @@ function NavLink({ item, path, onNavigate }: { item: (typeof NAV)[number]; path:
       onClick={onNavigate}
       aria-current={on ? "page" : undefined}
       className={cn(
-        "flex min-h-9 items-center gap-2.5 rounded-md px-2 text-[13px] font-medium transition-colors duration-150",
+        "flex min-h-8 items-center gap-2 rounded-sm px-2 text-[13px] font-medium transition-colors duration-150",
         on
           ? "bg-accent/10 font-semibold text-fg shadow-[inset_2px_0_0_var(--color-accent)]"
           : "text-muted hover:bg-surface-2/70 hover:text-fg",
       )}
     >
-      <Icon className={cn("size-4 shrink-0", on ? "text-accent" : "text-faint")} />
+      <Icon strokeWidth={1.75} className={cn("size-4 shrink-0", on ? "text-accent" : "text-faint")} />
        <span className="truncate">{item.label}</span>
     </Link>
   );
