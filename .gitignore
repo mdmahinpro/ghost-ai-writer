@@ -17,3 +17,18 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# --- Build artifacts and vendored deps: never commit ---
+node_modules/
+.vercel/
+.output/
+dist/
+public/media/
+data/
+
+# Rust build output
+backend/target/
+
+# deploy/build artifacts (regenerated per host)
+.output/
+.vercel/
