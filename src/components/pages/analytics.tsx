@@ -192,37 +192,51 @@ export function AnalyticsPage() {
         <Tile k="Pipeline success" v={finished.length ? `${Math.round(success * 100)}%` : "—"} />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card className="h-64 p-4">
-          <h2 className="mb-2 text-sm text-muted">Token usage</h2>
-          {charts ? (
-            <ResponsiveContainer width="100%" height="85%">
+        <Card className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-[13px] font-semibold text-fg">Token usage</h2>
+            <span className="num text-[11px] text-faint">last {days} days</span>
+          </div>
+          {byDay.every((d) => d.tokens === 0) ? (
+            <p className="grid h-52 place-items-center rounded-md border border-dashed border-line text-[12px] text-faint">
+              No tokens settled in this window — the ledger fills when a run writes.
+            </p>
+          ) : charts ? (
+            <ResponsiveContainer width="100%" height={208}>
               <LineChart data={byDay}>
                 <XAxis dataKey="day" stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} />
                 <YAxis stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} width={40} />
                 <Tooltip contentStyle={{ background: "var(--color-elev)", border: "1px solid var(--color-line)", color: "var(--color-fg)" }} />
-                <Line type="monotone" dataKey="tokens" stroke="var(--color-brass)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="tokens" stroke="var(--color-accent)" strokeWidth={1.75} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           ) : null}
         </Card>
-        <Card className="h-64 p-4">
-          <h2 className="mb-2 text-sm text-muted">Article output</h2>
-          {charts ? (
-            <ResponsiveContainer width="100%" height="85%">
+        <Card className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-[13px] font-semibold text-fg">Article output</h2>
+            <span className="num text-[11px] text-faint">{siteArticles.length} total</span>
+          </div>
+          {byDay.every((d) => d.articles === 0) ? (
+            <p className="grid h-52 place-items-center rounded-md border border-dashed border-line text-[12px] text-faint">
+              No articles finished in this window.
+            </p>
+          ) : charts ? (
+            <ResponsiveContainer width="100%" height={208}>
               <BarChart data={byDay}>
                 <XAxis dataKey="day" stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} />
                 <YAxis allowDecimals={false} stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} width={24} />
                 <Tooltip contentStyle={{ background: "var(--color-elev)", border: "1px solid var(--color-line)", color: "var(--color-fg)" }} />
-                <Bar dataKey="articles" fill="var(--color-brass)" radius={4} />
+                <Bar dataKey="articles" fill="var(--color-accent)" radius={2} />
               </BarChart>
             </ResponsiveContainer>
           ) : null}
         </Card>
       </div>
       <Card className="mt-4 overflow-x-auto p-4">
-        <h2 className="font-display text-2xl">Stage performance</h2>
-        <table className="mt-3 w-full min-w-lg text-left text-sm">
-          <thead className="text-xs uppercase tracking-widest text-faint">
+        <h2 className="text-[13px] font-semibold text-fg">Stage performance</h2>
+        <table className="mt-3 w-full min-w-lg text-left text-[13px]">
+          <thead className="text-[11px] uppercase tracking-[0.06em] text-faint">
             <tr>
               <th className="py-2 font-medium">Stage</th>
               <th className="py-2 font-medium">Success</th>
@@ -232,7 +246,7 @@ export function AnalyticsPage() {
           </thead>
           <tbody>
             {stageRows.map((row) => (
-              <tr key={row.label} className="border-t border-line">
+              <tr key={row.label} className="border-t border-line/70 hover:bg-surface/60">
                 <td className="py-2">{row.label}</td>
                 <td>{row.success}</td>
                 <td>{row.duration}</td>
