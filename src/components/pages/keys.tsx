@@ -141,10 +141,10 @@ export function KeysPage() {
 
       <Card className="space-y-3 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold tracking-tight">Failover pool</h2>
+          <h2 className="text-[13px] font-semibold text-fg">Failover pool</h2>
           <Badge tone={orderedKeys.length ? "ok" : "muted"}>{orderedKeys.length} key{orderedKeys.length === 1 ? "" : "s"} · tried top-down</Badge>
         </div>
-        <p className="text-sm text-muted">Higher priority is tried first. 401/403 disables a key; 429 cools it for 12 seconds; config errors (400/404) and transient 5xx never cool the key. Remaining keys carry the run.</p>
+        <p className="text-[12px] leading-5 text-faint">Higher priority is tried first. 401/403 disables a key; 429 cools it for 12 seconds; config errors (400/404) and transient 5xx never cool the key. Remaining keys carry the run.</p>
         <div>
           <Button variant="ghost" onClick={() => clearCooldowns()}>
             Clear cooldown & retry all pending jobs
@@ -160,13 +160,13 @@ export function KeysPage() {
             .reduce((sum, event) => sum + event.usd, 0);
           const cooling = key.cooldownUntil && key.cooldownUntil > Date.now();
           return (
-            <Card key={key.id} className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="font-medium">
+            <Card key={key.id} className="min-w-0 p-3.5">
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium text-fg">
                     #{index + 1} · {key.provider} · {key.model}
                   </div>
-                  <div className="mt-1 font-mono text-xs text-faint">
+                  <div className="num mt-0.5 truncate text-[11px] text-faint">
                     priority {key.priority} · {key.hint}
                     {key.baseUrl ? ` · ${key.baseUrl}` : ""}
                   </div>
@@ -175,10 +175,10 @@ export function KeysPage() {
                   {key.disabled ? "disabled" : cooling ? `cooling ${Math.max(1, Math.round((key.cooldownUntil! - Date.now()) / 60000))}m` : key.providerKind === "custom" ? "custom" : "active"}
                 </Badge>
               </div>
-              <dl className="mt-3 space-y-1 text-sm">
+              <dl className="mt-3 min-w-0 space-y-1 text-[12px]">
                 <div className="flex justify-between gap-3">
                   <dt className="text-muted">Capabilities</dt>
-                  <dd className="text-right">
+                  <dd className="min-w-0 break-words text-right">
                     {[key.chat ? "Chat" : "", embeddingModelFor(key) ? `Semantic (${embeddingModelFor(key)})` : "Semantic: hash fallback", key.secret ? "Live key" : ""].filter(Boolean).join(" + ")}
                   </dd>
                 </div>
@@ -206,7 +206,7 @@ export function KeysPage() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-muted">Last used</dt>
-                  <dd>{key.lastUsedAt ? relTime(key.lastUsedAt) : "—"}</dd>
+                  <dd className="text-muted">{key.lastUsedAt ? relTime(key.lastUsedAt) : "Never"}</dd>
                 </div>
               </dl>
               {key.lastError ? (
@@ -215,20 +215,21 @@ export function KeysPage() {
                   {key.lastErrorAt ? <span className="block text-faint">{relTime(key.lastErrorAt)}</span> : null}
                 </p>
               ) : null}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="ghost" onClick={() => toggleKey(key.id)}>
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                <Button variant="ghost" size="sm" onClick={() => toggleKey(key.id)}>
                   {key.disabled ? "Enable" : "Disable"}
                 </Button>
                 <Button variant="ghost" onClick={() => startEdit(key)}>
                   {editingId === key.id ? "Editing…" : "Edit"}
                 </Button>
                 {key.cooldownUntil ? (
-                  <Button variant="ghost" onClick={() => clearCooldowns()}>
+                  <Button variant="ghost" size="sm" onClick={() => clearCooldowns()}>
                     Clear cooldown
                   </Button>
                 ) : null}
                 <Button
                   variant="danger"
+                  size="sm"
                   aria-label={`Delete ${key.label}`}
                   onClick={() => {
                     if (typeof window !== "undefined" && !window.confirm(`Delete "${key.label}" permanently? Usage ledger rows stay in Billing.`)) return;
@@ -408,15 +409,15 @@ export function KeysPage() {
                type="button"
                aria-pressed={webSearch.mode === mode.value}
                onClick={() => setWebSearchMode(mode.value)}
-               className={`min-h-20 rounded-lg border p-4 text-left text-sm hover:border-line-strong ${webSearch.mode === mode.value ? "border-brass/60 bg-brass/10" : "border-line/60 bg-surface/40"}`}
+               className={`rounded-md border p-2.5 text-left text-[13px] transition-colors ${webSearch.mode === mode.value ? "border-accent/60 bg-accent/10" : "border-line bg-surface/40 hover:border-line-strong"}`}
             >
-              <span className="block font-medium">{mode.label}</span>
-               <span className="mt-1 block text-xs leading-5 text-muted">{mode.hint}</span>
+              <span className="block font-medium text-fg">{mode.label}</span>
+              <span className="mt-0.5 block text-[11px] leading-4 text-faint">{mode.hint}</span>
             </button>
           ))}
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-2 rounded-lg border border-line p-3">
+          <div className="space-y-2 rounded-md border border-line p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">Tavily keys</span>
               <Badge tone={webSearch.tavilyKeys.length ? "ok" : "muted"}>{webSearch.tavilyKeys.filter((key) => !key.disabled).length}/{webSearch.tavilyKeys.length} ready</Badge>
@@ -437,7 +438,7 @@ export function KeysPage() {
               </Button>
             </div>
           </div>
-          <div className="space-y-2 rounded-lg border border-line p-3">
+          <div className="space-y-2 rounded-md border border-line p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">Firecrawl keys</span>
               <Badge tone={webSearch.firecrawlKeys.length ? "ok" : "muted"}>{webSearch.firecrawlKeys.filter((key) => !key.disabled).length}/{webSearch.firecrawlKeys.length} ready</Badge>
