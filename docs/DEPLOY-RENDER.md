@@ -1,5 +1,28 @@
 # Deploying to Render
 
+**Live (verified 2026-10-23):**
+
+| url | check |
+|---|---|
+| https://gaw-api.onrender.com/health | `{"status":"ok","service":"gaw-api","version":"0.1.0"}` |
+| https://gaw-api.onrender.com/api/v1/workspaces | `401` without `x-api-token` |
+| https://ghost-ai-writer-web.onrender.com/ | `200`, title `Ghost AI Writer`, 355 KB JS asset served |
+
+## The failure that had to be fixed first
+
+`ghost-ai-writer-web` never came up: `npm ci` died on the clean clone with
+`Missing: lru-cache@11.5.3 from lock file` — `package-lock.json` was out of sync with
+`package.json` (11 missing lines). Reproduced by cloning fresh on Node 22 and running
+`npm ci`; fixed by regenerating the lock with npm 10.9.2 (the version Render ships),
+then verifying `npm ci` + the exact build command under a 460 MB heap cap (the free
+instance has 512 MB). Build: 15 s, no OOM.
+
+Two things were *not* the cause, despite looking like candidates: the Dockerfile steps
+(verified in a clean directory: 13.6 MB release binary) and blueprint schema validation
+(`render.yaml` validates against `https://render.com/schema/render.yaml.json` with both
+the old and new `plan` value — the schema does not constrain plan names, so the plan
+plural change was cosmetic, `starter` → `0.5c-512mb` per the docs' plan table).
+
 Two services, one repo, defined in `render.yaml` at the repo root. Nothing here is
 hypothetical: the Rust release binary, the token gate, and the Nitro node-server
 bundle were all built and run locally before writing this.
