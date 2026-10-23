@@ -12,7 +12,7 @@ services:
   - type: web
     name: gaw-api
     runtime: docker
-    plan: starter              # free instances cannot mount a disk
+    plan: 0.5c-512mb          # cheapest paid instance: free cannot mount a disk
     region: oregon
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend

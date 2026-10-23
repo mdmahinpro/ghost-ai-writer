@@ -1,0 +1,6 @@
+# Keep the build context small: `target/` is 3 GB locally and useless to the
+# builder, since the image compiles from source anyway.
+target/
+**/*.db
+**/*.db-wal
+**/*.db-shm
