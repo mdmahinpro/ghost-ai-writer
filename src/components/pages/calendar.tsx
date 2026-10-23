@@ -180,14 +180,18 @@ export function CalendarPage() {
           </select>
         </Field>
         <div className="md:col-span-2">
-          <span className="mb-2 block text-sm">Active days</span>
+          <span className="eyebrow mb-2 block">Active days</span>
           <div className="flex flex-wrap gap-2">
             {DAY_LABELS.map((label, index) => (
               <button
                 key={label}
                 type="button"
                 onClick={() => setDays((prev) => (prev.includes(index) ? prev.filter((day) => day !== index) : [...prev, index]))}
-                className={`min-h-11 rounded-lg border px-3 text-sm ${days.includes(index) ? "border-brass bg-brass/10 text-fg" : "border-line text-muted"}`}
+                className={`h-8 rounded-md border px-2.5 text-[12px] transition-colors ${
+                  days.includes(index)
+                    ? "border-accent bg-accent/10 font-medium text-fg"
+                    : "border-line text-muted hover:border-line-strong hover:text-fg"
+                }`}
               >
                 {label}
               </button>
@@ -221,27 +225,26 @@ export function CalendarPage() {
       {!mine.length ? (
         <Empty title="No calendars" body="Scheduling does not write articles. Open a calendar to write or publish one at a time." />
       ) : (
-        <div className="space-y-2">
-          {mine.map((calendar) => {
+        <div className="overflow-hidden rounded-lg border border-line bg-elev">
+          {mine.map((calendar, index) => {
             const next = calendar.items.filter((item) => item.status === "SCHEDULED").sort((a, b) => a.publishAt - b.publishAt)[0];
             const counts = calendar.items.reduce<Record<string, number>>((acc, item) => ({ ...acc, [item.status]: (acc[item.status] ?? 0) + 1 }), {});
             return (
-              <Link key={calendar.id} to="/calendar/$id" params={{ id: calendar.id }} className="block">
-                <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
-                  <div>
-                    <div className="font-medium">{calendar.name}</div>
-                    <div className="text-xs text-muted">
-                      {calendar.items.length} entries · next {next ? relTime(next.publishAt) : "none"} · {calendar.cadence}
-                    </div>
-                    <div className="mt-1 text-xs text-faint">
-                      {Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(" · ") || "empty"}
-                    </div>
+              <Link
+                key={calendar.id}
+                to="/calendar/$id"
+                params={{ id: calendar.id }}
+                className={`flex items-center gap-3 px-3 py-2.5 hover:bg-surface/70 ${index ? "border-t border-line/70" : ""}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium text-fg">{calendar.name}</div>
+                  <div className="truncate text-[11px] text-faint">
+                    {calendar.items.length} entries · next {next ? relTime(next.publishAt) : "none"} · {calendar.cadence}
+                    {Object.keys(counts).length ? ` · ${Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(" · ")}` : " · empty"}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge tone={automationLabel(calendar) === "automation on" ? "brass" : "muted"}>{automationLabel(calendar)}</Badge>
-                    <Badge tone="muted">{calendar.timezone}</Badge>
-                  </div>
-                </Card>
+                </div>
+                <Badge tone={automationLabel(calendar) === "automation on" ? "brass" : "muted"}>{automationLabel(calendar)}</Badge>
+                <span className="hidden text-[11px] text-faint sm:inline">{calendar.timezone}</span>
               </Link>
             );
           })}
@@ -396,22 +399,11 @@ export function CalendarDetail({ id }: { id: string }) {
         </div>
       ) : null}
       {view === "month" ? (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {[...month.entries()].map(([label, items]) => (
-            <Card key={label} className="p-4">
-              <div className="font-medium">{label}</div>
-              <ul className="mt-2 space-y-1 text-sm text-muted">
-                {items.map((entry) => (
-                  <li key={entry.id} className="flex items-center justify-between gap-3">
-                    <span>
-                      {new Date(entry.publishAt).toLocaleString("en-GB", { timeZone: calendar.timezone, day: "2-digit", hour: "2-digit", minute: "2-digit" })} · {entry.title}
-                    </span>
-                    <Badge tone={ENTRY_TONE[entry.status]}>{entry.status}</Badge>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+            <MonthGrid key={label} label={label} items={items} timezone={calendar.timezone} />
           ))}
+          {!month.size ? <p className="text-sm text-muted">No entries scheduled.</p> : null}
         </div>
       ) : null}
       {view === "cluster" ? (
@@ -435,6 +427,81 @@ export function CalendarDetail({ id }: { id: string }) {
     </div>
   );
 }
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** A real month grid: seven columns, one cell per day, entries as chips. */
+function MonthGrid({ label, items, timezone }: { label: string; items: CalendarEntry[]; timezone: string }) {
+  const anchor = new Date(Math.min(...items.map((item) => item.publishAt)));
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, year: "numeric", month: "numeric" }).formatToParts(anchor);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const monthIndex = Number(parts.find((part) => part.type === "month")?.value) - 1;
+  const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  const leading = (new Date(Date.UTC(year, monthIndex, 1)).getUTCDay() + 6) % 7;
+
+  const byDay = new Map<number, CalendarEntry[]>();
+  for (const entry of items) {
+    const day = Number(new Intl.DateTimeFormat("en-GB", { timeZone: timezone, day: "numeric" }).format(new Date(entry.publishAt)));
+    byDay.set(day, [...(byDay.get(day) ?? []), entry]);
+  }
+
+  const cells: (number | null)[] = [
+    ...Array.from({ length: leading }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-line bg-elev">
+      <header className="flex items-center justify-between border-b border-line bg-surface/40 px-3 py-2">
+        <h2 className="text-[13px] font-semibold text-fg">{label}</h2>
+        <span className="num text-[11px] text-faint">{items.length} scheduled · {timezone}</span>
+      </header>
+      <div className="grid grid-cols-7 border-b border-line text-[11px] uppercase tracking-[0.06em] text-faint">
+        {WEEKDAYS.map((day) => (
+          <div key={day} className="px-2 py-1.5 text-center">{day.slice(0, 1)}<span className="hidden sm:inline">{day.slice(1)}</span></div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7">
+        {cells.map((day, index) => {
+          const entries = day ? byDay.get(day) ?? [] : [];
+          return (
+            <div
+              key={`${label}-${index}`}
+              className={`min-h-20 border-b border-r border-line/60 p-1.5 last:border-r-0 ${
+                day ? "bg-transparent" : "bg-surface/30"
+              }`}
+            >
+              {day ? (
+                <>
+                  <div className={`num text-[11px] ${entries.length ? "text-fg" : "text-faint"}`}>{day}</div>
+                  <div className="mt-1 space-y-0.5">
+                    {entries.slice(0, 2).map((entry) => (
+                      <div key={entry.id} className="flex items-center gap-1 truncate rounded-sm bg-surface px-1 py-0.5 text-[10px] text-muted" title={entry.title}>
+                        <span className={`size-1.5 shrink-0 rounded-full ${ENTRY_DOT[entry.status] ?? "bg-faint"}`} aria-hidden="true" />
+                        <span className="truncate">{entry.title}</span>
+                      </div>
+                    ))}
+                    {entries.length > 2 ? <div className="num px-1 text-[10px] text-faint">+{entries.length - 2}</div> : null}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+const ENTRY_DOT: Record<string, string> = {
+  SCHEDULED: "bg-accent",
+  WRITING: "bg-warn",
+  WRITTEN: "bg-ok",
+  PUBLISHED: "bg-ok",
+  SKIPPED: "bg-faint",
+  FAILED: "bg-danger",
+};
 
 function groupByMonth(calendar: ContentCalendar): Map<string, CalendarEntry[]> {
   const map = new Map<string, CalendarEntry[]>();
