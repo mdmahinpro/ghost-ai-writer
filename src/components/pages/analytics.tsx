@@ -425,7 +425,7 @@ function Tile({ k, v }: { k: string; v: string }) {
   return (
     <Card className="p-4">
       <div className="eyebrow">{k}</div>
-      <div className="num mt-2 text-[28px] leading-none text-fg">{v}</div>
+      <div className="num mt-2 text-[22px] leading-none text-fg">{v}</div>
     </Card>
   );
 }

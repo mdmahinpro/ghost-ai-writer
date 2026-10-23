@@ -178,7 +178,7 @@ export function Plate({ title, query }: { title: string; query: string }) {
 export function Empty({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
   return (
     <div className="rounded-lg border border-dashed border-line-strong/60 px-6 py-12 text-center">
-      <h2 className="display text-fg">{title}</h2>
+      <h2 className="display-serif text-fg">{title}</h2>
       <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">{body}</p>
       {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
     </div>

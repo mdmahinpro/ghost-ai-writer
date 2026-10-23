@@ -363,11 +363,22 @@ html[data-theme="ocean"] {
   }
 
   /* --- type utilities ------------------------------------------------ */
+  /* Page titles follow the reference: sans, semibold, tight — not a serif voice.
+     The serif is reserved for quiet moments (.display-serif) and article prose. */
   .display {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: clamp(1.25rem, 1.1rem + 0.35vw, 1.375rem);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  .display-serif {
     font-family: var(--font-editorial);
     font-weight: 400;
-    font-size: clamp(1.75rem, 1.2rem + 1.4vw, 2.125rem);
-    line-height: 1.08;
+    font-size: clamp(1.5rem, 1.2rem + 1vw, 1.875rem);
+    line-height: 1.12;
     letter-spacing: -0.01em;
     text-wrap: balance;
   }
