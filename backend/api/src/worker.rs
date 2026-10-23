@@ -439,6 +439,19 @@ async fn run_stage_body(
         .await
         .map(|_| ())
         .map_err(|e| e.to_string()),
+        4 => crate::stages::run_enrichment(
+            pool,
+            engine,
+            job.workspace_id,
+            job.id,
+            job.site_id,
+            website_id,
+            &job.keyword,
+            &now,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string()),
         3 => crate::stages::run_metadata(
             pool,
             engine,
@@ -558,6 +571,10 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn pool() -> SqlitePool {
+        // Nothing in the test suite may touch the network: point the image
+        // fetcher at a closed port so stage 5 fails fast and deterministically.
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| std::env::set_var("GAW_BING_BASE", "http://127.0.0.1:9"));
         let p = SqlitePoolOptions::new()
             .max_connections(4)
             .connect("sqlite::memory:")
@@ -673,7 +690,7 @@ mod tests {
                 .unwrap();
         // 4 of 6 stages exist today, so the honest terminal state is PARTIAL.
         assert_eq!(status, "PARTIAL");
-        assert_eq!(stage_index, 4);
+        assert_eq!(stage_index, 5);
 
         // the blueprint must not be re-run: w2 records exactly the remaining
         // three stages (draft, revision, metadata), never the finished one.
@@ -684,7 +701,7 @@ mod tests {
         .fetch_one(&p)
         .await
         .unwrap();
-        assert_eq!(redo, 3, "worker re-ran finished stages");
+        assert_eq!(redo, 4, "worker re-ran finished stages");
         // The seeded blueprint row never cost anything, so any charge for it
         // would mean w2 redid it.
         let blueprint_charges: i64 =
@@ -848,7 +865,7 @@ mod tests {
             .await
             .unwrap();
         // Three new charges (draft, revision, metadata) — never a second blueprint.
-        assert_eq!(ledger_now, ledger_after_first + 3);
+        assert_eq!(ledger_now, ledger_after_first + 4);
         let blueprint_charges: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM usage_ledger WHERE stage = 'blueprint'")
                 .fetch_one(&p)
@@ -867,6 +884,7 @@ mod tests {
                 (2, "draft".to_string()),
                 (3, "revision".to_string()),
                 (4, "metadata".to_string()),
+                (5, "enrichment".to_string()),
             ],
             "stage rows after a crash-recovered run"
         );
@@ -875,7 +893,7 @@ mod tests {
                 .fetch_one(&p)
                 .await
                 .unwrap();
-        assert_eq!(done, 4, "a stage was skipped instead of run");
+        assert_eq!(done, 5, "a stage was skipped instead of run");
     }
 
     #[tokio::test]

@@ -122,6 +122,8 @@ pub struct ChatRequest {
     pub system: String,
     pub user: String,
     pub json: bool,
+    /// Image URLs for the vision gate. Empty for every text stage.
+    pub images: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -286,6 +288,11 @@ impl MockEngine {
                     }
                 })
             }
+            "vision" => serde_json::json!({
+                "verdict": "RELEVANT",
+                "confidence": 0.9,
+                "sentence": "a desk with funding paperwork and a laptop, matching the topic"
+            }),
             "metadata" => serde_json::json!({
                 "title": "When A PhD Stipend Stops: The Order That Works",
                 "metaDescription": "A stipend can stop mid-term with no warning. Here is the order that actually gets money moving: department bridge, emergency grant, teaching slot.",
@@ -347,11 +354,25 @@ struct Usage {
 impl HttpEngine {
     async fn complete(&self, req: &ChatRequest) -> Result<Completion, EngineError> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        // OpenAI-compatible vision request: the user message becomes a content
+        // array of a text part plus one image_url part per image.
+        let user_content = if req.images.is_empty() {
+            serde_json::json!(req.user)
+        } else {
+            let mut parts = vec![serde_json::json!({"type": "text", "text": req.user})];
+            for img in &req.images {
+                parts.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": img}
+                }));
+            }
+            serde_json::Value::Array(parts)
+        };
         let mut body = serde_json::json!({
             "model": self.model_id,
             "messages": [
                 {"role": "system", "content": req.system},
-                {"role": "user", "content": req.user}
+                {"role": "user", "content": user_content}
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens
@@ -450,14 +471,37 @@ pub async fn load_engine(
             model_id: "mock-1".into(),
         }));
     };
+    Ok(engine_from_row(p))
+}
 
+/// Vision has no mock fallback: an image must only be reported as
+/// "vision confirmed" when a real vision model looked at it. The mock engine
+/// answers every vision request with a canned RELEVANT, which would put a
+/// fixture in the audit trail.
+pub async fn load_vision(
+    pool: &SqlitePool,
+    workspace_id: i64,
+) -> Result<Option<Engine>, sqlx::Error> {
+    let row: Option<ProviderRow> = sqlx::query_as(
+        "SELECT id, workspace_id, provider, label, key_enc, key_hint, kind, base_url, model_id, \
+                price_in_per_mtok, price_out_per_mtok, max_tokens, temperature, role, status \
+         FROM ai_keys \
+         WHERE workspace_id = ? AND role = 'vision' AND status != 'DISABLED' \
+         ORDER BY is_default DESC, priority ASC, id ASC LIMIT 1",
+    )
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(engine_from_row))
+}
+
+fn engine_from_row(p: ProviderRow) -> Engine {
     if p.provider == MOCK_PROVIDER {
-        return Ok(Engine::Mock(MockEngine {
+        return Engine::Mock(MockEngine {
             model_id: p.model_id.unwrap_or_else(|| "mock-1".into()),
-        }));
+        });
     }
-
-    Ok(Engine::Http(Box::new(HttpEngine {
+    Engine::Http(Box::new(HttpEngine {
         provider: p.provider,
         base_url: p
             .base_url
@@ -468,7 +512,7 @@ pub async fn load_engine(
         price_out_per_mtok: p.price_out_per_mtok,
         max_tokens: p.max_tokens,
         temperature: p.temperature,
-    })))
+    }))
 }
 
 pub async fn insert_provider(
@@ -563,6 +607,7 @@ mod tests {
                     system: "s".into(),
                     user: "u".into(),
                     json: true,
+                    images: Vec::new(),
                 })
                 .unwrap();
             let v: serde_json::Value = serde_json::from_str(&out.text).expect("json");
@@ -574,6 +619,7 @@ mod tests {
                     system: "s".into(),
                     user: "u".into(),
                     json: true,
+                    images: Vec::new(),
                 })
                 .unwrap()
                 .cost_usd,

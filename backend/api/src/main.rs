@@ -22,6 +22,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
 use std::time::Instant;
 
+mod image;
 mod lint;
 mod provider;
 mod stages;
@@ -226,6 +227,13 @@ struct LintRequest {
     text: String,
 }
 
+#[derive(Deserialize)]
+struct ImagePickRequest {
+    query: String,
+    #[serde(default)]
+    size: Option<String>,
+}
+
 /// Deterministic AI-tell linter (humanizer patterns). Blocks publish when
 /// `passed` is false. Pure function of the input text.
 async fn lint_text(Json(req): Json<LintRequest>) -> Json<lint::Report> {
@@ -262,6 +270,27 @@ struct ProviderQuery {
 }
 
 /// List providers for a workspace. Keys are never returned — only `key_hint`.
+async fn pick_image(
+    State(st): State<AppState>,
+    Json(req): Json<ImagePickRequest>,
+) -> Json<serde_json::Value> {
+    let size = match req.size.as_deref() {
+        Some("content") => crate::image::CONTENT,
+        _ => crate::image::FEATURED,
+    };
+    let vision = crate::provider::load_vision(&st.pool, 1)
+        .await
+        .ok()
+        .flatten();
+    let scene = crate::image::scene_query(&req.query, &req.query, None);
+    let decision = crate::image::pick(vision.as_ref(), &scene, size).await;
+    Json(serde_json::json!({
+        "image": crate::image::decision_json(&decision),
+        "scene_query": scene,
+        "size": [size.0, size.1]
+    }))
+}
+
 async fn list_provider_routes(
     State(st): State<AppState>,
     Query(q): Query<ProviderQuery>,
@@ -344,6 +373,7 @@ fn app(pool: SqlitePool) -> Router {
         .route("/api/v1/lint", post(lint_text))
         .route("/api/v1/worker", get(worker_status))
         .route("/api/v1/worker/run-once", post(worker_run_once))
+        .route("/api/v1/image/pick", post(pick_image))
         .route(
             "/api/v1/providers",
             get(list_provider_routes).post(create_provider),

@@ -20,6 +20,7 @@ DB = "/opt/data/cache/scratch/s4demo.db"
 API_PORT = 8797
 PROVIDER_PORT = 8903
 ENV = {**os.environ, "GAW_ENGINE": "provider"}
+ENV.setdefault("GAW_BING_BASE", "http://127.0.0.1:9")  # deterministic stage 5
 
 MUST_COVER = [
     "the first 72 hours",
@@ -141,6 +142,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             kind, payload = "blueprint", BLUEPRINT
         elif "You write the article body" in system:
             kind, payload = "draft", DRAFT
+        elif "You check whether an image fits a topic" in system:
+            kind = "vision"
+            payload = {"verdict": "RELEVANT", "confidence": 0.91,
+                       "sentence": "a desk with funding paperwork, matching the topic"}
         elif "You revise an article draft" in system:
             kind = "revision"
             # First answer skips a mustCover item; the repair prompt says so.

@@ -31,7 +31,7 @@ pub const MIN_COVERAGE: f64 = 1.0;
 /// How many of the six stages actually have implementations. Jobs stop here and
 /// are marked PARTIAL — calling a job COMPLETED while stages 5-6 do nothing
 /// would be a lie the UI would happily render.
-pub const IMPLEMENTED_STAGES: i64 = 4;
+pub const IMPLEMENTED_STAGES: i64 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
@@ -508,6 +508,7 @@ where
             system: system.to_string(),
             user: user_msg,
             json: true,
+            images: Vec::new(),
         };
         let completion = match engine.complete(&req).await {
             Ok(c) => c,
@@ -1049,6 +1050,92 @@ pub async fn run_metadata(
     Ok(outcome)
 }
 
+/// Stage 5 — Site Enrichment: the featured image, chosen with their Bing
+/// thumbnail technique and gated by vision. Internal links are still to come,
+/// and the payload says so rather than pretending the stage is complete.
+pub async fn run_enrichment(
+    pool: &SqlitePool,
+    engine: &Engine,
+    workspace_id: i64,
+    job_id: i64,
+    site_id: i64,
+    website_id: Option<i64>,
+    keyword: &str,
+    now: &str,
+) -> Result<StageOutcome, StageError> {
+    let article_id = ensure_article(pool, job_id, site_id, website_id, keyword, now).await?;
+    let revision = stage_payload(pool, job_id, 3).await?.ok_or_else(|| {
+        StageError::Validation(
+            "enrichment".into(),
+            vec!["revision missing: stage 3 must succeed first".into()],
+        )
+    })?;
+    // The blueprint's titleHint is the article's actual title; the revision
+    // payload carries no title, and a quality note is not one.
+    let title = stage_payload(pool, job_id, 1)
+        .await?
+        .and_then(|p| blueprint_of(&p))
+        .map(|b| b.title_hint)
+        .unwrap_or_else(|| keyword.to_string());
+    let title = title.as_str();
+    let body = revision["revision"]["body"].as_str().unwrap_or("");
+    // The first markdown heading is the most concrete scene in the article.
+    let first_heading = body
+        .lines()
+        .find(|l| l.trim_start().starts_with("## "))
+        .map(|l| l.trim_start_matches('#').trim().to_string());
+    let scene = crate::image::scene_query(title, keyword, first_heading.as_deref());
+
+    // A vision provider is optional: without one the image is accepted
+    // unchecked and the code says SKIPPED_VISION_UNAVAILABLE.
+    let vision = crate::provider::load_vision(pool, workspace_id)
+        .await
+        .ok()
+        .flatten();
+    let decision = crate::image::pick(vision.as_ref(), &scene, crate::image::FEATURED).await;
+
+    let outcome = StageOutcome {
+        tokens_in: decision.tokens_in,
+        tokens_out: decision.tokens_out,
+        cost_usd: decision.cost_usd,
+        repairs: 0,
+    };
+    record_stage(
+        pool,
+        article_id,
+        website_id,
+        5,
+        "enrichment",
+        &outcome,
+        if decision.tokens_in > 0 {
+            vision.as_ref().unwrap_or(engine)
+        } else {
+            engine
+        },
+        &json!({
+            "image": crate::image::decision_json(&decision),
+            "scene_query": scene,
+            "links": {
+                "code": "SKIPPED_NO_SITE_INDEX",
+                "reason": "internal-link insert/verify is the next slice"
+            },
+            "provider": engine.provider(),
+            "model": engine.model_id(),
+        }),
+        now,
+    )
+    .await?;
+    if let Some(url) = &decision.url {
+        sqlx::query("UPDATE articles SET featured_image_url = ?, featured_alt = ? WHERE id = ?")
+            .bind(url)
+            .bind(&decision.alt)
+            .bind(article_id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(outcome)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1209,6 +1296,7 @@ mod tests {
                 system: "s".into(),
                 user: "u".into(),
                 json: true,
+                images: Vec::new(),
             })
             .await
             .unwrap();
@@ -1222,6 +1310,7 @@ mod tests {
                     system: "s".into(),
                     user: "u".into(),
                     json: true,
+                    images: Vec::new(),
                 })
                 .await
                 .unwrap();
