@@ -238,16 +238,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
-       <aside className="sticky top-0 hidden h-screen w-68 shrink-0 flex-col border-r border-line/60 bg-elev md:flex">
+       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-line/70 bg-surface/50 md:flex">
         <Brand />
+        <CreateButton />
         <SidebarNav path={path} />
-        <p className="border-t border-line/60 px-5 py-4 text-xs leading-5 text-faint">Six stages. One publishing desk.</p>
+        <p className="px-4 py-3 text-[11px] leading-5 text-faint">Six stages · one desk</p>
       </aside>
 
       {open ? (
         <div className="fixed inset-0 z-40 md:hidden">
            <button className="absolute inset-0 bg-bg/70" aria-label="Close menu" onClick={() => setOpen(false)} />
-            <div className="relative flex h-full w-[min(20rem,88vw)] flex-col border-r border-line/60 bg-elev shadow-2xl">
+            <div className="relative flex h-full w-[min(18rem,88vw)] flex-col border-r border-line bg-surface shadow-sm">
              <div className="flex items-center justify-between">
                <Brand />
                <button className="mr-3 grid size-11 place-items-center text-muted" onClick={() => setOpen(false)} aria-label="Close">
@@ -271,8 +272,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-         <header data-shell-header className="sticky top-0 z-20 flex items-center gap-2 border-b border-line/60 bg-bg/95 px-3 py-3 backdrop-blur md:px-8">
-          <button className="grid size-11 place-items-center rounded-lg border border-line md:hidden" onClick={() => setOpen(true)} aria-label="Open menu">
+         <header data-shell-header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-line bg-bg/90 px-3 backdrop-blur md:px-6">
+          <button className="grid size-9 place-items-center rounded-md text-muted hover:bg-surface hover:text-fg md:hidden" onClick={() => setOpen(true)} aria-label="Open menu">
             <Menu className="size-5" />
           </button>
           <button
@@ -281,16 +282,16 @@ export function AppShell({ children }: { children: ReactNode }) {
               setPalette(true);
               setQuery("");
             }}
-             className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-line/60 bg-elev px-3 text-left text-sm text-muted hover:border-line-strong hover:bg-surface"
+            className="flex min-h-9 min-w-0 flex-1 max-w-md items-center gap-2 rounded-md border border-line bg-elev px-2.5 text-left text-[13px] text-muted hover:border-line-strong"
           >
             <Search className="size-4 shrink-0" />
             <span className="truncate">Search or jump</span>
-            <span className="ml-auto hidden rounded-md border border-line px-1.5 py-0.5 font-mono text-xs sm:inline">Ctrl K</span>
+            <span className="num ml-auto hidden rounded-sm border border-line px-1.5 py-0.5 text-[11px] text-faint sm:inline">⌘K</span>
           </button>
            <div className="relative hidden sm:block">
             <button
               type="button"
-              className="flex min-h-11 max-w-48 items-center gap-2 rounded-lg border border-line bg-surface px-3 text-sm"
+              className="flex min-h-9 max-w-48 items-center gap-2 rounded-md px-2 text-[13px] text-muted hover:bg-surface hover:text-fg"
               aria-label="Workspace switcher"
               onClick={() => setSwitcher((value) => !value)}
             >
@@ -298,7 +299,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="truncate">{site?.name ?? "No workspace"}</span>
             </button>
             {switcher ? (
-              <div className="absolute right-0 top-12 z-30 w-72 rounded-xl border border-line bg-elev p-2">
+              <div className="absolute right-0 top-12 z-30 w-72 rounded-lg border border-line bg-elev p-2">
                 <div className="px-2 py-1 font-mono text-xs uppercase tracking-widest text-faint">Website workspaces</div>
                 {sites.map((item) => (
                   <button
@@ -322,11 +323,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : null}
           </div>
           <div className="relative">
-            <button type="button" className="grid size-11 place-items-center rounded-lg border border-line" aria-label="Recent activity" onClick={() => setBell((value) => !value)}>
+            <button type="button" className="grid size-9 place-items-center rounded-md text-muted hover:bg-surface hover:text-fg" aria-label="Recent activity" onClick={() => setBell((value) => !value)}>
               <Bell className="size-4" />
             </button>
             {bell ? (
-              <div className="absolute right-0 top-12 z-30 w-80 rounded-xl border border-line bg-elev p-2">
+              <div className="absolute right-0 top-12 z-30 w-80 rounded-lg border border-line bg-elev p-2">
                 <div className="px-2 py-1 text-xs uppercase tracking-widest text-faint">Recent activity</div>
                 {activity
                   .filter((item) => !site || item.siteId === site.id)
@@ -341,7 +342,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
             ) : null}
           </div>
-          <ThemePicker />
+          <div className="hidden sm:block">
+            <ThemePicker />
+          </div>
           <div className="relative">
             <button
               type="button"
@@ -359,7 +362,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </span>
             </button>
             {workerPanel ? (
-              <div className="absolute right-0 top-12 z-30 w-80 rounded-xl border border-line bg-elev p-3 text-sm">
+              <div className="absolute right-0 top-12 z-30 w-80 rounded-lg border border-line bg-elev p-3 text-sm">
                 <div className="font-mono text-xs uppercase tracking-widest text-faint">Writing service</div>
                 <dl className="mt-2 space-y-1.5">
                   <div className="flex justify-between gap-3">
@@ -403,21 +406,21 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : null}
           </div>
         </header>
-         <main className="min-w-0 flex-1 px-4 py-7 md:px-10 md:py-10">
-           <div className="mx-auto w-full max-w-6xl rise">{site ? children : <WorkspacesPage />}</div>
+        <main className="min-w-0 flex-1 px-5 py-6 md:px-8 md:py-8">
+          <div className="mx-auto w-full max-w-6xl">{site ? children : <WorkspacesPage />}</div>
         </main>
       </div>
       {palette ? (
-         <div className="fixed inset-0 z-50 flex items-start justify-center bg-bg/80 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Search and commands" onKeyDown={(event) => { if (event.key === "Escape") setPalette(false); }}>
+         <div className="fixed inset-0 z-50 flex items-start justify-center bg-bg/70 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Search and commands" onKeyDown={(event) => { if (event.key === "Escape") setPalette(false); }}>
           <button className="absolute inset-0" aria-label="Close search" onClick={() => setPalette(false)} />
-           <div className="relative w-full max-w-xl overflow-hidden rounded-xl border border-line/60 bg-elev shadow-2xl">
+           <div className="relative w-full max-w-xl overflow-hidden rounded-lg border border-line bg-elev shadow-sm">
             <input
               ref={searchRef}
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search articles, runs, plans, or type a command"
-              className="min-h-12 w-full border-b border-line bg-transparent px-4 text-sm outline-none"
+              className="min-h-12 w-full border-b border-line bg-transparent px-4 text-sm outline-none placeholder:text-faint"
               aria-label="Search the studio"
             />
             <div className="max-h-80 overflow-y-auto p-2">
@@ -463,7 +466,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <HumanizePipeline />
       <DeskWorkers />
       {notice ? (
-        <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-md rounded-lg border border-line bg-elev px-4 py-3 text-sm text-fg md:left-auto md:right-6">
+        <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-md rounded-md border border-line bg-elev px-4 py-3 text-sm text-fg shadow-sm md:left-auto md:right-6">
           {notice.text}
           <span className="ml-2 text-faint">{relTime(Date.now())}</span>
         </div>
@@ -474,13 +477,28 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function Brand() {
   return (
-    <Link to="/" className="flex items-center gap-3 px-4 py-5">
+    <Link to="/" className="flex items-center gap-2.5 px-4 pb-3 pt-4">
       <StudioMark />
-      <span>
-        <span className="block text-sm font-semibold tracking-tight text-fg">Ghost AI Writer</span>
-        <span className="mt-0.5 block text-xs text-faint">Content desk</span>
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-semibold tracking-[-0.01em] text-fg">Ghost AI Writer</span>
+        <span className="mt-0.5 block text-[11px] text-faint">Content desk</span>
       </span>
     </Link>
+  );
+}
+
+/** The one primary action in the sidebar (reference: AirOps puts + Create first). */
+function CreateButton() {
+  return (
+    <div className="px-3 pb-2">
+      <Link
+        to="/create"
+        className="flex min-h-9 w-full items-center gap-2 rounded-md border border-line bg-elev px-2.5 text-[13px] font-medium text-fg shadow-xs transition-colors hover:border-accent/50 hover:text-accent"
+      >
+        <Plus className="size-4 shrink-0 text-accent" />
+        New article
+      </Link>
+    </div>
   );
 }
 
@@ -491,16 +509,16 @@ function SidebarNav({ path, onNavigate }: { path: string; onNavigate?: () => voi
     if (current) setExpanded((previous) => previous[current.group] ? previous : { ...previous, [current.group]: true });
   }, [path]);
   return (
-    <nav aria-label="Main navigation" className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+    <nav aria-label="Main navigation" className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
       {SHELL_GROUPS.map((group) => {
         const items = NAV.filter((item) => item.group === group);
         const isOpen = Boolean(expanded[group]);
         return (
           <section key={group} className="mb-3">
-            <button type="button" aria-expanded={isOpen} aria-controls={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} onClick={() => setExpanded((previous) => ({ ...previous, [group]: !previous[group] }))} className="flex min-h-10 w-full items-center justify-between rounded-lg px-3 text-left text-xs font-bold uppercase tracking-[0.08em] text-muted hover:bg-surface hover:text-fg">
+            <button type="button" aria-expanded={isOpen} aria-controls={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} onClick={() => setExpanded((previous) => ({ ...previous, [group]: !previous[group] }))} className="flex min-h-8 w-full items-center justify-between rounded-sm px-2 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-faint hover:text-fg">
               {group}<ChevronDown aria-hidden="true" className={cn("size-3.5 transition-transform", !isOpen && "-rotate-90")} />
             </button>
-            <div id={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} hidden={!isOpen} className="mt-1 space-y-1 pb-2">
+            <div id={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} hidden={!isOpen} className="mt-0.5 space-y-px pb-2">
               {items.map((item) => <NavLink key={item.id} item={item} path={path} onNavigate={onNavigate} />)}
             </div>
           </section>
@@ -518,19 +536,19 @@ function ghostDot(ghost: { status: string; lastError?: string }) {
 }
 
 function CommandRow({ label, hint, href, onPick }: { label: string; hint: string; href?: string; onPick: () => void }) {
-  const className = "flex min-h-11 w-full items-center justify-between gap-3 rounded-lg px-3 text-left text-sm hover:bg-surface";
+  const className = "flex min-h-10 w-full items-center justify-between gap-3 rounded-md px-3 text-left text-[13px] hover:bg-surface";
   if (!href) {
     return (
       <button className={className} onClick={onPick}>
         <span className="truncate">{label}</span>
-        <span className="shrink-0 font-mono text-xs uppercase tracking-wider text-faint">{hint}</span>
+        <span className="shrink-0 text-[11px] uppercase tracking-[0.06em] text-faint">{hint}</span>
       </button>
     );
   }
   return (
     <Link to={href} className={className} onClick={onPick}>
       <span className="truncate">{label}</span>
-      <span className="shrink-0 font-mono text-xs uppercase tracking-wider text-faint">{hint}</span>
+      <span className="shrink-0 text-[11px] uppercase tracking-[0.06em] text-faint">{hint}</span>
     </Link>
   );
 }
@@ -544,11 +562,13 @@ function NavLink({ item, path, onNavigate }: { item: (typeof NAV)[number]; path:
       onClick={onNavigate}
       aria-current={on ? "page" : undefined}
       className={cn(
-         "flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors duration-150",
-         on ? "bg-brass/10 font-semibold text-fg shadow-[inset_3px_0_0_var(--color-brass)]" : "text-muted hover:bg-surface hover:text-fg",
+        "flex min-h-9 items-center gap-2.5 rounded-md px-2 text-[13px] font-medium transition-colors duration-150",
+        on
+          ? "bg-accent/10 font-semibold text-fg shadow-[inset_2px_0_0_var(--color-accent)]"
+          : "text-muted hover:bg-surface-2/70 hover:text-fg",
       )}
     >
-      <Icon className={cn("size-4 shrink-0", on ? "text-brass" : "text-faint")} />
+      <Icon className={cn("size-4 shrink-0", on ? "text-accent" : "text-faint")} />
        <span className="truncate">{item.label}</span>
     </Link>
   );

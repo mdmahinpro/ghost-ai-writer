@@ -424,8 +424,8 @@ function avg(values: number[]) {
 function Tile({ k, v }: { k: string; v: string }) {
   return (
     <Card className="p-4">
-      <div className="font-mono text-xs uppercase tracking-widest text-faint">{k}</div>
-      <div className="mt-2 font-mono text-3xl">{v}</div>
+      <div className="eyebrow">{k}</div>
+      <div className="num mt-2 text-[28px] leading-none text-fg">{v}</div>
     </Card>
   );
 }

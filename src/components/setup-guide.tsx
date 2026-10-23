@@ -32,7 +32,7 @@ export function SetupGuide() {
   }
 
   return (
-    <section className="mb-4 rounded-xl border border-brass/40 bg-elev p-5">
+    <section className="mb-4 rounded-lg border border-brass/40 bg-elev p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="font-mono text-xs uppercase tracking-widest text-brass">

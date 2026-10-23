@@ -98,7 +98,7 @@ function ghostBadge(author: AuthorProfile): string {
 
 function EngineBanner() {
   return (
-    <div className="rounded-xl border border-line bg-brass/5 p-4 text-sm">
+    <div className="rounded-lg border border-line bg-brass/5 p-4 text-sm">
       <div className="font-semibold tracking-tight">Auto-Author Engine Active (250-article cap · US Personas · Zero-Disk Avatars)</div>
       <p className="mt-1 text-muted">
         Authors are created and assigned automatically by niche expertise — you never have to make one before a run. Each expert writes in a

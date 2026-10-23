@@ -71,7 +71,7 @@ export function ThemePicker({ variant = "menu" }: { variant?: "menu" | "section"
         <span className="size-4 rounded-full border border-line" style={{ background: current.accent }} />
       </button>
       {open ? (
-        <div className="absolute right-0 top-12 z-30 w-48 rounded-xl border border-line bg-elev p-1" role="listbox" aria-label="Themes">
+        <div className="absolute right-0 top-12 z-30 w-48 rounded-lg border border-line bg-elev p-1" role="listbox" aria-label="Themes">
           {THEMES.map((item) => (
             <button
               key={item.id}

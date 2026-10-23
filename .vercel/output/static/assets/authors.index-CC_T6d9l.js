@@ -1,1 +1,0 @@
-import{r as e}from"./authors-DK_cwySq.js";var t=e;export{t as component};

@@ -141,7 +141,7 @@ export function AccountPage() {
         {!savedKey ? <p className="text-sm text-muted">Add an email key to send a verification email.</p> : null}
         {mailNote ? <p className="text-sm text-muted">{mailNote}</p> : null}
         {mailUrl ? (
-          <div className="rounded-xl border border-line bg-surface p-4 text-sm leading-6">
+          <div className="rounded-lg border border-line bg-surface p-4 text-sm leading-6">
             <p className="font-medium">To {account.email}</p>
             <p className="text-muted">Subject: Verify your studio email</p>
             <p className="mt-2">Open this link to verify. It expires in 30 minutes.</p>

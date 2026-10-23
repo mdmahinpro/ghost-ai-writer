@@ -439,7 +439,7 @@ function CpanelCard({
           host {maskMiddle(shownHost)} · username {maskMiddle(shownUser)} · password {password ? "typed" : "saved"} · path {shownPath}
         </p>
       ) : null}
-      {banner ? <p className="rounded-xl border border-ok/40 bg-ok/10 px-3 py-2 text-ok">{banner}</p> : null}
+      {banner ? <p className="rounded-lg border border-ok/40 bg-ok/10 px-3 py-2 text-ok">{banner}</p> : null}
       {note ? <p className={tone === "ok" ? "text-ok" : "text-danger"}>{note}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" onClick={() => onTest(fields())} disabled={busy}>
@@ -460,7 +460,7 @@ function CpanelCard({
             {showSteps ? "Hide technical details" : "Show technical details"}
           </button>
           {showSteps ? (
-            <ul className="mt-2 space-y-1 rounded-xl border border-line px-3 py-2 font-mono text-xs">
+            <ul className="mt-2 space-y-1 rounded-lg border border-line px-3 py-2 font-mono text-xs">
               {steps.map((step) => (
                 <li key={step.name} className="grid grid-cols-[8rem_4.5rem_minmax(0,1fr)] gap-x-3">
                   <span className={step.ok ? "text-ok" : "text-danger"}>{step.ok ? "OK" : "FAIL"} {step.name}</span>

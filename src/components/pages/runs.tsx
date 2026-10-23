@@ -31,7 +31,7 @@ export function RunsPage() {
     <div>
       <PageIntro eyebrow="Content" title="Runs" lede="Content generation runs — durable jobs that survive a refresh. Two articles per website at a time. Work continues if you leave this page, unless the worker is offline." />
       {keysCooling || failedJobs ? (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brass/40 bg-brass/5 px-4 py-3">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brass/40 bg-brass/5 px-4 py-3">
           <p className="text-sm text-muted">
             {keysCooling ? `${keysCooling} key${keysCooling === 1 ? "" : "s"} cooling · ` : ""}
             {failedJobs ? `${failedJobs} failed job${failedJobs === 1 ? "" : "s"}` : ""}

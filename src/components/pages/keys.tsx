@@ -416,7 +416,7 @@ export function KeysPage() {
           ))}
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-2 rounded-xl border border-line p-3">
+          <div className="space-y-2 rounded-lg border border-line p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">Tavily keys</span>
               <Badge tone={webSearch.tavilyKeys.length ? "ok" : "muted"}>{webSearch.tavilyKeys.filter((key) => !key.disabled).length}/{webSearch.tavilyKeys.length} ready</Badge>
@@ -437,7 +437,7 @@ export function KeysPage() {
               </Button>
             </div>
           </div>
-          <div className="space-y-2 rounded-xl border border-line p-3">
+          <div className="space-y-2 rounded-lg border border-line p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">Firecrawl keys</span>
               <Badge tone={webSearch.firecrawlKeys.length ? "ok" : "muted"}>{webSearch.firecrawlKeys.filter((key) => !key.disabled).length}/{webSearch.firecrawlKeys.length} ready</Badge>
