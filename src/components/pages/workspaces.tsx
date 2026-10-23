@@ -80,8 +80,8 @@ export function WorkspacesPage() {
         </Button>
       </Card>
       {!sites.length ? (
-        <Card className="p-10 text-center">
-          <h2 className="text-2xl font-semibold">Create your first workspace</h2>
+        <Card className="p-8 text-center">
+          <h2 className="text-base font-semibold text-fg">Create your first workspace</h2>
           <p className="mt-2 text-sm text-muted">
             This studio starts completely empty — no demo data. Create one workspace per website; it is saved to the server database so every browser and incognito window loads the exact same workspaces, keys, and articles.
           </p>
