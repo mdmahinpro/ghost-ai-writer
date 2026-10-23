@@ -125,6 +125,16 @@ export function ArticlesPage() {
         <Empty title="No articles" body="Completed jobs land here with a Ghost ledger, downloaded photos, and internal links." />
       ) : (
         <div className="overflow-hidden rounded-lg border border-line bg-elev">
+          <div className="flex items-center gap-2.5 border-b border-line bg-surface/40 px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-faint">
+            <span aria-hidden="true" className="w-3.5 shrink-0" />
+            <span className="hidden w-16 shrink-0 sm:inline">ID</span>
+            <span className="min-w-0 flex-1">Title</span>
+            <span className="hidden w-40 shrink-0 lg:inline">Slug</span>
+            <span className="hidden w-28 shrink-0 text-right md:inline">Links</span>
+            <span className="hidden w-14 shrink-0 text-right sm:inline">Images</span>
+            <span className="hidden w-12 shrink-0 text-right sm:inline">Unique</span>
+            <span className="w-16 shrink-0 text-right">Age</span>
+          </div>
           {(["published", "draft"] as const)
             .map((key) => ({
               key,
@@ -161,8 +171,8 @@ export function ArticlesPage() {
                     >
                       {article.title}
                     </Link>
-                    <span className="hidden max-w-40 shrink-0 truncate text-[11px] text-faint lg:inline">/{article.slug}</span>
-                    <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted md:inline-flex" title="Outbound · inbound links">
+                    <span className="hidden w-40 shrink-0 truncate text-[11px] text-faint lg:inline">/{article.slug}</span>
+                    <span className="hidden w-28 shrink-0 items-center justify-end gap-1 text-[11px] text-muted md:inline-flex" title="Outbound · inbound links">
                       {article.links.length} out · {inboundCount(articles, article.slug)} in
                     </span>
                     <span className="hidden w-14 shrink-0 text-right text-[11px] text-muted sm:inline" title="Selected images">
@@ -297,6 +307,15 @@ export function ArticleDetail({ id }: { id: string }) {
       setBusy(false);
     }
   }
+
+  const stats: [string, string][] = [
+    ["Uniqueness", `${Math.round(uniquenessAgainst(article.title, article.keyword, corpus.filter((item) => item.id !== article.id).map((item) => ({ keyword: item.keyword, title: item.title, slug: item.slug, sample: `${item.title}. ${item.sections.map((section) => section.heading).join(". ")}` })), article.sections) * 100)}%`],
+    ["Coverage", `${Math.round(measureArticle(article).coverage * 100)}%`],
+    ["Intent match", `${Math.round(measureArticle(article).intent * 100)}%`],
+    ["Words", String(article.words)],
+    ["Links", `${article.links.length} out · ${inboundCount(corpus, article.slug)} in`],
+    ["Bing score", `${Math.floor(score * 100)}%`],
+  ];
 
   return (
     <div className="grid gap-4 lg:grid-cols-5">
@@ -452,14 +471,20 @@ export function ArticleDetail({ id }: { id: string }) {
           ) : null}
         </Card>
       </div>
-      <div className="space-y-4 lg:col-span-2">
-        <Card className="grid grid-cols-2 gap-3 p-4 text-sm">
-          <Stat k="Uniqueness" v={`${Math.round(uniquenessAgainst(article.title, article.keyword, corpus.filter((item) => item.id !== article.id).map((item) => ({ keyword: item.keyword, title: item.title, slug: item.slug, sample: `${item.title}. ${item.sections.map((section) => section.heading).join(". ")}` })), article.sections) * 100)}%`} />
-          <Stat k="Coverage" v={`${Math.round(measureArticle(article).coverage * 100)}%`} />
-          <Stat k="Intent match" v={`${Math.round(measureArticle(article).intent * 100)}%`} />
-          <Stat k="Words" v={String(article.words)} />
-          <Stat k="Links" v={`${article.links.length} out · ${inboundCount(corpus, article.slug)} in`} />
-          <Stat k="Bing" v={`${Math.floor(score * 100)}%`} />
+      <div className="space-y-4 lg:sticky lg:top-20 lg:col-span-2 lg:self-start">
+        <Card className="overflow-hidden p-0">
+          <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+            <h2 className="text-[13px] font-semibold text-fg">Properties</h2>
+            <span className="num text-[11px] text-faint">{article.words} words</span>
+          </div>
+          <dl className="divide-y divide-line/70">
+            {stats.map(([label, value]) => (
+              <div key={label} className="flex h-9 items-center justify-between gap-3 px-4">
+                <dt className="text-[12px] text-muted">{label}</dt>
+                <dd className="num truncate text-[12px] text-fg">{value}</dd>
+              </div>
+            ))}
+          </dl>
         </Card>
         {author ? (
           <Card className="p-4 text-sm">
