@@ -55,18 +55,18 @@ export function BillingPage() {
       />
       <div className="grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
-          <div className="text-xs uppercase tracking-widest text-faint">Plan</div>
-          <div className="mt-1 text-2xl font-semibold">Owner</div>
+          <div className="eyebrow">Plan</div>
+          <div className="mt-1.5 text-[15px] font-semibold text-fg">Owner</div>
           <p className="mt-1 text-sm text-muted">{sites.length} websites, no cap</p>
         </Card>
         <Card className="p-4">
-          <div className="text-xs uppercase tracking-widest text-faint">Today</div>
-          <div className="mt-1 font-mono text-2xl font-semibold">{money(spentToday)}</div>
+          <div className="eyebrow">Today</div>
+          <div className="num mt-1.5 text-[22px] leading-none text-fg">{money(spentToday)}</div>
           <p className="mt-1 text-sm text-muted">Settled usage, not a charge</p>
         </Card>
         <Card className="p-4">
-          <div className="text-xs uppercase tracking-widest text-faint">This invoice</div>
-          <div className="mt-1 font-mono text-2xl font-semibold">{money(invoice.usd)}</div>
+          <div className="eyebrow">This invoice</div>
+          <div className="num mt-1.5 text-[22px] leading-none text-fg">{money(invoice.usd)}</div>
           <p className="mt-1 text-sm text-muted">{invoice.lines.length} settled lines</p>
         </Card>
       </div>
@@ -86,36 +86,36 @@ export function BillingPage() {
       </Card>
       {saved ? <p className="text-sm text-muted">{saved}</p> : null}
       <Card className="p-5">
-        <h2 className="font-display text-2xl">Usage invoice</h2>
-        <p className="mt-1 text-sm text-muted">
+        <h2 className="text-[13px] font-semibold text-fg">Usage invoice</h2>
+        <p className="mt-1 text-[12px] text-faint">
           {invoice.number} · issued {invoice.issued} · {invoice.rangeLabel}
         </p>
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="text-xs uppercase tracking-widest text-faint">
+          <table className="w-full min-w-[640px] text-left text-[13px]">
+            <thead className="text-[11px] uppercase tracking-[0.06em] text-faint">
               <tr>
                 <th className="py-2 font-medium">Date</th>
                 <th className="py-2 font-medium">Website</th>
                 <th className="py-2 font-medium">Stage</th>
                 <th className="py-2 font-medium">Model</th>
-                <th className="py-2 font-medium">Tokens</th>
-                <th className="py-2 font-medium">Amount</th>
+                <th className="py-2 text-right font-medium">Tokens</th>
+                <th className="py-2 text-right font-medium">Amount</th>
               </tr>
             </thead>
             <tbody>
               {invoice.lines.map((line, index) => (
-                <tr key={`${line.date}-${index}`} className="border-t border-line">
-                  <td className="py-2">{line.date}</td>
+                <tr key={`${line.date}-${index}`} className="border-t border-line/70 hover:bg-surface/60">
+                  <td className="py-2.5 text-muted">{line.date}</td>
                   <td>{line.site}</td>
                   <td>{line.stage}</td>
                   <td>{line.model}</td>
-                  <td className="font-mono">{line.tokens}</td>
-                  <td className="font-mono">{money(line.usd)}</td>
+                  <td className="num py-2.5 text-right text-muted">{line.tokens}</td>
+                  <td className="num py-2.5 text-right text-fg">{money(line.usd)}</td>
                 </tr>
               ))}
               {!invoice.lines.length ? (
                 <tr>
-                  <td className="py-3 text-muted" colSpan={6}>
+                  <td className="py-6 text-center text-[12px] text-faint" colSpan={6}>
                     No settled usage in this range.
                   </td>
                 </tr>
@@ -123,9 +123,11 @@ export function BillingPage() {
             </tbody>
           </table>
         </div>
-        <p className="mt-4 text-sm">
-          {invoice.lines.length} lines · {invoice.tokens} tokens · {money(invoice.usd)}
-        </p>
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-1 border-t border-line pt-3 text-[12px] text-muted">
+          <span className="num">{invoice.lines.length} lines</span>
+          <span className="num">{invoice.tokens} tokens</span>
+          <span className="num text-[13px] font-semibold text-fg">{money(invoice.usd)}</span>
+        </div>
         <p className="mt-2 text-xs leading-5 text-faint">
           The ledger is the settled usage saved in this browser. It is not written to a shared database, because that table would be readable without an account. Downloading does not pay anyone.
         </p>
