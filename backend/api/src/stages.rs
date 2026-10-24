@@ -28,10 +28,12 @@ pub const MAX_REVISION_PASSES: usize = 2;
 /// own pipeline reports 0.99 coverage, so anything less is a rewrite.
 pub const MIN_COVERAGE: f64 = 1.0;
 
-/// How many of the six stages actually have implementations. Jobs stop here and
-/// are marked PARTIAL — calling a job COMPLETED while stages 5-6 do nothing
-/// would be a lie the UI would happily render.
-pub const IMPLEMENTED_STAGES: i64 = 5;
+/// How many of the six stages actually have implementations. All six now do
+/// (validation/release is the last), so a job that clears every stage is
+/// genuinely COMPLETED. This must stay in step with the dispatch arms in
+/// `worker.rs`: a stage with no arm silently `Ok(())`s and the job would be
+/// called complete without having run it.
+pub const IMPLEMENTED_STAGES: i64 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
@@ -442,7 +444,7 @@ pub fn metadata_prompt(keyword: &str, bp: &Blueprint, prose: &str) -> (String, S
     (system, user)
 }
 
-fn slugify(s: &str) -> String {
+pub fn slugify(s: &str) -> String {
     let mut out = String::new();
     let mut dash = false;
     for ch in s.to_lowercase().chars() {
@@ -1134,6 +1136,630 @@ pub async fn run_enrichment(
             .await?;
     }
     Ok(outcome)
+}
+
+// ---------------------------------------------------------------------------
+// Stage 6 — Validation & Release. Ported one-to-one from the TS engine's
+// `gateText` gate + `publishArticle` finalization (engine.ts:1522+):
+//
+//  1. Build the site corpus (every article on the site except this job's own
+//     row — otherwise L1 would refuse the article against itself).
+//  2. `gate_text` (L1 exact / L2 lexical / L3 semantic) + the "second angle"
+//     title trap. A refusal is a *pass* of the stage: the gate did its job,
+//     the article is marked REFUSED with the reason, and the job completes.
+//  3. Slug de-dup at publish time (`unique_slug`, collision → `-2`), because
+//     two jobs in one window can pick the same packaged slug.
+//  4. Final markdown = the revision prose (intro + body + FAQ), internal
+//     links inserted and recorded in `article_links`, words measured, and
+//     the article's displayed `uniqueness_score` recomputed with the TS
+//     `uniquenessAgainst` formula (this is the number the UI shows — not the
+//     gate's max similarity).
+//  5. Push to Ghost when the website is LIVE and configured; SANDBOX (or an
+//     unconfigured Ghost) stores the article as a publish-held draft — that
+//     is a manual-publish state, not a failure.
+//
+/// The TS `contentTokens` filter for `uniquenessAgainst`: >3 chars, stop-list.
+const CONTENT_STOP: &[&str] = &[
+    "the", "a", "an", "to", "of", "for", "and", "or", "is", "are", "with", "this", "that",
+    "from", "into", "about", "you", "your", "page", "not", "how", "what", "who", "when",
+    "does", "can", "write", "writing", "note", "notes", "plan", "week", "weeks", "name",
+    "named", "leave", "say", "says", "said", "one", "two", "also", "just", "more", "most",
+    "than", "then", "will", "would", "could", "should", "their", "there", "them", "they",
+    "our", "out", "its", "his", "her", "she", "he", "was", "were", "been", "being", "have",
+    "has", "had", "but", "if", "so", "as", "at", "by", "on", "in",
+];
+
+fn content_tokens(text: &str) -> Vec<String> {
+    let text = text.to_lowercase();
+    let out: Vec<String> = text
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .filter(|w| w.len() > 3 && !CONTENT_STOP.contains(&w))
+        .map(str::to_string)
+        .collect();
+    out
+}
+
+/// TS `tokenOverlap`: shared / union over distinct tokens.
+fn token_overlap(left: &[String], right: &[String]) -> f64 {
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    let bag: std::collections::HashSet<&str> = right.iter().map(String::as_str).collect();
+    let shared = left.iter().filter(|w| bag.contains(w.as_str())).count();
+    let union: std::collections::HashSet<&str> = left
+        .iter()
+        .chain(right.iter())
+        .map(String::as_str)
+        .collect();
+    shared as f64 / union.len() as f64
+}
+
+/// The TS `uniquenessAgainst` formula — the score the UI shows per article.
+/// Title hits count at 0.75, body-word overlap at 0.25, and a hit above 0.82
+/// stands on its own. Returns 0-1, rounded to three decimals like the TS.
+pub fn uniqueness_against(
+    title: &str,
+    keyword: &str,
+    heads: &str,
+    corpus: &[crate::gate::CorpusItem],
+) -> f64 {
+    if corpus.is_empty() {
+        return 1.0;
+    }
+    let mine = content_tokens(&format!("{title} {keyword} {heads}"));
+    let mut max: f64 = 0.0;
+    for item in corpus {
+        let title_hit = crate::gate::lexical_similarity(title, &item.title).max(
+            crate::gate::lexical_similarity(
+                &slugify(title),
+                &item.slug,
+            ),
+        );
+        let overlap =
+            token_overlap(&mine, &content_tokens(&format!("{} {}", item.title, item.keyword)));
+        let combined = title_hit * 0.75 + overlap * 0.25;
+        max = max.max(if title_hit > 0.82 { title_hit } else { combined });
+    }
+    // TS: `Math.round((1 - max) * 1000) / 1000` — the stored number is the
+    // displayed one, rounded to three decimals. (`* 1000.0 / 1000.0` would be
+    // an identity op and is not the same number.)
+    ((1.0 - max) * 1000.0).round() / 1000.0
+}
+
+/// TS `measureArticle`: mustCover coverage + keyword-in-title/opening intent.
+/// `MIN_ARTICLE_WORDS` is theirs: 2000.
+const MIN_ARTICLE_WORDS: i64 = 2000;
+
+fn measure_article(
+    title: &str,
+    keyword: &str,
+    markdown: &str,
+    must_cover: &[String],
+    words: i64,
+) -> (f64, f64) {
+    let text = format!("{title}\n{markdown}").to_lowercase();
+    let opening = text.chars().take(500).collect::<String>();
+    let items: Vec<&String> = must_cover.iter().filter(|i| !i.is_empty()).collect();
+    let hit: usize = items
+        .iter()
+        .filter(|item| {
+            let item_l = item.to_lowercase();
+            let words: Vec<&str> = item_l
+                .split_whitespace()
+                .filter(|w| w.len() > 4)
+                .collect();
+            if words.is_empty() {
+                text.contains(item_l.as_str())
+            } else {
+                words.iter().filter(|w| text.contains(*w)).count()
+                    >= words.len().min(2)
+            }
+        })
+        .count();
+    let coverage = if !items.is_empty() {
+        (hit as f64) / (items.len() as f64)
+    } else if words >= MIN_ARTICLE_WORDS {
+        1.0
+    } else {
+        (words as f64 / MIN_ARTICLE_WORDS as f64).min(1.0)
+    };
+    let kw_l = keyword.to_lowercase();
+    let tokens: Vec<&str> = kw_l
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .collect();
+    let title_l = title.to_lowercase();
+    let in_title = if !tokens.is_empty() {
+        tokens.iter().filter(|w| title_l.contains(*w)).count() as f64 / tokens.len() as f64
+    } else if title_l.contains(kw_l.as_str()) {
+        1.0
+    } else {
+        0.0
+    };
+    let in_open = if !tokens.is_empty() {
+        tokens.iter().filter(|w| opening.contains(*w)).count() as f64 / tokens.len() as f64
+    } else if opening.contains(kw_l.as_str()) {
+        1.0
+    } else {
+        0.0
+    };
+    let round3 = |x: f64| (x * 100.0).round() / 100.0;
+    (round3(coverage), round3(in_title * 0.6 + in_open * 0.4))
+}
+
+/// Render the final markdown the way their pipeline does for model prose:
+/// `answerBlock` (if the compiler reported one) leads, then intro, body in
+/// the order the model wrote them, then the FAQ.
+fn render_final_markdown(title: &str, question: &str, content: &Value) -> String {
+    let mut md = String::new();
+    if let Some(block) = content.get("answer_block").or_else(|| content.get("answerBlock")).and_then(Value::as_str) {
+        if !block.trim().is_empty() {
+            md.push_str(&format!("**{title}** {question}\n\n{block}\n\n"));
+        }
+    }
+    if let Some(body) = content.get("body").and_then(Value::as_str) {
+        if !body.trim().is_empty() {
+            md.push_str(body.trim_end());
+            md.push_str("\n\n");
+        }
+    }
+    if let Some(intro) = content.get("intro").and_then(Value::as_str) {
+        if !intro.trim().is_empty() {
+            md.push_str(intro.trim_end());
+            md.push_str("\n\n");
+        }
+    }
+    if let Some(faq) = content.get("faq").and_then(Value::as_array) {
+        if !faq.is_empty() {
+            md.push_str("## Frequently Asked Questions\n");
+            for q in faq {
+                if let (Some(question), Some(answer)) =
+                    (q.get("question").and_then(Value::as_str), q.get("answer").and_then(Value::as_str))
+                {
+                    md.push_str(&format!("**{question}** {answer}\n"));
+                }
+            }
+        }
+    }
+    md
+}
+
+/// The TS `sectionsFromMarkdown` heading rule: `#{1,6}` outside code fences
+/// (only the headings are needed for the uniqueness word overlap).
+fn markdown_sections(markdown: &str, fallback: &str) -> Vec<String> {
+    let mut sections: Vec<String> = Vec::new();
+    let mut in_code = false;
+    for line in markdown.lines() {
+        let t = line.trim();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            continue;
+        }
+        // `#{1,6}\s+(.+)` — one to six '#', a space, then the heading text.
+        let mut n = 0usize;
+        for c in t.chars() {
+            if c == '#' {
+                n += 1;
+            } else {
+                break;
+            }
+        }
+        if (1..=6).contains(&n) && t.as_bytes().get(n) == Some(&b' ') {
+            let heading: String = t
+                .trim_start_matches('#')
+                .trim()
+                .chars()
+                .filter(|c| !matches!(c, '*' | '_' | '`' | '#'))
+                .collect();
+            if !heading.trim().is_empty() {
+                sections.push(heading.trim().to_string());
+            }
+        }
+    }
+    if sections.is_empty() {
+        sections.push(fallback.to_string());
+    }
+    sections
+}
+
+fn word_count(text: &str) -> i64 {
+    text.split_whitespace().count() as i64
+}
+
+/// Stage 6 — the release gate and Ghost publish. Returns the article's final
+/// status so the e2e test can assert the exact outcome.
+pub async fn run_validation(
+    pool: &SqlitePool,
+    engine: &Engine,
+    job_id: i64,
+    site_id: i64,
+    website_id: Option<i64>,
+    keyword: &str,
+    now: &str,
+) -> Result<String, StageError> {
+    let article_id = ensure_article(pool, job_id, site_id, website_id, keyword, now).await?;
+
+    // Title: stage 4 (metadata) has already committed the packaged title to
+    // the article row, so that is the source of truth. Before stage 4 ran it
+    // holds the keyword, in which case the blueprint's titleHint stands in —
+    // the same fallback chain the other stages use.
+    let title_row: String = sqlx::query_scalar("SELECT title FROM articles WHERE id = ?")
+        .bind(article_id)
+        .fetch_one(pool)
+        .await?;
+    let title = if title_row.trim().is_empty() || title_row.trim() == keyword {
+        stage_payload(pool, job_id, 1)
+            .await?
+            .and_then(|p| blueprint_of(&p))
+            .map(|b| b.title_hint)
+            .unwrap_or(keyword.to_string())
+    } else {
+        title_row.trim().to_string()
+    };
+
+    // 1 + 2. Corpus and gate. The job's own article is excluded: its slug and
+    // keyword are this article's, so including it would be an L1 self-refusal.
+    let corpus_rows: Vec<(i64, String, String, String)> = sqlx::query_as(
+        "SELECT id, title, COALESCE(keyword, ''), slug FROM articles \
+         WHERE site_id = ? AND id != ? AND status != 'DELETED' ORDER BY id",
+    )
+    .bind(site_id)
+    .bind(article_id)
+    .fetch_all(pool)
+    .await?;
+
+    // The site's link density drives how many internal links the article
+    // carries (TS `intensityBand(site.voice.linkIntensity)`). The Rust schema
+    // does not model site voice yet, so this uses the TS default band for
+    // "standard" (2..=4). When voice settings land, read the real value here.
+    let (links_min, links_max) = (2usize, 4usize);
+    let corpus: Vec<crate::gate::CorpusItem> = corpus_rows
+        .iter()
+        .map(|(_, t, k, s)| crate::gate::CorpusItem {
+            title: t.clone(),
+            keyword: k.clone(),
+            slug: s.clone(),
+        })
+        .collect();
+
+    let gate = crate::gate::gate_text(&title, keyword, &corpus);
+    let repeat = crate::gate::is_repeat_title(&title);
+    if repeat || !gate.ok {
+        let reason = if repeat {
+            "DUPLICATE REFUSED (L2-lexical). A second angle is not a new article.".to_string()
+        } else {
+            gate.reason.clone().unwrap_or_else(|| "DUPLICATE REFUSED".to_string())
+        };
+        let outcome = StageOutcome {
+            tokens_in: 0,
+            tokens_out: 0,
+            cost_usd: 0.0,
+            repairs: 0,
+        };
+        record_stage(
+            pool,
+            article_id,
+            website_id,
+            6,
+            "validation",
+            &outcome,
+            engine,
+            &json!({ "result": "REFUSED", "reason": reason, "gate": gate.layer, "embedSource": "hash-fallback" }),
+            now,
+        )
+        .await?;
+        sqlx::query("UPDATE articles SET status = 'REFUSED' WHERE id = ?")
+            .bind(article_id)
+            .execute(pool)
+            .await?;
+        return Ok("REFUSED".to_string());
+    }
+
+    // Revision prose (stage 3's committed payload is the source of truth).
+    let revision = stage_payload(pool, job_id, 3).await?.ok_or_else(|| {
+        StageError::Validation(
+            "validation".into(),
+            vec!["revision missing: stage 3 must succeed first".into()],
+        )
+    })?;
+    let content = revision.get("revision").cloned().unwrap_or(revision);
+    let mut markdown = render_final_markdown(&title, keyword, &content);
+
+    // 3. Internal links. TS `rankLinks`/`articleSimilarity`: rank siblings by
+    // `max(L3 cosine, lexical)` (+0.12 when they share a tag — the Rust schema
+    // has no tags yet, so the bonus is always 0), keep those scoring >= 0.42,
+    // then fall back to the best-ranked remainder until the site's linkIntensity
+    // minimum is met. `insert_anchor_md` appends the TS sentence with the
+    // target's anchor phrase linked.
+    let mut ranked: Vec<(f64, String, String)> = Vec::new();
+    let mine_label = format!("{title} {keyword}");
+    let mine_md = crate::gate::hash_embed(&mine_label);
+    for (_aid, t, k, s) in &corpus_rows {
+        let their_label = format!("{t} {k}");
+        let sim = crate::gate::cosine(&mine_md, &crate::gate::hash_embed(&their_label))
+            .max(crate::gate::lexical_similarity(&mine_label, &their_label));
+        ranked.push((sim, t.clone(), s.clone()));
+    }
+    ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let strong: Vec<(f64, String, String)> = ranked
+        .iter()
+        .filter(|(sim, _, _)| *sim >= 0.42)
+        .take(links_max)
+        .cloned()
+        .collect();
+    let mut chosen = strong;
+    if chosen.len() < links_min {
+        for row in &ranked {
+            if chosen.len() >= links_min {
+                break;
+            }
+            if chosen.iter().any(|(_, t, _)| t == &row.1) {
+                continue;
+            }
+            chosen.push(row.clone());
+        }
+    }
+    chosen.truncate(links_max);
+
+    // The anchor phrase is derived from the target title; the stored edge keeps
+    // both the phrase and the target's own title.
+    let link_targets: Vec<(String, String, String)> = chosen
+        .iter()
+        .map(|(_, t, s)| (crate::gate::anchor_phrase(t), s.clone(), t.clone()))
+        .collect();
+
+    let mut linked_count = 0i64;
+    for (anchor, slug, _title) in &link_targets {
+        let (next, inserted) = crate::gate::insert_anchor_md(&markdown, anchor, slug);
+        if inserted {
+            markdown = next;
+            linked_count += 1;
+        }
+    }
+
+    // 4. Measure. `uniqueness_score` is the UI number (TS uniquenessAgainst
+    // over the section headings); `gate.max_similarity` is the gate's own
+    // worst case, kept in the payload for the audit trail.
+    let sections = markdown_sections(&markdown, &title);
+    let heads = sections.join(" ");
+    let uniqueness = uniqueness_against(&title, keyword, &heads, &corpus);
+    let words = word_count(&markdown);
+    let (coverage, intent) = {
+        let must: Vec<String> = stage_payload(pool, job_id, 1)
+            .await?
+            .and_then(|p| blueprint_of(&p))
+            .map(|b| b.must_cover)
+            .unwrap_or_default();
+        measure_article(&title, keyword, &markdown, &must, words)
+    };
+    if uniqueness < 0.2 {
+        let reason = format!(
+            "DUPLICATE REFUSED (L3-semantic). Uniqueness would be {}% against pages already on this site.",
+            (uniqueness * 100.0).round() as i64
+        );
+        let outcome = StageOutcome {
+            tokens_in: 0,
+            tokens_out: 0,
+            cost_usd: 0.0,
+            repairs: 0,
+        };
+        record_stage(
+            pool,
+            article_id,
+            website_id,
+            6,
+            "validation",
+            &outcome,
+            engine,
+            &json!({ "result": "REFUSED", "reason": reason, "gate": "L3", "uniqueness": uniqueness }),
+            now,
+        )
+        .await?;
+        sqlx::query("UPDATE articles SET status = 'REFUSED' WHERE id = ?")
+            .bind(article_id)
+            .execute(pool)
+            .await?;
+        return Ok("REFUSED".to_string());
+    }
+
+    // 5. Ghost publish (LIVE + configured) or store publish-held (SANDBOX /
+    // unconfigured). A refused push is a failure — the job retries, and the
+    // stage is not marked done, so no double-publish on the next attempt.
+    let (ghost_mode, ghost_url, ghost_key): (String, Option<String>, Option<String>) =
+        match website_id {
+            Some(wid) => sqlx::query_as(
+                "SELECT ghost_mode, ghost_url, ghost_admin_key_enc FROM websites WHERE id = ?",
+            )
+            .bind(wid)
+            .fetch_one(pool)
+            .await?
+            ,
+            None => ("SANDBOX".to_string(), None, None),
+        };
+    // Stage 4's packaged metadata (slug, excerpt, tags) — read before the slug
+    // decision, because the packaged slug is what publish prefers.
+    let meta_raw: Option<String> = sqlx::query_scalar("SELECT meta_json FROM articles WHERE id = ?")
+        .bind(article_id)
+        .fetch_one(pool)
+        .await?;
+    let meta_json: Value = meta_raw
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .unwrap_or(json!({}));
+
+    // Slug at publish time. TS: `uniqueSlug(job.enrich?.slug || slugify(job.title), …)`
+    // — the slug stage 4 already de-duplicated wins over a fresh slugify of the
+    // title, and a collision suffixes `-2` (two jobs in one window can pick the
+    // same packaged slug; the gate above already refused real duplicates).
+    let slug = {
+        let preferred = meta_json
+            .get("slug")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| slugify(&title));
+        let taken: Vec<String> = sqlx::query_scalar("SELECT slug FROM articles WHERE site_id = ?")
+            .bind(site_id)
+            .fetch_all(pool)
+            .await?;
+        crate::gate::unique_slug(&preferred, &taken)
+    };
+    let feature_image: Option<String> =
+        sqlx::query_scalar("SELECT featured_image_url FROM articles WHERE id = ?")
+            .bind(article_id)
+            .fetch_one(pool)
+            .await?;
+
+    let mut ghost_post_id: Option<String> = None;
+    let mut ghost_post_url: Option<String> = None;
+    // Both branches below assign the real value; there is no default.
+    let mut push_mode: Option<&str> = None;
+    let article_status: String;
+    if ghost_mode == "LIVE" {
+        match crate::ghost::push_post(
+            ghost_url.as_deref(),
+            ghost_key.as_deref(),
+            &title,
+            &slug,
+            &markdown,
+            feature_image.as_deref(),
+            "published",
+        )
+        .await
+        {
+            Ok(res) => {
+                ghost_post_url = Some(res.url.clone());
+                ghost_post_id = Some(res.ghost_post_id);
+                article_status = "PUBLISHED".to_string();
+                push_mode = Some("live");
+            }
+            Err(crate::ghost::PushError::Unconfigured) => {
+                // LIVE site but no Ghost wired: hold for manual publish, like
+                // their PUBLISH_HELD — the words are written, the push isn't.
+                article_status = "REVIEW_HELD".to_string();
+                push_mode = Some("hold");
+            }
+            Err(e) => {
+                return Err(StageError::Validation(
+                    "validation".into(),
+                    vec![format!("ghost push failed: {e}")],
+                ));
+            }
+        }
+    } else {
+        // SANDBOX: their pipeline creates the post as a draft. Only when a
+        // Ghost is actually wired; otherwise just store as publish-held.
+        if let (Some(u), Some(k)) = (ghost_url.as_deref(), ghost_key.as_deref()) {
+            if !u.trim().is_empty() && !k.trim().is_empty() {
+                match crate::ghost::push_post(Some(u), Some(k), &title, &slug, &markdown, feature_image.as_deref(), "draft").await {
+                    Ok(res) => {
+                        ghost_post_url = Some(res.url.clone());
+                        ghost_post_id = Some(res.ghost_post_id);
+                        push_mode = Some("sandbox-draft");
+                    }
+                    Err(crate::ghost::PushError::Unconfigured) => {}
+                    Err(e) => {
+                        return Err(StageError::Validation(
+                            "validation".into(),
+                            vec![format!("ghost draft push failed: {e}")],
+                        ));
+                    }
+                }
+            }
+        }
+        article_status = "DRAFT".to_string();
+    }
+
+    // Persist the link edges. Only links actually inserted into the markdown
+    // are recorded, and only when the target resolves to a sibling article row.
+    for (anchor, slug, target_title) in &link_targets {
+        if !crate::gate::already_linked(&markdown, slug) {
+            continue;
+        }
+        let target_id: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM articles WHERE site_id = ? AND slug = ? AND id != ?")
+                .bind(site_id)
+                .bind(slug)
+                .bind(article_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+        sqlx::query(
+            "INSERT INTO article_links (article_id, direction, target_article_id, target_slug, \
+             target_title, anchor, status, health, created_at) \
+             VALUES (?, 'OUTGOING', ?, ?, ?, ?, 'LOCAL_INSERTED', 'pending', ?)",
+        )
+        .bind(article_id)
+        .bind(target_id)
+        .bind(slug)
+        .bind(target_title)
+        .bind(anchor)
+        .bind(now)
+        .execute(pool)
+        .await?;
+    }
+
+    // Finalize the article row.
+    sqlx::query(
+        "UPDATE articles SET status = ?, slug = ?, content_json = ?, content_format = 'markdown', \
+         uniqueness_score = ?, coverage_score = ?, intent_match = ?, ghost_post_id = ?, \
+         published_at = COALESCE(?, published_at) WHERE id = ?",
+    )
+    .bind(&article_status)
+    .bind(&slug)
+    .bind(json!({ "markdown": markdown, "faq": content.get("faq").cloned().unwrap_or(json!([])) }).to_string())
+    .bind(uniqueness)
+    .bind(coverage)
+    .bind(intent)
+    .bind(ghost_post_id.as_deref())
+    .bind(if ghost_post_id.is_some() { Some(now.to_string()) } else { None })
+    .bind(article_id)
+    .execute(pool)
+    .await?;
+
+    // Record stage 6 committed (billed as zero — no model call in this stage).
+    let outcome = StageOutcome {
+        tokens_in: 0,
+        tokens_out: 0,
+        cost_usd: 0.0,
+        repairs: 0,
+    };
+    record_stage(
+        pool,
+        article_id,
+        website_id,
+        6,
+        "validation",
+        &outcome,
+        engine,
+        &json!({
+            "result": article_status,
+            "push": push_mode,
+            "ghost_post_id": ghost_post_id,
+            "ghost_post_url": ghost_post_url,
+            "uniqueness": uniqueness,
+            "coverage": coverage,
+            "intent": intent,
+            "words": words,
+            "gate": { "ok": gate.ok, "layer": gate.layer, "maxSimilarity": gate.max_similarity },
+            "embedSource": "hash-fallback",
+            "links": linked_count,
+            "excerpt": meta_json.get("excerpt"),
+            "tags": meta_json.get("tags"),
+            "slug": slug,
+        }),
+        now,
+    )
+    .await?;
+    Ok(article_status)
 }
 
 #[cfg(test)]

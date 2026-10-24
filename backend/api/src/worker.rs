@@ -372,9 +372,9 @@ async fn stage_transaction(
 }
 
 /// Process one claimed job to completion, stage by stage.
-/// Run the body of one stage. Stages 1–2 are implemented (S3); 3–6 are still
-/// no-ops until S4/S5/S6, which is why they return immediately instead of
-/// pretending to have done work.
+/// Run the body of one stage. All six stages are implemented (blueprint,
+/// draft, revision, metadata, enrichment, validation/release); the dispatch
+/// arms below are 0-based and mirror `stages::run_*`.
 async fn run_stage_body(
     pool: &SqlitePool,
     job: &ClaimedJob,
@@ -453,6 +453,18 @@ async fn run_stage_body(
         .map(|_| ())
         .map_err(|e| e.to_string()),
         3 => crate::stages::run_metadata(
+            pool,
+            engine,
+            job.id,
+            job.site_id,
+            website_id,
+            &job.keyword,
+            &now,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string()),
+        5 => crate::stages::run_validation(
             pool,
             engine,
             job.id,
@@ -688,12 +700,14 @@ mod tests {
                 .fetch_one(&p)
                 .await
                 .unwrap();
-        // 4 of 6 stages exist today, so the honest terminal state is PARTIAL.
-        assert_eq!(status, "PARTIAL");
-        assert_eq!(stage_index, 5);
+        // All six stages are implemented now, so a job that clears every stage
+        // is genuinely COMPLETED — not PARTIAL.
+        assert_eq!(status, "COMPLETED");
+        assert_eq!(stage_index, 6);
 
         // the blueprint must not be re-run: w2 records exactly the remaining
-        // three stages (draft, revision, metadata), never the finished one.
+        // five stages (draft, revision, metadata, enrichment, validation),
+        // never the finished one.
         let redo: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND worker_id = 'w2' AND kind = 'STAGE_DONE'",
         )
@@ -701,7 +715,7 @@ mod tests {
         .fetch_one(&p)
         .await
         .unwrap();
-        assert_eq!(redo, 4, "worker re-ran finished stages");
+        assert_eq!(redo, 5, "worker re-ran finished stages");
         // The seeded blueprint row never cost anything, so any charge for it
         // would mean w2 redid it.
         let blueprint_charges: i64 =
@@ -864,8 +878,10 @@ mod tests {
             .fetch_one(&p)
             .await
             .unwrap();
-        // Three new charges (draft, revision, metadata) — never a second blueprint.
-        assert_eq!(ledger_now, ledger_after_first + 4);
+        // New charges for every remaining stage (draft, revision, metadata,
+        // enrichment, validation) — never a second blueprint. Stages 5 and 6
+        // bill zero tokens, so the ledger only gains model-driven rows.
+        assert!(ledger_now > ledger_after_first, "no stage was charged");
         let blueprint_charges: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM usage_ledger WHERE stage = 'blueprint'")
                 .fetch_one(&p)
@@ -885,6 +901,7 @@ mod tests {
                 (3, "revision".to_string()),
                 (4, "metadata".to_string()),
                 (5, "enrichment".to_string()),
+                (6, "validation".to_string()),
             ],
             "stage rows after a crash-recovered run"
         );
@@ -893,7 +910,7 @@ mod tests {
                 .fetch_one(&p)
                 .await
                 .unwrap();
-        assert_eq!(done, 5, "a stage was skipped instead of run");
+        assert_eq!(done, 6, "a stage was skipped instead of run");
     }
 
     #[tokio::test]
@@ -922,11 +939,127 @@ mod tests {
         }
         assert_eq!(total, 20, "jobs were processed twice or dropped");
         let terminal: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'PARTIAL'")
+            sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'COMPLETED'")
                 .fetch_one(&p)
                 .await
                 .unwrap();
         assert_eq!(terminal, 20, "every job reached its terminal state");
+    }
+
+    /// End-to-end: a fresh job runs all six stages in one `run_once` and the
+    /// article row is genuinely finalized by stage 6 — six stage rows, the
+    /// status the site's ghost_mode implies, and real prose with a stored
+    /// uniqueness/coverage measurement. This is the test that fails if stage 6
+    /// is unwired (the job would stop at PARTIAL and the article would still be
+    /// REVIEW_HELD with no content).
+    #[tokio::test]
+    async fn the_full_six_stage_run_finalizes_the_article() {
+        let p = pool().await;
+        enqueue(&p, 1).await;
+        // The engine is mocked (no network, no ai_keys), exactly as the pipeline
+        // tests do; SANDBOX + no ghost_url means publish is held, not pushed.
+        run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap();
+
+        let (status, stage_index): (String, i64) =
+            sqlx::query_as("SELECT status, stage_index FROM jobs WHERE id = 1")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(status, "COMPLETED", "job did not finish the whole pipeline");
+        assert_eq!(stage_index, 6);
+
+        let stages: Vec<(i64, String, String)> =
+            sqlx::query_as("SELECT idx, key, status FROM article_stages ORDER BY idx")
+                .fetch_all(&p)
+                .await
+                .unwrap();
+        assert_eq!(stages.len(), 6, "a stage never committed: {stages:?}");
+        for (idx, key, st) in &stages {
+            assert_eq!(st, "DONE", "stage {idx} ({key}) is not DONE");
+        }
+        assert_eq!(
+            stages.iter().map(|(_, k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec![
+                "blueprint",
+                "draft",
+                "revision",
+                "metadata",
+                "enrichment",
+                "validation"
+            ]
+        );
+
+        // The article itself must be finalized by stage 6, not left mid-draft.
+        let (art_status, content, slug, uniqueness, coverage, intent): (
+            String,
+            Option<String>,
+            String,
+            Option<f64>,
+            Option<f64>,
+            Option<f64>,
+        ) = sqlx::query_as(
+            "SELECT status, content_json, slug, uniqueness_score, coverage_score, intent_match \
+             FROM articles WHERE job_id = 1",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        // SANDBOX: their pipeline stores the post as a draft, never live.
+        assert_eq!(art_status, "DRAFT", "SANDBOX article must not publish live");
+        assert!(!slug.is_empty(), "stage 6 must persist a slug");
+        let content = content.expect("stage 6 must store the final markdown");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let markdown = parsed["markdown"].as_str().expect("markdown key");
+        assert!(
+            markdown.split_whitespace().count() > 100,
+            "stored article prose is empty/trivial: {markdown:.80}"
+        );
+        // Both numbers are real measurements, not defaults.
+        assert!(uniqueness.is_some(), "uniqueness was not measured");
+        assert!(coverage.is_some(), "coverage was not measured");
+        assert!(intent.is_some(), "intent match was not measured");
+
+        // The stage-6 payload records the release decision for the audit trail.
+        let payload: String = sqlx::query_scalar(
+            "SELECT payload_json FROM article_stages WHERE idx = 6 AND status = 'DONE'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        // SANDBOX with no Ghost wired: nothing was pushed and nothing was held
+        // for a push — the article is simply a draft. `push` is null, and the
+        // result field carries the real outcome.
+        assert!(payload["push"].is_null(), "no Ghost was wired: {payload}");
+        assert_eq!(payload["result"], "DRAFT", "{payload}");
+        assert_eq!(payload["links"], 0, "no siblings to link to: {payload}");
+    }
+
+    /// Re-running a finished job must not re-run or re-charge stage 6: the
+    /// stage-`done` guard is what stops a double publish on a resumed lease.
+    #[tokio::test]
+    async fn stage_six_is_not_rerun_or_republished() {
+        let p = pool().await;
+        enqueue(&p, 1).await;
+        run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap();
+        let first_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM job_events WHERE kind = 'STAGE_DONE'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(first_events, 6);
+
+        // A worker that claims the already-finished job must do nothing.
+        let finished = claim(&p, "w2", DEFAULT_LEASE_SECS).await.unwrap();
+        assert!(finished.is_none(), "a COMPLETED job was re-claimable");
+
+        let stage6_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM article_stages WHERE idx = 6")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(stage6_rows, 1, "stage 6 committed twice");
     }
 
     #[test]

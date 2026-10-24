@@ -22,6 +22,8 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
 use std::time::Instant;
 
+mod gate;
+mod ghost;
 mod image;
 mod lint;
 mod provider;
