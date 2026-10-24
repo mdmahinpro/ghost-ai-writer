@@ -613,6 +613,88 @@ pub async fn load_pool(
         .collect())
 }
 
+/// What one successful call through the chain produced, plus which key served
+/// it — the caller needs the key id to attribute spend in the usage ledger.
+pub struct ChainSuccess {
+    pub completion: Completion,
+    pub key_id: Option<i64>,
+    pub model: String,
+    pub provider: String,
+}
+
+/// Run one chat completion through a workspace's failover chain.
+///
+/// The same walk the worker does per stage: a 429/5xx advances to the next key,
+/// a 401/403 pauses the key that earned it, and every key stays in the chain.
+/// Exposed for callers that are not pipeline stages — the browser's idea and
+/// draft helpers — so the failover rules live in exactly one place instead of
+/// being re-derived per entry point.
+///
+/// No provider configured falls back to the mock engine, matching `load_engine`
+/// so a fresh install still answers instead of failing every request.
+pub async fn complete_chain(
+    pool: &SqlitePool,
+    workspace_id: i64,
+    role: &str,
+    preferred: Option<i64>,
+    req: &ChatRequest,
+) -> Result<ChainSuccess, EngineError> {
+    let mut chain = load_pool(pool, workspace_id, role, preferred)
+        .await
+        .map_err(|e| EngineError::Transport(e.to_string()))?;
+    if chain.is_empty() {
+        chain.push(
+            load_engine(pool, workspace_id, role)
+                .await
+                .map_err(|e| EngineError::Transport(e.to_string()))?,
+        );
+    }
+
+    let mut last: Option<EngineError> = None;
+    for engine in chain {
+        match engine.complete(req).await {
+            Ok(completion) => {
+                if let Some(key_id) = engine.key_id() {
+                    let _ = record_key_success(pool, key_id).await;
+                }
+                return Ok(ChainSuccess {
+                    completion,
+                    key_id: engine.key_id(),
+                    model: engine.model_id().to_string(),
+                    provider: engine.provider().to_string(),
+                });
+            }
+            Err(e) => {
+                // Blame the key that earned it so the pool demotes it and the
+                // next pass starts somewhere better.
+                if let Some(key_id) = engine.key_id() {
+                    let _ = record_key_failure(pool, key_id, &e).await;
+                }
+                if e.retryable() {
+                    last = Some(e);
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| EngineError::Malformed("no key answered".into())))
+}
+
+/// A client-safe explanation of a provider failure.
+///
+/// Provider error bodies are never forwarded: some echo the request, and this
+/// text ends up in a browser. The full detail is logged server-side by the
+/// caller instead, which is where debugging actually happens.
+pub fn safe_message(e: &EngineError) -> String {
+    match e {
+        EngineError::Http(401 | 403, _) => "The provider refused the key.".to_string(),
+        EngineError::Http(code, _) => format!("provider returned http {code}"),
+        EngineError::Transport(_) => "provider unreachable".to_string(),
+        EngineError::Malformed(_) => "provider returned an unexpected response".to_string(),
+    }
+}
+
 /// The pool as the UI shows it: which key is next, and why any are demoted.
 /// Reads `provider`/`label`/`key_hint` (never the secret) so the settings screen
 /// can explain a demotion without exposing a key.
