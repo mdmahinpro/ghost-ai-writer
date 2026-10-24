@@ -37,7 +37,7 @@ import {
 import { get, post } from "./api-client";
 import { placeImages } from "./images.functions";
 import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow, publishSlots, queueCalendarItem, withSummaries } from "./operator";
-import { workerClaimLease, workerHeartbeat } from "./worker.functions";
+import { claimLease, heartbeat } from "./worker-api";
 import { embeddingProvider } from "./embed-key";
 import { attachAuthor, generateAuthorForTopic, normalizeAuthorProfile } from "./authors";
 import { parseIntentStage } from "./stage-contracts";
@@ -459,20 +459,26 @@ export const useApp = create<AppState>()(
             // second tab must not claim the queue mid-pipeline.
             const busyNow = needsWork(current, now);
             const tickId = leaseTickId();
-            const claimed = await workerClaimLease({ data: { siteId, tickId, activeJobs, nextCalendarPulseAt: nextPulse, ttlMs: busyNow ? 45_000 : 15_000 } });
-            if (!claimed.lease.granted) {
+            const claimed = await claimLease({ siteId, tickId, activeJobs, nextCalendarPulseAt: nextPulse, ttlMs: busyNow ? 45_000 : 15_000 });
+            // A failed lease call means the backend is unreachable. Treat it
+            // as "not granted" and stand down rather than dispatching work no
+            // one has arbitrated — two tabs both running is the exact bug the
+            // lease exists to prevent.
+            if (!claimed.ok || !claimed.data.lease.granted) {
+              if (!claimed.ok) return;
+              const beat = claimed.data;
               // Strict no-op: only write when the server beat actually moved.
               // An unconditional set() replaced the worker object every 400ms
               // while another tab held the lease, waking every subscriber and
               // re-firing every worker effect for no new data.
               const worker = get().worker;
               const beatChanged =
-                worker.lastBeatAt !== claimed.lastBeatAt ||
-                worker.online !== claimed.online ||
-                worker.activeJobs !== claimed.activeJobs ||
-                worker.nextCalendarPulseAt !== claimed.nextCalendarPulseAt;
+                worker.lastBeatAt !== beat.lastBeatAt ||
+                worker.online !== beat.online ||
+                worker.activeJobs !== beat.activeJobs ||
+                worker.nextCalendarPulseAt !== beat.nextCalendarPulseAt;
               if (beatChanged) {
-                set((cur) => ({ ...cur, worker: { ...cur.worker, lastBeatAt: claimed.lastBeatAt, online: claimed.online, activeJobs: claimed.activeJobs, nextCalendarPulseAt: claimed.nextCalendarPulseAt, source: "server" } }));
+                set((cur) => ({ ...cur, worker: { ...cur.worker, lastBeatAt: beat.lastBeatAt, online: beat.online, activeJobs: beat.activeJobs, nextCalendarPulseAt: beat.nextCalendarPulseAt, source: "server" } }));
               }
               return;
             }
@@ -503,15 +509,18 @@ export const useApp = create<AppState>()(
             // Same hotfix for the calendar/queue pulse: never wipe what a concurrent
             // action (a just-queued run) committed while the pulse was awaiting.
             const afterPulse = pulsed ? { ...base, ...pulsed, ...mergePersisted(base, pulsed, CHURNED_COLLECTIONS) } : base;
-            const beat = await workerHeartbeat({
-              data: {
-                siteId,
-                tickId,
-                activeJobs: afterPulse.jobs.filter((job) => job.status === "running").length,
-                nextCalendarPulseAt: nextCalendarPulseAt(afterPulse.calendars, siteId),
-                ttlMs: busyNow ? 45_000 : 15_000,
-              },
+            const beatRes = await heartbeat({
+              siteId,
+              tickId,
+              activeJobs: afterPulse.jobs.filter((job) => job.status === "running").length,
+              nextCalendarPulseAt: nextCalendarPulseAt(afterPulse.calendars, siteId),
+              ttlMs: busyNow ? 45_000 : 15_000,
             });
+            // A lost beat is not a correctness problem: the lease still
+            // expires on its own, and the next successful tick renews it. Keep
+            // the last known worker state rather than blanking the UI.
+            if (!beatRes.ok) return;
+            const beat = beatRes.data;
             const workerBeat = {
               lastBeatAt: beat.lastBeatAt,
               online: beat.online,

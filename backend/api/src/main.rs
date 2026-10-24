@@ -22,6 +22,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
 use std::time::Instant;
 
+mod lease;
 mod state;
 mod email;
 mod gate;
@@ -453,6 +454,9 @@ fn app(pool: SqlitePool) -> Router {
         .route("/api/v1/worker", get(worker_status))
         .route("/api/v1/worker/run-once", post(worker_run_once))
         .route("/api/v1/image/pick", post(pick_image))
+        .route("/api/v1/lease/heartbeat", post(lease::heartbeat))
+        .route("/api/v1/lease/claim", post(lease::claim_lease))
+        .route("/api/v1/lease/release", post(lease::release_lease))
         .route("/api/v1/state", get(state::load_state).post(state::save_state))
         .route("/api/v1/state/reset", post(state::reset_state))
         .route("/api/v1/email/verification", post(send_email_verification))
@@ -465,7 +469,39 @@ fn app(pool: SqlitePool) -> Router {
         )
         .layer(middleware::from_fn_with_state(admin_token(), require_token))
         .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(cors_layer())
         .with_state(AppState { pool })
+}
+
+/// CORS for the SPA.
+///
+/// The frontend is served from a different origin than `gaw-api` (Vite in dev,
+/// a separate static host in production), so every call is cross-origin. Two
+/// things have to be right or the browser blocks everything:
+///
+///   1. The preflight `OPTIONS` must be answered *without* credentials, because
+///      the browser does not attach `Authorization` to a preflight. The token
+///      gate therefore skips OPTIONS and this layer answers it.
+///   2. The origin must be echoed and the auth headers allowed, or the real
+///      request is refused after a successful preflight.
+///
+/// A permissive origin is deliberate: this API is single-operator and gated by
+/// the admin token, not by origin. A token in a browser bundle is readable by
+/// anyone who loads the page, so origin-based restriction would buy nothing.
+fn cors_layer() -> tower_http::cors::CorsLayer {
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderName::from_static("x-api-token"),
+        ])
+        .max_age(std::time::Duration::from_secs(600))
 }
 
 /// Set on any host that is not localhost. Without it every write route is open
@@ -478,6 +514,13 @@ fn admin_token() -> Option<String> {
 }
 
 async fn require_token(State(token): State<Option<String>>, req: Request, next: Next) -> Response {
+    // A CORS preflight never carries credentials — the browser sends it before
+    // it is allowed to send the Authorization header at all. Refusing it makes
+    // every cross-origin call from the SPA fail before it starts, so preflight
+    // is answered by the CORS layer alone and never reaches this gate.
+    if req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
     let Some(expected) = token else {
         return next.run(req).await;
     };
@@ -905,6 +948,63 @@ mod tests {
             !text.contains("sk-secret-value"),
             "the key itself must never leave the API: {text}"
         );
+    }
+
+    /// The browser preflight must succeed without credentials, or every
+    /// cross-origin call from the SPA dies before it is sent. This is the
+    /// exact request a browser makes before POST /api/v1/lease/claim.
+    #[tokio::test]
+    async fn cors_preflight_is_answered_without_a_token() {
+        // SAFETY: single-threaded test setup, and the value is removed below.
+        unsafe {
+            std::env::set_var("GAW_ADMIN_TOKEN", "0123456789abcdef-test");
+        }
+        let pool = memory_pool().await;
+        seed(&pool, 0).await.expect("seed");
+
+        // The shared `call` helper has no header support, so build the request
+        // directly — a preflight is exactly a header-driven request.
+        let req = Request::builder()
+            .method("OPTIONS")
+            .uri("/api/v1/lease/claim")
+            .header("origin", "https://studio.example")
+            .header("access-control-request-method", "POST")
+            .header(
+                "access-control-request-headers",
+                "authorization,content-type",
+            )
+            .body(Body::empty())
+            .unwrap();
+        let resp = app(pool).oneshot(req).await.unwrap();
+
+        assert!(
+            resp.status().is_success(),
+            "preflight must not be rejected by the token gate, got {}",
+            resp.status()
+        );
+        let allow_origin = resp
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok());
+        assert!(
+            allow_origin.is_some(),
+            "no access-control-allow-origin: the browser would block the real call"
+        );
+        let allow_headers = resp
+            .headers()
+            .get("access-control-allow-headers")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+        assert!(
+            allow_headers.contains("authorization"),
+            "the Authorization header must be allowed or the bearer token is stripped"
+        );
+
+        // SAFETY: single-threaded test teardown.
+        unsafe {
+            std::env::remove_var("GAW_ADMIN_TOKEN");
+        }
     }
 
     #[tokio::test]
