@@ -28,6 +28,7 @@ mod ghost;
 mod image;
 mod lease;
 mod lint;
+mod pipeline;
 mod provider;
 mod runs;
 mod secrets;
@@ -171,6 +172,7 @@ struct IntakeRequest {
 #[derive(Debug, Serialize)]
 struct IntakeResponse {
     inserted: usize,
+    run_id: i64,
     elapsed_ms: u128,
 }
 
@@ -203,14 +205,29 @@ async fn intake_keywords(
     }
     let started = Instant::now();
     let mut tx = st.pool.begin().await.map_err(ApiError::Db)?;
+    // One run per intake call. The UI groups its queue by run, and
+    // `runs::refresh_run` already rolls status up from the jobs, so creating it
+    // here is what makes a server-driven queue visible as a single run. Without
+    // it the jobs exist but nothing in the UI can group them.
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO runs (website_id, type, source_label, status, publish_mode, created_at)
+         VALUES (?, 'keyword', 'keyword intake', 'RUNNING', 'default', ?)
+         RETURNING id",
+    )
+    .bind(req.site_id)
+    .bind(NOW)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::Db)?;
     for kw in &req.keywords {
         sqlx::query(
-            "INSERT INTO jobs (workspace_id, site_id, website_id, keyword, stage, status, created_at) \
-             VALUES (?, ?, ?, ?, 'blueprint', 'QUEUED', ?)",
+            "INSERT INTO jobs (workspace_id, site_id, website_id, run_id, keyword, stage, status, created_at) \
+             VALUES (?, ?, ?, ?, ?, 'blueprint', 'QUEUED', ?)",
         )
         .bind(req.workspace_id)
         .bind(req.site_id)
         .bind(req.site_id)
+        .bind(run_id)
         .bind(kw)
         .bind(NOW)
         .execute(&mut *tx)
@@ -222,6 +239,7 @@ async fn intake_keywords(
         StatusCode::CREATED,
         Json(IntakeResponse {
             inserted: req.keywords.len(),
+            run_id,
             elapsed_ms: started.elapsed().as_millis(),
         }),
     ))
@@ -460,6 +478,7 @@ fn app(pool: SqlitePool) -> Router {
         .route("/api/v1/lease/release", post(lease::release_lease))
         .route("/api/v1/state", get(state::load_state).post(state::save_state))
         .route("/api/v1/state/reset", post(state::reset_state))
+        .route("/api/v1/pipeline/state", get(pipeline::pipeline_state))
         .route("/api/v1/email/verification", post(send_email_verification))
         .route("/api/v1/email/digest", post(send_email_digest))
         .route("/api/v1/ghost/check-url", post(check_ghost_url))
@@ -929,6 +948,48 @@ mod tests {
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         (status, String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    /// Intake groups its jobs under one run, so the UI has something to show
+    /// as a run rather than a flat list of orphaned jobs.
+    #[tokio::test]
+    async fn intake_creates_one_run_and_attaches_every_job_to_it() {
+        let pool = memory_pool().await;
+        seed(&pool, 0).await.expect("seed");
+        let app = app(pool.clone());
+
+        let body = serde_json::json!({
+            "workspace_id": 1,
+            "site_id": 1,
+            "keywords": ["a", "b", "c"]
+        })
+        .to_string();
+        let (status, text) = call(app, "POST", "/api/v1/keywords", Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "body: {text}");
+        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let run_id = out["run_id"].as_i64().expect("run_id in the response");
+
+        let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(runs, 1, "one run per intake call");
+
+        let attached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE run_id = ?")
+                .bind(run_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(attached, 3, "every ingested keyword belongs to the run");
+
+        let orphans: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE run_id IS NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(orphans, 0, "no job should be left without a run");
     }
 
     #[tokio::test]

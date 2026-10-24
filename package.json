@@ -21,7 +21,7 @@
     "test:m4": "vite-node scripts/m4-verify.ts",
     "test:m5": "vite-node scripts/m5-verify.ts",
     "check:auth": "node scripts/check-auth-invariant.mjs",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/chat-content.test.ts src/lib/image-urls.test.ts src/lib/model-text-safety.test.ts src/lib/humanizer.test.ts src/lib/l3-embed.test.ts src/lib/stage-metadata-enrichment.test.ts src/lib/ghost-pages.test.ts src/lib/m1-limits.test.ts src/lib/m2-authors.test.ts src/lib/m3-research.test.ts src/lib/m4-calendar-static.test.ts src/lib/m5-release-gate.test.ts src/lib/markdown.test.ts",
+    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/pipeline-api.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/chat-content.test.ts src/lib/image-urls.test.ts src/lib/model-text-safety.test.ts src/lib/humanizer.test.ts src/lib/l3-embed.test.ts src/lib/stage-metadata-enrichment.test.ts src/lib/ghost-pages.test.ts src/lib/m1-limits.test.ts src/lib/m2-authors.test.ts src/lib/m3-research.test.ts src/lib/m4-calendar-static.test.ts src/lib/m5-release-gate.test.ts src/lib/markdown.test.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
