@@ -420,7 +420,9 @@ async fn enter(control: &mut Stream, path: &str) -> Result<(), String> {
 pub struct LoginRequest {
     #[serde(flatten)]
     pub target: FtpTarget,
-    /// The old client could fall back to SFTP; only FTPS is implemented here.
+    /// The saved connection's `via`. The sign-in test always probes FTPS
+    /// first and falls back to SFTP itself, so this is accepted for
+    /// compatibility and the result's `via` is what callers should store.
     #[serde(default)]
     #[allow(dead_code)]
     pub via: Option<String>,
@@ -513,9 +515,52 @@ pub async fn test_login(req: &LoginRequest) -> Value {
             })
         }
         Err(error) => {
-            steps.push(step("LIST", list_started, false, error.clone()));
+            // The old app did the same thing: passive ports blocked only the
+            // data channel, so the sign-in counts and the connection is
+            // re-proved over SFTP on the dedicated cPanel port.
+            steps.push(step(
+                "LIST",
+                list_started,
+                false,
+                format!("Passive FTP failed: {error}. Trying SFTP on port {SFTP_PORT}."),
+            ));
             let _ = send(&mut control, "QUIT").await;
-            json!({ "ok": false, "error": error, "steps": steps })
+            drop(control);
+            let sftp_started = Instant::now();
+            match sftp_list(&target.host, SFTP_PORT, &target.user, &target.password, &path).await {
+                Ok(names) => {
+                    steps.push(step(
+                        "LIST (SFTP)",
+                        sftp_started,
+                        true,
+                        format!(
+                            "{} entries over SFTP port {}. Passive FTP is blocked, so files use SFTP.",
+                            names.len(),
+                            SFTP_PORT
+                        ),
+                    ));
+                    json!({
+                        "ok": true,
+                        "steps": steps,
+                        "via": "sftp",
+                        "user": target.user,
+                        "banner": format!(
+                            "cPanel verified over SFTP ({}:{}, {} readable). Passive FTP ports are blocked.",
+                            target.host, SFTP_PORT, path
+                        ),
+                    })
+                }
+                Err(sftp_error) => {
+                    steps.push(step("LIST (SFTP)", sftp_started, false, sftp_error.clone()));
+                    json!({
+                        "ok": false,
+                        "error": format!(
+                            "Passive FTP failed ({error}) and the SFTP fallback failed: {sftp_error}"
+                        ),
+                        "steps": steps,
+                    })
+                }
+            }
         }
     }
 }
@@ -706,6 +751,207 @@ fn url_host(url: &str) -> Option<String> {
     Some(host.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// SFTP fallback, port 65002.
+//
+// cPanel's passive FTP ports are routinely blocked by the hosting network even
+// though the Explicit-TLS control connection signs in fine. The old app dealt
+// with it by falling back to SFTP on the dedicated cPanel port (65002), which
+// carries the same credentials. The fallback lives here, in Rust, with the
+// russh client: connect with a 10 second guard (the old readyTimeout), open the
+// `sftp` subsystem, and write files with CREATE|TRUNCATE|WRITE. Directory
+// creation mirrors the FTPS path: each parent of every file name, once per
+// batch. The server host key is accepted, matching how the operator uses
+// cPanel: SSH to a host the operator just typed credentials for.
+// ---------------------------------------------------------------------------
+
+/// cPanel's standard-and-only SFTP port; the old client hard-coded it too.
+pub const SFTP_PORT: u16 = 65002;
+
+/// The old client's `readyTimeout` for opening the SFTP channel.
+const SFTP_IO_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Client handler: accept the server's host key (see the module note).
+struct AcceptKey;
+
+impl russh::client::Handler for AcceptKey {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
+/// An open SFTP connection. The russh handle must outlive the sftp session —
+/// dropping it closes the SSH transport the sftp stream rides on.
+struct SftpConn {
+    /// Dropped before `_handle`, so the sftp session goes away before the
+    /// transport it rides on.
+    session: russh_sftp::client::SftpSession,
+    _handle: russh::client::Handle<AcceptKey>,
+}
+
+/// `127.0.0.1` is private, so the in-process E2E test must not route through
+/// the env-guarded public entry points. These internal helpers carry no host
+/// check — the public fns below apply [`host_allowed`] first.
+async fn sftp_open(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+) -> Result<SftpConn, String> {
+    let config = Arc::new(russh::client::Config::default());
+    let mut handle = tokio::time::timeout(
+        SFTP_IO_TIMEOUT,
+        russh::client::connect(config, (host.to_string(), port), AcceptKey),
+    )
+    .await
+    .map_err(|_| "The host did not answer over SFTP within 10 seconds.")?
+    .map_err(|_| "Could not open the SSH connection to that host.")?;
+    if !handle
+        .authenticate_password(user, password)
+        .await
+        .map_err(|_| "The SSH connection dropped during sign-in.")?
+        .success()
+    {
+        return Err("SFTP refused that username or password.".to_string());
+    }
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Could not open the SFTP channel ({e})."))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("The server rejected the sftp subsystem ({e})."))?;
+    let session = russh_sftp::client::SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("The SFTP session did not open: {e:?}"))?;
+    Ok(SftpConn { session, _handle: handle })
+}
+
+/// The old `sftpList`: `readdir` of the target path, names only.
+async fn sftp_list(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    path: &str,
+) -> Result<Vec<String>, String> {
+    let conn = sftp_open(host, port, user, password).await?;
+    let target = if path.is_empty() || path == "/" {
+        ".".to_string()
+    } else {
+        path.trim_start_matches('/').to_string()
+    };
+    let dir = conn.session.read_dir(&target).await.map_err(|e| {
+        format!("SFTP could not list {target} ({e:?})")
+    })?;
+    Ok(dir.map(|entry| entry.file_name()).collect())
+}
+
+/// The old `sftpUpload`: mkdir each parent once per batch, then write with
+/// CREATE|TRUNCATE|WRITE. The target path is stripped of slashes both ends.
+async fn sftp_upload(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    path: &str,
+    files: &[UploadedFile],
+) -> Result<(), String> {
+    use russh_sftp::protocol::OpenFlags;
+
+    let conn = sftp_open(host, port, user, password).await?;
+    let root = path.trim_matches('/').to_string();
+    let mut made: Vec<String> = Vec::new();
+    for file in files {
+        if file.name.is_empty() || file.name.contains("..") {
+            return Err(format!("Unsafe file name: {}", file.name));
+        }
+        let name = if root.is_empty() {
+            file.name.clone()
+        } else {
+            format!("{}/{}", root, file.name)
+        };
+        let parts: Vec<&str> = name.split('/').collect();
+        let mut dir = String::new();
+        for part in &parts[..parts.len() - 1] {
+            dir = if dir.is_empty() {
+                part.to_string()
+            } else {
+                format!("{dir}/{part}")
+            };
+            if made.contains(&dir) {
+                continue;
+            }
+            conn.session
+                .create_dir(&dir)
+                .await
+                .map_err(|e| format!("SFTP could not create {dir} ({e:?})"))?;
+            made.push(dir.clone());
+        }
+        let bytes = base64_decode(&file.base64)?;
+        let mut f = conn.session
+            .open_with_flags(&name, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+            .await
+            .map_err(|e| format!("SFTP could not open {name} ({e:?})"))?;
+        use tokio::io::AsyncWriteExt as _;
+        f.write_all(&bytes)
+            .await
+            .map_err(|e| format!("SFTP could not write {name} ({e})"))?;
+        f.shutdown()
+            .await
+            .map_err(|e| format!("SFTP could not finish {name} ({e})"))?;
+    }
+    Ok(())
+}
+
+/// Public SFTP upload: the same host guard as the FTPS path.
+pub async fn sftp_upload_public(
+    target: &FtpTarget,
+    files: &[UploadedFile],
+) -> Result<(), String> {
+    if !host_allowed(&target.host) {
+        return Err("That host is not allowed.".to_string());
+    }
+    if target.user.is_empty() || target.password.is_empty() {
+        return Err("SFTP needs a username and password.".to_string());
+    }
+    if files.is_empty() {
+        return Err("There are no files to upload.".to_string());
+    }
+    sftp_upload(&target.host, SFTP_PORT, &target.user, &target.password, &target.path(), files).await
+}
+
+/// The `via` the operator's saved connection says to use.
+pub enum Via {
+    Ftp,
+    Sftp,
+}
+
+pub fn parse_via(via: Option<String>) -> Via {
+    match via.as_deref() {
+        Some("sftp") => Via::Sftp,
+        _ => Via::Ftp,
+    }
+}
+
+/// Dispatch on `via`: FTPS is still the default, SFTP when the test phase
+/// found the passive ports blocked.
+pub async fn upload_via(target: &FtpTarget, via: Option<String>, files: &[UploadedFile]) -> Value {
+    match parse_via(via) {
+        Via::Sftp => match sftp_upload_public(target, files).await {
+            Ok(()) => json!({ "ok": true, "files": files.len(), "via": "sftp" }),
+            Err(error) => json!({ "ok": false, "via": "sftp", "error": error }),
+        },
+        Via::Ftp => upload(target, files).await,
+    }
+}
+
 #[cfg(test)]
 mod index_tests {
     use super::*;
@@ -728,5 +974,294 @@ mod index_tests {
         );
         assert!(url_host("https://127.0.0.1/x").is_none());
         assert!(url_host("http://example.com").is_none());
+    }
+}
+
+#[cfg(test)]
+mod sftp_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use russh::server::{Auth, Msg, Server as SshServer, Session};
+    use russh::{Channel, ChannelId};
+    use russh_sftp::protocol::{File, FileAttributes, Handle, Name, Status, StatusCode, Version};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex;
+
+    /// What the fake server has seen on disk. Shared with the test so the test
+    /// can assert on it after the client closes the connection.
+    #[derive(Clone, Default)]
+    struct World {
+        dirs: Arc<Mutex<HashMap<String, bool>>>,
+        files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    }
+
+    struct SshServerForTest {
+        world: World,
+    }
+
+    impl SshServerForTest {
+        fn default_world() -> (Self, World) {
+            let world = World::default();
+            (Self { world: world.clone() }, world)
+        }
+    }
+
+    impl russh::server::Server for SshServerForTest {
+        type Handler = SshSessionForTest;
+
+        fn new_client(&mut self, _: Option<SocketAddr>) -> Self::Handler {
+            SshSessionForTest {
+                world: self.world.clone(),
+                channels: HashMap::new(),
+            }
+        }
+    }
+
+    struct SshSessionForTest {
+        world: World,
+        channels: HashMap<ChannelId, Channel<Msg>>,
+    }
+
+    impl russh::server::Handler for SshSessionForTest {
+        type Error = russh::Error;
+
+        async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+            assert_eq!(user, "tester");
+            assert_eq!(password, "secret");
+            Ok(Auth::Accept)
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            channel: Channel<Msg>,
+            reply: russh::server::ChannelOpenHandle,
+            _session: &mut Session,
+        ) -> Result<(), Self::Error> {
+            self.channels.insert(channel.id(), channel);
+            let _ = reply.accept().await;
+            Ok(())
+        }
+
+        async fn channel_eof(
+            &mut self,
+            channel: ChannelId,
+            session: &mut Session,
+        ) -> Result<(), Self::Error> {
+            session.close(channel)?;
+            Ok(())
+        }
+
+        async fn subsystem_request(
+            &mut self,
+            channel_id: ChannelId,
+            name: &str,
+            session: &mut Session,
+        ) -> Result<(), Self::Error> {
+            if name == "sftp" {
+                let channel = self.channels.remove(&channel_id).unwrap();
+                session.channel_success(channel_id)?;
+                // The handler is awaited from the packet loop, so run the sftp
+                // server on its own task; awaiting it here would stall the
+                // loop that feeds the channel.
+                let stream = channel.into_stream();
+                let world = self.world.clone();
+                tokio::spawn(async move {
+                    let _ = russh_sftp::server::run(
+                        stream,
+                        SftpForTest {
+                            world,
+                            read_done: HashMap::new(),
+                        },
+                    )
+                    .await;
+                });
+            } else {
+                session.channel_failure(channel_id)?;
+            }
+            Ok(())
+        }
+    }
+
+    /// The fake SFTP backend: in-memory dirs + files, exactly what the client
+    /// operations need (mkdir / open / write / close / opendir / readdir /
+    /// realpath). `readdir` answers once, then EOF, so the client's read_dir
+    /// loop terminates.
+    struct SftpForTest {
+        world: World,
+        read_done: HashMap<String, bool>,
+    }
+
+    impl SftpForTest {
+        fn ok(id: u32) -> Status {
+            Status {
+                id,
+                status_code: StatusCode::Ok,
+                error_message: "OK".to_string(),
+                language_tag: "en-US".to_string(),
+            }
+        }
+    }
+
+    impl russh_sftp::server::Handler for SftpForTest {
+        type Error = StatusCode;
+
+        fn unimplemented(&self) -> Self::Error {
+            StatusCode::OpUnsupported
+        }
+
+        async fn init(
+            &mut self,
+            _version: u32,
+            _extensions: HashMap<String, String>,
+        ) -> Result<Version, Self::Error> {
+            Ok(Version::new())
+        }
+
+        async fn open(
+            &mut self,
+            id: u32,
+            filename: String,
+            _pflags: russh_sftp::protocol::OpenFlags,
+            _attrs: FileAttributes,
+        ) -> Result<Handle, Self::Error> {
+            self.world
+                .files
+                .lock()
+                .await
+                .insert(filename.clone(), Vec::new());
+            Ok(Handle {
+                id,
+                handle: filename,
+            })
+        }
+
+        async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
+            Ok(Self::ok(id))
+        }
+
+        async fn write(
+            &mut self,
+            id: u32,
+            handle: String,
+            _offset: u64,
+            data: Vec<u8>,
+        ) -> Result<Status, Self::Error> {
+            if let Some(bytes) = self.world.files.lock().await.get_mut(&handle) {
+                bytes.extend(data);
+            }
+            Ok(Self::ok(id))
+        }
+
+        async fn mkdir(
+            &mut self,
+            id: u32,
+            path: String,
+            _attrs: FileAttributes,
+        ) -> Result<Status, Self::Error> {
+            self.world.dirs.lock().await.insert(path, true);
+            Ok(Self::ok(id))
+        }
+
+        async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
+            Ok(Name {
+                id,
+                files: vec![File::dummy(path)],
+            })
+        }
+
+        async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
+            Ok(Handle { id, handle: path })
+        }
+
+        async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
+            if self.read_done.get(&handle).copied().unwrap_or(false) {
+                return Err(StatusCode::Eof);
+            }
+            self.read_done.insert(handle, true);
+            Ok(Name {
+                id,
+                files: vec![
+                    File::new("index.html", FileAttributes::default()),
+                    File::new("assets", FileAttributes::default()),
+                ],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn an_in_process_sftp_round_trip_lists_and_uploads() {
+        let (mut server, world) = SshServerForTest::default_world();
+        let key = russh::keys::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519).unwrap();
+        let config = Arc::new(russh::server::Config {
+            keys: vec![key],
+            ..Default::default()
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let running = server.run_on_socket(config, &listener);
+        let handle = running.handle();
+
+        // upload: parent dirs created once per batch, then CREATE|TRUNCATE|WRITE
+        use base64::Engine as _;
+        let payload = b"hello from the sftp fallback";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+        let files = vec![UploadedFile {
+            name: "assets/app.js".to_string(),
+            base64: b64,
+        }];
+
+        let ops = async {
+            // listing: "/" maps to "." on the wire and answers two entries
+            let names = tokio::time::timeout(
+                Duration::from_secs(60),
+                sftp_list("127.0.0.1", port, "tester", "secret", "/"),
+            )
+            .await
+            .expect("sftp_list hung")
+            .expect("sftp_list failed");
+            assert!(
+                names.iter().any(|n| n == "index.html"),
+                "expected index.html in listing, got {names:?}"
+            );
+            assert!(names.iter().any(|n| n == "assets"), "got {names:?}");
+
+            tokio::time::timeout(
+                Duration::from_secs(60),
+                sftp_upload("127.0.0.1", port, "tester", "secret", "public_html", &files),
+            )
+            .await
+            .expect("sftp_upload hung")
+            .expect("sftp_upload failed");
+        };
+
+        // The server future borrows `server` and `listener`, so it cannot be
+        // spawned; poll it beside the client instead. The client requests
+        // shutdown when it is done, which ends the accept loop.
+        let ((), _server) = tokio::join!(
+            async {
+                ops.await;
+                handle.shutdown(String::from("test done"));
+            },
+            running
+        );
+
+        let mut dirs = world
+            .dirs
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        dirs.sort();
+        assert_eq!(dirs, vec!["public_html", "public_html/assets"]);
+        let stored = world
+            .files
+            .lock()
+            .await
+            .get("public_html/assets/app.js")
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(stored.as_slice(), &payload[..], "bytes on the wire changed");
     }
 }

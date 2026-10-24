@@ -436,11 +436,13 @@ struct FtpUploadRequest {
     #[serde(flatten)]
     target: ftp::FtpTarget,
     #[serde(default)]
+    via: Option<String>,
+    #[serde(default)]
     files: Vec<ftp::UploadedFile>,
 }
 
 async fn ftp_upload(Json(req): Json<FtpUploadRequest>) -> Json<serde_json::Value> {
-    Json(ftp::upload(&req.target, &req.files).await)
+    Json(ftp::upload_via(&req.target, req.via, &req.files).await)
 }
 
 async fn index_now(Json(req): Json<ftp::IndexNowRequest>) -> Json<serde_json::Value> {
