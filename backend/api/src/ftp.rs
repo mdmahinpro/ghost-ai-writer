@@ -181,7 +181,7 @@ fn host_allowed(host: &str) -> bool {
     true
 }
 
-async fn open(target: &FtpTarget) -> Result<Stream, String> {
+async fn open(target: &FtpTarget) -> Result<(Stream, Arc<ClientConfig>), String> {
     if !host_allowed(&target.host) {
         return Err("That host is not allowed.".to_string());
     }
@@ -194,7 +194,10 @@ async fn open(target: &FtpTarget) -> Result<Stream, String> {
         .map_err(|_| "The FTP host did not answer.".to_string())?
         .map_err(|e| format!("Could not reach {}: {}", target.host, redact(&e.to_string())))?;
 
-    let connector = TlsConnector::from(tls_config());
+    // One config per request: its ticket cache is what makes the data connection
+    // resume the control connection's session.
+    let config = tls_config();
+    let connector = TlsConnector::from(config.clone());
     let name = server_name(&target.host).ok_or_else(|| "That host is not a valid name.".to_string())?;
     let mut plain = tcp;
     let greeting = read_plain(&mut plain).await?;
@@ -222,7 +225,7 @@ async fn open(target: &FtpTarget) -> Result<Stream, String> {
     if !is_ok(&pass, &["230", "202"]) {
         return Err("The server refused that password.".to_string());
     }
-    Ok(stream)
+    Ok((stream, config))
 }
 
 async fn read_plain(plain: &mut TcpStream) -> Result<String, String> {
@@ -282,7 +285,7 @@ fn parse_pasv(reply: &str, fallback_host: &str) -> Option<(String, u16)> {
 }
 
 /// Open the data connection, resuming the control connection's TLS session.
-async fn open_data(stream: &mut Stream, host: &str) -> Result<Stream, String> {
+async fn open_data(stream: &mut Stream, host: &str, config: &Arc<ClientConfig>) -> Result<Stream, String> {
     let reply = send(stream, "PASV").await?;
     if !is_ok(&reply, &["227"]) {
         return Err("The server refused a passive connection.".to_string());
@@ -293,7 +296,7 @@ async fn open_data(stream: &mut Stream, host: &str) -> Result<Stream, String> {
         .await
         .map_err(|_| "The data connection did not open (passive ports may be blocked).".to_string())?
         .map_err(|_| "The data connection was refused (passive ports may be blocked).".to_string())?;
-    let connector = TlsConnector::from(tls_config());
+    let connector = TlsConnector::from(config.clone());
     let name = server_name(host).ok_or_else(|| "That host is not a valid name.".to_string())?;
     tokio::time::timeout(IO_TIMEOUT, connector.connect(name, tcp))
         .await
@@ -304,10 +307,11 @@ async fn open_data(stream: &mut Stream, host: &str) -> Result<Stream, String> {
 async fn store_one(
     control: &mut Stream,
     host: &str,
+    config: &Arc<ClientConfig>,
     name: &str,
     bytes: Vec<u8>,
 ) -> Result<(), String> {
-    let mut data = open_data(control, host).await?;
+    let mut data = open_data(control, host, config).await?;
     let started = send(control, &format!("STOR {name}")).await?;
     if !is_ok(&started, &["150", "125"]) {
         return Err(format!("The server refused to store {name}."));
@@ -336,8 +340,8 @@ pub async fn upload(target: &FtpTarget, files: &[UploadedFile]) -> Value {
     if files.is_empty() {
         return failure("There are no files to upload.".to_string());
     }
-    let mut control = match open(target).await {
-        Ok(stream) => stream,
+    let (mut control, config) = match open(target).await {
+        Ok(pair) => pair,
         Err(error) => return failure(error),
     };
     let result = async {
@@ -366,7 +370,7 @@ pub async fn upload(target: &FtpTarget, files: &[UploadedFile]) -> Value {
                 }
             }
             let bytes = base64_decode(&file.base64)?;
-            store_one(&mut control, &target.host, &file.name, bytes).await?;
+            store_one(&mut control, &target.host, &config, &file.name, bytes).await?;
         }
         Ok::<(), String>(())
     }
@@ -437,15 +441,15 @@ pub async fn test_login(req: &LoginRequest) -> Value {
     let target = &req.target;
     let connect_started = Instant::now();
     let opened = open(target).await;
-    let mut control = match opened {
-        Ok(stream) => {
+    let (mut control, config) = match opened {
+        Ok(pair) => {
             steps.push(step(
                 "connect",
                 connect_started,
                 true,
                 format!("Signed in to {}:{}", target.host, target.port()),
             ));
-            stream
+            pair
         }
         Err(error) => {
             steps.push(step("connect", connect_started, false, error.clone()));
@@ -472,7 +476,7 @@ pub async fn test_login(req: &LoginRequest) -> Value {
         }
     }
     let list_started = Instant::now();
-    let listing = match open_data(&mut control, &target.host).await {
+    let listing = match open_data(&mut control, &target.host, &config).await {
         Ok(mut data) => match send(&mut control, "LIST").await {
             Ok(reply) if is_ok(&reply, &["150", "125"]) => {
                 let mut buf = Vec::new();
