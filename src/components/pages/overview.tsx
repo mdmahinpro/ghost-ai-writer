@@ -53,7 +53,7 @@ export function OverviewPage() {
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-brass-2">Desk</p>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight">Overview</h1>
+          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-4xl">Overview</h1>
           <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted">
             <span>{site.name}</span>
             <Badge tone={site.ghost.status === "connected" ? "ok" : site.ghost.status === "error" ? "danger" : "muted"}>
@@ -74,7 +74,7 @@ export function OverviewPage() {
 
       <SetupGuide />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat label="Articles" value={String(articles.length)} hint={`${published} published`} />
         <Stat label="Active runs" value={String(runs.filter((run) => run.status === "running" || run.status === "queued").length)} hint={`${running} jobs queued`} />
         <Stat label="Link graph" value={String(links)} hint={`${verified} verified · ${localLinks} local`} />
@@ -236,10 +236,10 @@ function keyRows(data: { keys: { id: string; label: string; allowanceUsd: number
 
 function Stat({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
-    <Card className="px-5 py-5">
-      <div className="text-xs font-medium uppercase tracking-[0.16em] text-faint">{label}</div>
-      <div className="mt-3 text-4xl font-semibold tracking-tight tabular-nums">{value}</div>
-      <div className="mt-2 text-sm text-muted">{hint}</div>
+    <Card className="px-4 py-4 sm:px-5 sm:py-5">
+      <div className="text-[10px] font-medium uppercase leading-4 tracking-[0.14em] text-faint sm:text-xs sm:tracking-[0.16em]">{label}</div>
+      <div className="mt-2 text-2xl font-semibold tracking-tight tabular-nums sm:mt-3 sm:text-4xl">{value}</div>
+      <div className="mt-1.5 text-xs text-muted sm:mt-2 sm:text-sm">{hint}</div>
     </Card>
   );
 }

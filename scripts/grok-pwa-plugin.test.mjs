@@ -477,7 +477,18 @@ test("renders the manifest with the per-app name", () => {
   const manifest = JSON.parse(renderWebManifest("wild-race.grok.me"));
   assert.equal(manifest.name, "Wild Race");
   assert.equal(manifest.short_name, "Wild Race");
-  assert.equal(manifest.icons[0].src, "/__grok/icon-180.png");
+  // Chrome's installability floor: a 192 and a 512 "any" icon plus a maskable one.
+  assert.deepEqual(
+    manifest.icons.map((icon) => `${icon.sizes}:${icon.purpose}`),
+    ["192x192:any", "512x512:any", "512x512:maskable"],
+  );
+});
+
+test("falls back to the app's own install identity, not the platform default", () => {
+  const manifest = JSON.parse(renderWebManifest("localhost:8080"));
+  assert.equal(manifest.name, "Ghost AI Writer");
+  assert.equal(manifest.short_name, "Ghost Writer");
+  assert.notEqual(manifest.background_color, "#000000");
 });
 
 // Tripwires: the deployed-app path only works if Nitro scans server/ — an

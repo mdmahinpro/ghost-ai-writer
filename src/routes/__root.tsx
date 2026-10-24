@@ -9,7 +9,7 @@ export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
       { title: "Ghost AI Writer" },
       { name: "description", content: "Six-stage content automation for Ghost. Single-shot writes, link graph, static delivery." },
     ],
@@ -27,6 +27,8 @@ export const Route = createRootRoute({
     <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="theme-color" content="#09090b" />
+        <meta name="apple-mobile-web-app-title" content="Ghost AI Writer" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <script
           dangerouslySetInnerHTML={{
             __html:

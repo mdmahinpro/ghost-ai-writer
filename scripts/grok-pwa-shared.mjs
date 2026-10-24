@@ -7,6 +7,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const DEFAULT_APP_NAME = "Grok App";
+/** This app's install identity — the manifest name, not the host-slug fallback. */
+export const APP_DISPLAY_NAME = "Ghost AI Writer";
+export const APP_SHORT_NAME = "Ghost Writer";
+export const APP_THEME_COLOR = "#f2f4f1";
+export const APP_BACKGROUND_COLOR = "#f2f4f1";
 export const OG_SERVICE_URL_DEFAULT = "https://og.grok.me";
 export const OG_SITE_REL_PATH = "src/lib/og/site.json";
 
@@ -158,23 +163,24 @@ export function renderInstallPageHtml(template, { host, url } = {}) {
 }
 
 export function renderWebManifest(hostHeader) {
-  const name = appNameFromHost(hostHeader);
+  const fromHost = appNameFromHost(hostHeader);
+  const name = fromHost === DEFAULT_APP_NAME ? APP_DISPLAY_NAME : fromHost;
   return JSON.stringify(
     {
       name,
-      short_name: name,
+      short_name: name === APP_DISPLAY_NAME ? APP_SHORT_NAME : name,
+      description: "Six-stage content automation for Ghost. Single-shot writes, link graph, static delivery.",
+      lang: "en",
       id: "/",
       start_url: "/",
       scope: "/",
       display: "standalone",
-      background_color: "#000000",
-      theme_color: "#000000",
+      background_color: APP_BACKGROUND_COLOR,
+      theme_color: APP_THEME_COLOR,
       icons: [
-        {
-          src: "/__grok/icon-180.png",
-          sizes: "180x180",
-          type: "image/png",
-        },
+        { src: "/__grok/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+        { src: "/__grok/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+        { src: "/__grok/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
       ],
     },
     null,

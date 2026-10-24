@@ -95,8 +95,56 @@ uses 17/30 with `text-wrap: pretty` and a 68ch measure.
 - Sidebar 260px, `surface` background, no right border (contrast separates it).
 - Active item: `accent` at 8% + `accent` text + 2px left bar. Never a filled pill.
 - Group labels: caption style, collapsible, state remembered.
-- Mobile (<1024px): sidebar becomes a drawer; topbar keeps brand + one action; every
-  table collapses to a stacked card list; page padding 20; **zero horizontal overflow at 390px**.
+- Below 768px the sidebar is gone entirely: navigation is the bottom tab bar plus the
+  drawer behind "More"; every table collapses to a stacked card list; page padding 16;
+  **zero horizontal overflow at 390px**.
+
+### Responsive shell (device pass)
+
+One markup tree, three modes, all driven by `--shell-rail` / `--shell-panel` /
+`--tabbar-h` in `@theme` — never by JS width listeners:
+
+| width | sidebar | navigation | page padding |
+|---|---|---|---|
+| < 768 | hidden | 5-slot bottom tab bar (`Overview · Articles · Create · Calendar · More`), More opens the full drawer | 16 + 82 bottom (clears the bar) |
+| 768–1279 | 72px icon rail, labels screen-reader-only, group words replaced by hairlines | rail only | 32 |
+| ≥ 1280 | 240px panel, labels + collapsible groups | panel + ⌘K palette | 32 |
+
+References for this pass, and what each one settles:
+[Supabase](https://mobbin.com/screens/5a658394-5d52-49f1-816e-381f7700b08d) (dense rail,
+data-first panels), [Amplitude](https://mobbin.com/screens/948986c4-509e-43d9-8a3f-eaac0f560f9f)
+(KPI row that survives 390px as a 2×2), [Twenty](https://mobbin.com/sites/sections/abe261e4-d901-42f1-bea3-0a806e2d0669)
+and [ClickUp](https://mobbin.com/sites/sections/8327bdfc-5c9d-4240-b4af-9431eebd0f9e) for the
+public landing rhythm.
+
+- Safe areas: `viewport-fit=cover` + `env(safe-area-inset-*)` (header top, tab bar bottom,
+  toast offset) so a standalone install is edge-to-edge on notched phones.
+- PWA identity: `name` Ghost AI Writer, 192/512 **any** + 512 **maskable** icons rendered
+  from the studio mark (`node scripts/render-icons.mjs`), paper background — the installability
+  floor Chrome requires, so "Add to Home Screen" gives a real app icon, not a shortcut.
+- Phone type ramp: page titles 24px (36 from `sm`), KPI values 24px (36 from `sm`).
+- A web app cannot choose the browser or force a private window; installable standalone is
+  the honest ceiling for "opens like an app".
+
+### Previewing the UI without the admin token
+
+The studio talks to the deployed Rust API, which needs `GAW_ADMIN_TOKEN`. For UI work run the
+fixture server instead — it answers the state + lease routes from this workspace's own
+`.data/appstate.json` and 200s everything else:
+
+```bash
+node scripts/ui-preview-api.mjs &                 # :8787
+VITE_GAW_API=http://127.0.0.1:8787 npm run dev    # :8080 (not 5173 — strictPort in vite.config)
+```
+
+The token gate reads `sessionStorage` once at mount, so unlock it with a stub and reload:
+
+```js
+sessionStorage.setItem('gaw_admin_token', 'ui-preview'); location.reload()
+```
+
+Fixture previews never claim the dispatch lease (`granted: false`), so a preview tab cannot
+run jobs against real state.
 
 ## Component inventory (what each screen is built from)
 

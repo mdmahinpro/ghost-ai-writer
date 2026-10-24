@@ -238,11 +238,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
-       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-surface/60 md:flex">
+       <aside className="sticky top-0 hidden h-[100dvh] shrink-0 flex-col border-r border-line bg-surface/60 md:flex md:w-[var(--shell-rail)] xl:w-[var(--shell-panel)]">
         <Brand />
         <CreateButton />
         <SidebarNav path={path} />
-        <p className="px-4 py-3 text-[11px] leading-5 text-faint">Six stages · one desk</p>
+        <p className="hidden px-4 py-3 text-[11px] leading-5 text-faint xl:block">Six stages · one desk</p>
       </aside>
 
       {open ? (
@@ -250,7 +250,7 @@ export function AppShell({ children }: { children: ReactNode }) {
            <button className="absolute inset-0 bg-bg/70" aria-label="Close menu" onClick={() => setOpen(false)} />
             <div className="relative flex h-full w-[min(18rem,88vw)] flex-col border-r border-line bg-surface shadow-sm">
              <div className="flex items-center justify-between">
-               <Brand />
+               <Brand full />
                <button className="mr-3 grid size-11 place-items-center text-muted" onClick={() => setOpen(false)} aria-label="Close">
                  <X className="size-5" />
                </button>
@@ -272,7 +272,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-         <header data-shell-header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-line bg-bg/90 px-3 backdrop-blur md:px-6">
+         <header data-shell-header className="sticky top-0 z-20 flex min-h-14 items-center gap-2 border-b border-line bg-bg/90 px-3 pt-[var(--safe-top)] backdrop-blur md:px-6">
           <button className="grid size-9 place-items-center rounded-md text-muted hover:bg-surface hover:text-fg md:hidden" onClick={() => setOpen(true)} aria-label="Open menu">
             <Menu className="size-5" />
           </button>
@@ -406,10 +406,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : null}
           </div>
         </header>
-        <main className="min-w-0 flex-1 px-5 py-6 md:px-8 md:py-8">
+        <main className="min-w-0 flex-1 px-4 pb-[calc(var(--tabbar-h)+var(--safe-bottom)+1.25rem)] pt-5 md:px-8 md:py-8 md:pb-8">
           <div className="mx-auto w-full max-w-6xl">{site ? children : <WorkspacesPage />}</div>
         </main>
       </div>
+      <MobileTabBar path={path} onMore={() => setOpen(true)} />
       {palette ? (
          <div className="fixed inset-0 z-50 flex items-start justify-center bg-bg/70 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Search and commands" onKeyDown={(event) => { if (event.key === "Escape") setPalette(false); }}>
           <button className="absolute inset-0" aria-label="Close search" onClick={() => setPalette(false)} />
@@ -466,7 +467,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <HumanizePipeline />
       <DeskWorkers />
       {notice ? (
-        <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-md rounded-md border border-line bg-elev px-4 py-3 text-sm text-fg shadow-sm md:left-auto md:right-6">
+        <div className="fixed bottom-[calc(var(--tabbar-h)+var(--safe-bottom)+0.75rem)] left-4 right-4 z-50 mx-auto max-w-md rounded-md border border-line bg-elev px-4 py-3 text-sm text-fg shadow-sm md:bottom-6 md:left-auto md:right-6">
           {notice.text}
           <span className="ml-2 text-faint">{relTime(Date.now())}</span>
         </div>
@@ -475,11 +476,74 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-function Brand() {
+/**
+ * Phone-first navigation (<md). Sidebar is hidden at this width, so the four
+ * daily destinations plus one raised primary action live in a thumb-reachable
+ * bar; everything else stays in the drawer behind "More".
+ */
+const TABS = [
+  { id: "overview", href: "/", label: "Overview", Icon: LayoutDashboard },
+  { id: "articles", href: "/articles", label: "Articles", Icon: Files },
+  { id: "calendar", href: "/calendar", label: "Calendar", Icon: CalendarDays },
+] as const;
+
+function MobileTabBar({ path, onMore }: { path: string; onMore: () => void }) {
+  const onCreate = active("/create", path);
   return (
-    <Link to="/" className="flex items-center gap-2.5 px-4 pb-3 pt-4">
+    <nav
+      aria-label="Primary"
+      data-shell-tabbar
+      className="fixed inset-x-0 bottom-0 z-30 grid min-h-[var(--tabbar-h)] grid-cols-5 items-stretch border-t border-line bg-bg/95 pb-[var(--safe-bottom)] backdrop-blur md:hidden"
+    >
+      {TABS.slice(0, 2).map((tab) => (
+        <TabLink key={tab.id} tab={tab} path={path} />
+      ))}
+      <Link
+        to="/create"
+        aria-current={onCreate ? "page" : undefined}
+        aria-label="Create content"
+        className="flex flex-col items-center justify-center gap-1 pt-1.5"
+      >
+        <span className={cn("grid size-9 place-items-center rounded-full transition-colors", onCreate ? "bg-accent text-on-accent" : "bg-accent/14 text-accent")}>
+          <Plus className="size-5" strokeWidth={2} />
+        </span>
+        <span className={cn("text-[10px] font-medium leading-4", onCreate ? "text-accent" : "text-faint")}>Create</span>
+      </Link>
+      {TABS.slice(2).map((tab) => (
+        <TabLink key={tab.id} tab={tab} path={path} />
+      ))}
+      <button type="button" onClick={onMore} aria-label="More sections" className="flex flex-col items-center justify-center gap-1 pt-1.5 text-faint">
+        <span className="grid size-9 place-items-center rounded-full">
+          <Menu className="size-5" strokeWidth={1.75} />
+        </span>
+        <span className="text-[10px] font-medium leading-4">More</span>
+      </button>
+    </nav>
+  );
+}
+
+function TabLink({ tab, path }: { tab: (typeof TABS)[number]; path: string }) {
+  const on = tab.id !== "overview" ? active(tab.href, path) : path === "/";
+  const Icon = tab.Icon;
+  return (
+    <Link
+      to={tab.href}
+      aria-current={on ? "page" : undefined}
+      className={cn("flex flex-col items-center justify-center gap-1 pt-1.5 text-[10px] font-medium leading-4", on ? "text-accent" : "text-faint")}
+    >
+      <span className={cn("grid size-9 place-items-center rounded-full", on && "bg-accent/12")}>
+        <Icon className="size-5" strokeWidth={on ? 2.1 : 1.75} />
+      </span>
+      {tab.label}
+    </Link>
+  );
+}
+
+function Brand({ full }: { full?: boolean }) {
+  return (
+    <Link to="/" className={cn("flex items-center gap-2.5 px-4 pb-3 pt-3", !full && "md:justify-center md:px-0 xl:justify-start xl:px-4")}>
       <StudioMark />
-      <span className="min-w-0">
+      <span className={cn("min-w-0", !full && "md:hidden xl:block")}>
         <span className="block truncate text-[13px] font-semibold tracking-[-0.01em] text-fg">Ghost AI Writer</span>
         <span className="mt-0.5 block text-[11px] text-faint">Content desk</span>
       </span>
@@ -490,13 +554,14 @@ function Brand() {
 /** The one primary action in the sidebar (reference: AirOps puts + Create first). */
 function CreateButton() {
   return (
-    <div className="px-3 pb-2">
+    <div className="px-3 pb-2 md:px-2 xl:px-3">
       <Link
         to="/create"
-        className="flex min-h-8 w-full items-center gap-2 rounded-md border border-line-strong/70 px-2 text-[13px] font-medium text-fg transition-colors hover:border-accent/60 hover:bg-accent/[0.06] hover:text-accent"
+        title="New article"
+        className="flex min-h-8 w-full items-center gap-2 rounded-md border border-line-strong/70 px-2 text-[13px] font-medium text-fg transition-colors hover:border-accent/60 hover:bg-accent/[0.06] hover:text-accent md:justify-center md:px-0 xl:justify-start xl:px-2"
       >
         <Plus className="size-4 shrink-0 text-accent" />
-        New article
+        <span className="md:sr-only xl:not-sr-only">New article</span>
       </Link>
     </div>
   );
@@ -514,11 +579,13 @@ function SidebarNav({ path, onNavigate }: { path: string; onNavigate?: () => voi
         const items = NAV.filter((item) => item.group === group);
         const isOpen = Boolean(expanded[group]);
         return (
-          <section key={group} className="mb-3">
-            <button type="button" aria-expanded={isOpen} aria-controls={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} onClick={() => setExpanded((previous) => ({ ...previous, [group]: !previous[group] }))} className="flex min-h-7 w-full items-center justify-between rounded-sm px-2 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-faint hover:text-fg">
+          <section key={group} className="mb-3 md:mb-2">
+            {/* Rail width (md–xl) has no room for the group word: a hairline keeps the rhythm. */}
+            <div aria-hidden="true" className="mx-2 mb-1.5 hidden h-px bg-line/70 md:block xl:hidden" />
+            <button type="button" aria-expanded={isOpen} aria-controls={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} onClick={() => setExpanded((previous) => ({ ...previous, [group]: !previous[group] }))} className="flex min-h-7 w-full items-center justify-between rounded-sm px-2 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-faint hover:text-fg md:hidden xl:flex">
               {group}<ChevronDown aria-hidden="true" className={cn("size-3.5 transition-transform", !isOpen && "-rotate-90")} />
             </button>
-            <div id={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} hidden={!isOpen} className="mt-0.5 space-y-px pb-2">
+            <div id={`nav-${group.replaceAll(/[^a-z]+/gi, "-")}`} className={cn("mt-0.5 space-y-px pb-2 md:block md:pb-0", !isOpen && "hidden")}>
               {items.map((item) => <NavLink key={item.id} item={item} path={path} onNavigate={onNavigate} />)}
             </div>
           </section>
@@ -560,16 +627,18 @@ function NavLink({ item, path, onNavigate }: { item: (typeof NAV)[number]; path:
     <Link
       to={item.href}
       onClick={onNavigate}
+      title={item.label}
       aria-current={on ? "page" : undefined}
+      aria-label={item.label}
       className={cn(
-        "flex min-h-8 items-center gap-2 rounded-sm px-2 text-[13px] font-medium transition-colors duration-150",
+        "flex min-h-8 items-center gap-2 rounded-sm px-2 text-[13px] font-medium transition-colors duration-150 md:justify-center md:px-0 xl:justify-start xl:px-2",
         on
           ? "bg-accent/14 font-semibold text-fg shadow-[inset_2px_0_0_var(--color-accent)]"
           : "text-muted hover:bg-surface-2/70 hover:text-fg",
       )}
     >
       <Icon strokeWidth={1.75} className={cn("size-4 shrink-0", on ? "text-accent" : "text-faint")} />
-       <span className="truncate">{item.label}</span>
+       <span className="truncate md:sr-only xl:not-sr-only">{item.label}</span>
     </Link>
   );
 }
