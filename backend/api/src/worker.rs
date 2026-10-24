@@ -566,7 +566,22 @@ pub async fn run_once(
     match claim(pool, worker_id, lease_secs).await? {
         Some(job) => {
             let id = job.id;
+            // The job's run_id, read before processing: the rollup below must
+            // reflect the state this job just reached.
+            let run_id: Option<i64> = sqlx::query_scalar("SELECT run_id FROM jobs WHERE id = ?")
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
             process_claim(pool, worker_id, job, lease_secs).await?;
+            // Keep the run's status in step with its jobs. Cheap (one UPDATE per
+            // run whose status actually changed) and idempotent, so a worker
+            // crash between the two leaves the run stale but never wrong.
+            if let Some(run_id) = run_id {
+                let changed = crate::runs::refresh_run(pool, run_id).await?;
+                if changed {
+                    tracing::debug!(run_id, "run status rolled up");
+                }
+            }
             heartbeat(pool, worker_id, "1", 1).await?;
             Ok(Some(id))
         }
@@ -839,6 +854,39 @@ mod tests {
             Some(1)
         );
         assert_eq!(run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap(), None);
+    }
+
+    /// The run a job belongs to is rolled up as part of processing it: a batch
+    /// that finishes must not leave its run stuck on QUEUED.
+    #[tokio::test]
+    async fn finishing_a_job_rolls_its_run_up_to_completed() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO runs (id, website_id, type, status, created_at) VALUES (1,1,'KEYWORDS','QUEUED','2026-01-01T00:00:00Z')")
+            .execute(&p)
+            .await
+            .unwrap();
+        enqueue(&p, 1).await;
+        sqlx::query("UPDATE jobs SET run_id = 1 WHERE id = 1")
+            .execute(&p)
+            .await
+            .unwrap();
+
+        run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap();
+
+        let (job_status, run_status): (String, String) = sqlx::query_as(
+            "SELECT j.status, r.status FROM jobs j JOIN runs r ON r.id = j.run_id WHERE j.id = 1",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(job_status, "COMPLETED");
+        assert_eq!(
+            run_status, "COMPLETED",
+            "the run must roll up when its last job settles"
+        );
+
+        // A second pass over a settled run changes nothing.
+        assert!(!crate::runs::refresh_run(&p, 1).await.unwrap());
     }
 
     #[tokio::test]

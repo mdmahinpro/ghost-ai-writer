@@ -34,6 +34,11 @@ pub struct ProviderRow {
     pub temperature: f64,
     pub role: String,
     pub status: String,
+    pub priority: i64,
+    /// 0/1. The provider rejected this key (401/403); only a human re-enables it.
+    pub disabled: i64,
+    /// Set on HTTP 429; the key rejoins the pool once this passes.
+    pub cooldown_until: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,7 +176,102 @@ pub enum Engine {
     Http(Box<HttpEngine>),
 }
 
+/// A key's health, which only *demotes* it in the pool — never removes it.
+/// Port of the TS `keyPool` demotion ladder:
+///   healthy = 0, cooling (live 429 window) = 1, rejected (paused) = 2.
+/// Ordering is stable per tier, so the pool is deterministic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub enum KeyHealth {
+    Healthy = 0,
+    Cooling = 1,
+    Paused = 2,
+}
+
+/// One entry in the failover chain, in the order the worker should try it.
+#[derive(Debug, Clone)]
+pub struct PoolEntry {
+    pub id: i64,
+    pub provider: String,
+    pub label: String,
+    pub priority: i64,
+    pub health: KeyHealth,
+    pub disabled: bool,
+    pub cooldown_until: Option<String>,
+    pub key_hint: Option<String>,
+}
+
+/// Order a workspace's keys into the failover chain (TS `keyPool`).
+///
+/// Every key that can call a chat model stays in the pool: `disabled` and a
+/// live cooldown only push a key behind the healthy ones. When `preferred` is
+/// set it comes first *within its tier* — if the preferred key is paused it
+/// must not be tried before a healthy one, but it still beats the other paused
+/// keys. Ties break on priority (lower number first, matching the TS
+/// `b.priority - a.priority` order), then id for determinism.
+pub fn order_pool(mut entries: Vec<PoolEntry>, preferred: Option<i64>, now: &str) -> Vec<PoolEntry> {
+    for e in &mut entries {
+        let cooling = e
+            .cooldown_until
+            .as_deref()
+            .map(|until| until > now)
+            .unwrap_or(false);
+        e.health = if e.disabled {
+            KeyHealth::Paused
+        } else if cooling {
+            KeyHealth::Cooling
+        } else {
+            KeyHealth::Healthy
+        };
+    }
+    entries.sort_by(|a, b| {
+        a.health
+            .cmp(&b.health)
+            .then_with(|| {
+                // Preferred first inside its tier.
+                let ap = preferred.map(|p| a.id != p).unwrap_or(false);
+                let bp = preferred.map(|p| b.id != p).unwrap_or(false);
+                ap.cmp(&bp)
+            })
+            .then_with(|| a.priority.cmp(&b.priority))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    entries
+}
+
+/// The health change a failure implies, and whether it is terminal. Port of the
+/// TS `onKeyFailure` ladder:
+///   * 401/403 — the provider rejected the key: pause it (terminal).
+///   * 429 — rate limited: cool it for 12s, then it returns to the pool.
+///   * 400/404/422 — a config error: no cooldown, do not blame the key.
+///   * 5xx / transport — transient: no cooldown either.
+pub fn failure_action(err: &EngineError) -> KeyFailure {
+    match err {
+        EngineError::Http(code, _) if *code == 401 || *code == 403 => KeyFailure::Pause,
+        EngineError::Http(code, _) if *code == 429 => KeyFailure::Cool,
+        _ => KeyFailure::None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyFailure {
+    /// Stop using this key until a human re-enables it.
+    Pause,
+    /// Demote for the cooldown window, then it is healthy again.
+    Cool,
+    /// Not the key's fault: try the next key, change no health flag.
+    None,
+}
+
 impl Engine {
+    /// The `ai_keys.id` behind this engine, when it came from one. Used to
+    /// attribute a failure to the key that earned it, so the pool can demote it.
+    pub fn key_id(&self) -> Option<i64> {
+        match self {
+            Engine::Mock(_) => None,
+            Engine::Http(h) => h.key_id,
+        }
+    }
+
     pub fn model_id(&self) -> &str {
         match self {
             Engine::Mock(m) => &m.model_id,
@@ -323,6 +423,10 @@ pub struct HttpEngine {
     pub price_out_per_mtok: f64,
     pub max_tokens: i64,
     pub temperature: f64,
+    /// The `ai_keys.id` this engine was built from, so a failure can be
+    /// attributed to the key that actually earned it. `None` for a key inserted
+    /// for a one-off test.
+    pub key_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -452,26 +556,191 @@ pub async fn load_engine(
             model_id: "mock-1".into(),
         }));
     }
-    let row: Option<ProviderRow> = sqlx::query_as(
+    // Health demotes, it does not exclude: a cooling key is still returned when
+    // it is the only one, and `load_pool` is the failover order for callers that
+    // want to walk the whole chain.
+    let pool_chain = load_pool(pool, workspace_id, role, None).await?;
+    if let Some(engine) = pool_chain.into_iter().next() {
+        return Ok(engine);
+    }
+    // No provider configured: fall back to the mock engine so a fresh install
+    // still runs end to end instead of failing every job.
+    Ok(Engine::Mock(MockEngine {
+        model_id: "mock-1".into(),
+    }))
+}
+
+/// Load every eligible key for a role as an ordered failover chain (TS
+/// `keyPool`). The worker walks the chain: a 429/5xx advances to the next key
+/// without pausing anything; a 401/403 pauses the key that was tried. Every key
+/// stays in the chain — see `order_pool`.
+pub async fn load_pool(
+    pool: &SqlitePool,
+    workspace_id: i64,
+    role: &str,
+    preferred: Option<i64>,
+) -> Result<Vec<Engine>, sqlx::Error> {
+    let now = crate::worker::iso_now();
+    let rows: Vec<ProviderRow> = sqlx::query_as(
         "SELECT id, workspace_id, provider, label, key_enc, key_hint, kind, base_url, model_id, \
-                price_in_per_mtok, price_out_per_mtok, max_tokens, temperature, role, status \
+                price_in_per_mtok, price_out_per_mtok, max_tokens, temperature, role, status, \
+                priority, disabled, cooldown_until \
          FROM ai_keys \
-         WHERE workspace_id = ? AND role = ? AND status != 'DISABLED' \
-         ORDER BY is_default DESC, priority ASC, id ASC LIMIT 1",
+         WHERE workspace_id = ? AND role = ? AND status != 'DELETED'",
     )
     .bind(workspace_id)
     .bind(role)
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await?;
+    let entries: Vec<PoolEntry> = rows
+        .iter()
+        .map(|r| PoolEntry {
+            id: r.id,
+            provider: r.provider.clone(),
+            label: r.label.clone(),
+            priority: r.priority,
+            health: KeyHealth::Healthy,
+            disabled: r.disabled != 0,
+            cooldown_until: r.cooldown_until.clone(),
+            key_hint: r.key_hint.clone(),
+        })
+        .collect();
+    let by_id: std::collections::HashMap<i64, ProviderRow> =
+        rows.into_iter().map(|r| (r.id, r)).collect();
+    Ok(order_pool(entries, preferred, &now)
+        .into_iter()
+        .filter_map(|e| by_id.get(&e.id).cloned().map(engine_from_row))
+        .collect())
+}
 
-    let Some(p) = row else {
-        // No provider configured: fall back to the mock engine so a fresh
-        // install still runs end to end instead of failing every job.
-        return Ok(Engine::Mock(MockEngine {
-            model_id: "mock-1".into(),
-        }));
-    };
-    Ok(engine_from_row(p))
+/// The pool as the UI shows it: which key is next, and why any are demoted.
+/// Reads `provider`/`label`/`key_hint` (never the secret) so the settings screen
+/// can explain a demotion without exposing a key.
+pub async fn key_statuses(
+    pool: &SqlitePool,
+    workspace_id: i64,
+    role: &str,
+) -> Result<Vec<KeyStatus>, sqlx::Error> {
+    let now = iso_now_utc();
+    let rows: Vec<ProviderRow> = sqlx::query_as(
+        "SELECT id, workspace_id, provider, label, key_enc, key_hint, kind, base_url, model_id, \
+                price_in_per_mtok, price_out_per_mtok, max_tokens, temperature, role, status, \
+                priority, disabled, cooldown_until \
+         FROM ai_keys \
+         WHERE workspace_id = ? AND role = ? AND status != 'DELETED'",
+    )
+    .bind(workspace_id)
+    .bind(role)
+    .fetch_all(pool)
+    .await?;
+    let entries: Vec<PoolEntry> = rows
+        .iter()
+        .map(|r| PoolEntry {
+            id: r.id,
+            provider: r.provider.clone(),
+            label: r.label.clone(),
+            priority: r.priority,
+            health: KeyHealth::Healthy,
+            disabled: r.disabled != 0,
+            cooldown_until: r.cooldown_until.clone(),
+            key_hint: r.key_hint.clone(),
+        })
+        .collect();
+    Ok(order_pool(entries, None, &now)
+        .into_iter()
+        .map(|e| KeyStatus {
+            id: e.id,
+            provider: e.provider,
+            label: e.label,
+            key_hint: e.key_hint,
+            health: e.health,
+            cooldown_until: e.cooldown_until,
+        })
+        .collect())
+}
+
+/// One key as reported to the UI, in failover order.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KeyStatus {
+    pub id: i64,
+    pub provider: String,
+    pub label: String,
+    /// The masked tail shown instead of the key. Never the key itself.
+    pub key_hint: Option<String>,
+    pub health: KeyHealth,
+    pub cooldown_until: Option<String>,
+}
+
+/// Record a key failure: pause on 401/403, cool 12s on 429, otherwise leave the
+/// key's health alone. Returns the action taken so the caller can log it.
+pub async fn record_key_failure(
+    pool: &SqlitePool,
+    key_id: i64,
+    err: &EngineError,
+) -> Result<KeyFailure, sqlx::Error> {
+    let action = failure_action(err);
+    let now = iso_now_utc();
+    let detail = err.to_string();
+    match action {
+        KeyFailure::Pause => {
+            sqlx::query(
+                "UPDATE ai_keys SET disabled = 1, cooldown_until = NULL, last_error = ?, \
+                 last_error_at = ? WHERE id = ?",
+            )
+            .bind(&detail)
+            .bind(&now)
+            .bind(key_id)
+            .execute(pool)
+            .await?;
+        }
+        KeyFailure::Cool => {
+            // 12s, matching the TS cooldown: long enough for a rate-limit window
+            // to pass, short enough that the key returns within the same run.
+            let until = iso_after_secs(12);
+            sqlx::query(
+                "UPDATE ai_keys SET cooldown_until = ?, last_error = ?, last_error_at = ? \
+                 WHERE id = ?",
+            )
+            .bind(&until)
+            .bind(&detail)
+            .bind(&now)
+            .bind(key_id)
+            .execute(pool)
+            .await?;
+        }
+        KeyFailure::None => {
+            // Still record why, but do not demote the key.
+            sqlx::query("UPDATE ai_keys SET last_error = ?, last_error_at = ? WHERE id = ?")
+                .bind(&detail)
+                .bind(&now)
+                .bind(key_id)
+                .execute(pool)
+                .await?;
+        }
+    }
+    Ok(action)
+}
+
+/// Clear a cooldown after a key answers successfully.
+pub async fn record_key_success(pool: &SqlitePool, key_id: i64) -> Result<(), sqlx::Error> {
+    let now = iso_now_utc();
+    sqlx::query(
+        "UPDATE ai_keys SET cooldown_until = NULL, last_error = NULL, last_error_at = NULL, \
+         last_used_at = ? WHERE id = ?",
+    )
+    .bind(&now)
+    .bind(key_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+fn iso_now_utc() -> String {
+    crate::worker::iso_now()
+}
+
+fn iso_after_secs(secs: i64) -> String {
+    crate::worker::iso_after(secs)
 }
 
 /// Vision has no mock fallback: an image must only be reported as
@@ -512,6 +781,7 @@ fn engine_from_row(p: ProviderRow) -> Engine {
         price_out_per_mtok: p.price_out_per_mtok,
         max_tokens: p.max_tokens,
         temperature: p.temperature,
+        key_id: Some(p.id),
     }))
 }
 
@@ -627,5 +897,252 @@ mod tests {
                 "the mock engine bills nothing"
             );
         }
+    }
+
+    fn entry(id: i64, priority: i64, disabled: bool, cooldown: Option<&str>) -> PoolEntry {
+        PoolEntry {
+            id,
+            provider: "openai".into(),
+            label: format!("key {id}"),
+            priority,
+            health: KeyHealth::Healthy,
+            disabled,
+            cooldown_until: cooldown.map(|c| c.to_string()),
+            key_hint: None,
+        }
+    }
+
+    fn ids(pool: &[PoolEntry]) -> Vec<i64> {
+        pool.iter().map(|e| e.id).collect()
+    }
+
+    const NOW: &str = "2026-01-01T00:00:00Z";
+
+    #[test]
+    fn a_rate_limited_key_is_demoted_not_dropped() {
+        // Key 1 is the default/priority winner but is inside its 429 window:
+        // it must still be in the pool, just behind the healthy keys.
+        let pool = order_pool(
+            vec![
+                entry(1, 1, false, Some("2026-01-01T00:00:12Z")), // cooling
+                entry(2, 5, false, None),                         // healthy
+            ],
+            None,
+            NOW,
+        );
+        assert_eq!(ids(&pool), vec![2, 1], "the cooling key must not be first");
+        assert_eq!(pool.len(), 2, "a cooling key is never removed from the pool");
+        assert_eq!(pool[1].health, KeyHealth::Cooling);
+    }
+
+    #[test]
+    fn an_expired_cooldown_returns_the_key_to_priority_order() {
+        // The window has passed: health is healthy again, so priority decides.
+        let pool = order_pool(
+            vec![
+                entry(1, 1, false, Some("2025-12-31T23:59:00Z")),
+                entry(2, 5, false, None),
+            ],
+            None,
+            NOW,
+        );
+        assert_eq!(ids(&pool), vec![1, 2], "priority order restored after cooldown");
+        assert_eq!(pool[0].health, KeyHealth::Healthy);
+    }
+
+    #[test]
+    fn a_rejected_key_is_last_but_still_available() {
+        // disabled = the provider answered 401/403. It is tried only if every
+        // other key also failed — never silently dropped.
+        let pool = order_pool(
+            vec![
+                entry(1, 1, true, None),
+                entry(2, 9, false, None),
+                entry(3, 3, false, Some("2026-01-01T00:00:12Z")),
+            ],
+            None,
+            NOW,
+        );
+        assert_eq!(ids(&pool), vec![2, 3, 1], "order: healthy, cooling, paused");
+        assert_eq!(pool.len(), 3, "a paused key stays in the failover chain");
+        assert_eq!(pool[2].health, KeyHealth::Paused);
+    }
+
+    #[test]
+    fn the_preferred_key_leads_its_tier_but_not_past_a_healthy_one() {
+        // Preferred and healthy → first.
+        let pool = order_pool(
+            vec![entry(1, 50, false, None), entry(2, 1, false, None)],
+            Some(1),
+            NOW,
+        );
+        assert_eq!(ids(&pool), vec![1, 2], "preferred key wins over priority");
+        // Preferred but cooling → still behind the healthy key.
+        let pool = order_pool(
+            vec![
+                entry(1, 1, false, Some("2026-01-01T00:00:12Z")),
+                entry(2, 50, false, None),
+            ],
+            Some(1),
+            NOW,
+        );
+        assert_eq!(ids(&pool), vec![2, 1], "a preferred key cannot outrank health");
+    }
+
+    #[test]
+    fn priority_order_is_deterministic() {
+        let pool = order_pool(
+            vec![
+                entry(3, 10, false, None),
+                entry(1, 10, false, None),
+                entry(2, 5, false, None),
+            ],
+            None,
+            NOW,
+        );
+        // Lower priority number first; equal priority breaks on id.
+        assert_eq!(ids(&pool), vec![2, 1, 3]);
+    }
+
+    #[test]
+    fn the_failure_ladder_matches_the_ts_on_key_failure() {
+        // Provider rejected the key: pause it.
+        assert_eq!(
+            failure_action(&EngineError::Http(401, "bad key".into())),
+            KeyFailure::Pause
+        );
+        assert_eq!(
+            failure_action(&EngineError::Http(403, "forbidden".into())),
+            KeyFailure::Pause
+        );
+        // Rate limited: cool for the window.
+        assert_eq!(
+            failure_action(&EngineError::Http(429, "slow down".into())),
+            KeyFailure::Cool
+        );
+        // Config error, not the key's fault.
+        assert_eq!(
+            failure_action(&EngineError::Http(400, "bad model".into())),
+            KeyFailure::None
+        );
+        assert_eq!(
+            failure_action(&EngineError::Http(422, "unprocessable".into())),
+            KeyFailure::None
+        );
+        // Transient: no cooldown, no pause.
+        assert_eq!(
+            failure_action(&EngineError::Http(503, "down".into())),
+            KeyFailure::None
+        );
+        assert_eq!(
+            failure_action(&EngineError::Transport("timeout".into())),
+            KeyFailure::None
+        );
+    }
+
+    #[test]
+    fn only_a_rate_limit_advances_to_the_next_key_without_blaming_it() {
+        // A 429 and a 5xx are both retryable, but only the 429 demotes the key.
+        let rate_limited = EngineError::Http(429, "slow down".into());
+        assert!(rate_limited.retryable());
+        assert_eq!(failure_action(&rate_limited), KeyFailure::Cool);
+        let transient = EngineError::Http(503, "down".into());
+        assert!(transient.retryable());
+        assert_eq!(failure_action(&transient), KeyFailure::None);
+    }
+
+    /// Against the real schema: the pool is built from `ai_keys`, a 429 demotes
+    /// a key to the back of the chain, and a success clears the cooldown so it
+    /// returns to priority order.
+    #[tokio::test]
+    async fn the_pool_reads_key_health_from_the_database() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        // A single connection: `sqlite::memory:` gives each connection its own
+        // private database, so migrations and queries must share one.
+        let p = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("db");
+        sqlx::migrate!("../migrations").run(&p).await.expect("migrate");
+        sqlx::query("INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')")
+            .execute(&p)
+            .await
+            .unwrap();
+        // key 2 has the better (lower) priority, so it leads while healthy.
+        for (id, priority) in [(1i64, 50i64), (2, 10)] {
+            sqlx::query(
+                "INSERT INTO ai_keys (id,workspace_id,provider,label,key_enc,priority,status,role,created_at) \
+                 VALUES (?,1,'openai',?,'enc',?,'VERIFIED','text','2026-01-01T00:00:00Z')",
+            )
+            .bind(id)
+            .bind(format!("key {id}"))
+            .bind(priority)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let chain = load_pool(&p, 1, "text", None).await.unwrap();
+        assert_eq!(chain.len(), 2, "both keys are eligible");
+
+        // A 429 on key 2 cools it: it must drop behind key 1, not disappear.
+        assert_eq!(
+            record_key_failure(&p, 2, &EngineError::Http(429, "slow down".into()))
+                .await
+                .unwrap(),
+            KeyFailure::Cool
+        );
+        let chain = load_pool(&p, 1, "text", None).await.unwrap();
+        assert_eq!(chain.len(), 2, "a cooling key is not dropped from the pool");
+        assert_eq!(chain[0].model_id(), "gpt-4o-mini");
+
+        // A 401 on key 1 pauses it — it is still in the chain, tried last.
+        assert_eq!(
+            record_key_failure(&p, 1, &EngineError::Http(401, "bad key".into()))
+                .await
+                .unwrap(),
+            KeyFailure::Pause
+        );
+        let (disabled, cooldown): (i64, Option<String>) =
+            sqlx::query_as("SELECT disabled, cooldown_until FROM ai_keys WHERE id = 1")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(disabled, 1, "a rejected key is paused");
+        assert!(cooldown.is_none(), "pausing clears any cooldown");
+
+        // A success on key 2 clears its cooldown, so priority order returns.
+        record_key_success(&p, 2).await.unwrap();
+        let (cooldown, last_used): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT cooldown_until, last_used_at FROM ai_keys WHERE id = 2")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert!(cooldown.is_none(), "success clears the cooldown");
+        assert!(last_used.is_some(), "success records when the key was used");
+
+        // No key for the role configured at all → the mock fallback, never an
+        // error that fails every job on a fresh install.
+        assert_eq!(
+            load_engine(&p, 1, "nonexistent-role").await.unwrap().provider(),
+            MOCK_PROVIDER
+        );
+
+        // The settings view reports the demotion with the mask, never the key.
+        let statuses = key_statuses(&p, 1, "text").await.unwrap();
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(
+            statuses[0].id, 2,
+            "key 2 shed its cooldown and leads on priority again"
+        );
+        assert_eq!(statuses[0].health, KeyHealth::Healthy);
+        assert_eq!(statuses[1].id, 1);
+        assert_eq!(
+            statuses[1].health,
+            KeyHealth::Paused,
+            "key 1 was rejected and is reported as paused"
+        );
+        assert_eq!(statuses[0].label, "key 2");
     }
 }

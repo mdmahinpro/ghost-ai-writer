@@ -27,6 +27,7 @@ mod ghost;
 mod image;
 mod lint;
 mod provider;
+mod runs;
 mod stages;
 mod worker;
 
@@ -269,6 +270,8 @@ async fn worker_run_once(State(st): State<AppState>) -> Result<Json<serde_json::
 #[derive(Deserialize)]
 struct ProviderQuery {
     workspace_id: Option<i64>,
+    /// Which capability's pool to report: `text` (default) or `vision`.
+    role: Option<String>,
 }
 
 /// List providers for a workspace. Keys are never returned — only `key_hint`.
@@ -336,6 +339,20 @@ async fn create_provider(
     ))
 }
 
+/// The failover pool in order: which key runs next, and why any are demoted.
+/// Reports the masked hint, never the key.
+async fn key_pool(
+    State(st): State<AppState>,
+    Query(q): Query<ProviderQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ws = q.workspace_id.unwrap_or(1);
+    let role = q.role.as_deref().unwrap_or("text");
+    let items = provider::key_statuses(&st.pool, ws, role)
+        .await
+        .map_err(ApiError::Db)?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
 // ---------------------------------------------------------------- errors
 
 enum ApiError {
@@ -376,6 +393,7 @@ fn app(pool: SqlitePool) -> Router {
         .route("/api/v1/worker", get(worker_status))
         .route("/api/v1/worker/run-once", post(worker_run_once))
         .route("/api/v1/image/pick", post(pick_image))
+        .route("/api/v1/providers/keys", get(key_pool))
         .route(
             "/api/v1/providers",
             get(list_provider_routes).post(create_provider),
@@ -779,6 +797,49 @@ mod tests {
         let (status, text) = call(app, "POST", "/api/v1/keywords", Some(body)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "body: {text}");
         assert!(text.contains("unknown workspace_id"), "{text}");
+    }
+
+    /// The pool endpoint reports demotions in order and never leaks a key.
+    #[tokio::test]
+    async fn the_key_pool_reports_order_and_health_without_the_key() {
+        unsafe {
+            std::env::remove_var("GAW_ADMIN_TOKEN");
+        }
+        let pool = memory_pool().await;
+        seed(&pool, 0).await.expect("seed");
+        sqlx::query(
+            "INSERT INTO ai_keys (id,workspace_id,provider,label,key_enc,key_hint,priority,status,role,created_at) \
+             VALUES (1,1,'openai','main','sk-secret-value','••••1234',50,'VERIFIED','text','2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE ai_keys SET disabled = 1 WHERE id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let (status, body) = call(
+            app(pool.clone()),
+            "GET",
+            "/api/v1/providers/keys?workspace_id=1",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = body;
+        assert!(
+            text.contains("Paused"),
+            "a rejected key must be reported as paused: {text}"
+        );
+        assert!(
+            text.contains("key_hint"),
+            "the masked hint is how the UI identifies a key: {text}"
+        );
+        assert!(
+            !text.contains("sk-secret-value"),
+            "the key itself must never leave the API: {text}"
+        );
     }
 
     #[tokio::test]

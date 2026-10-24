@@ -484,6 +484,7 @@ impl Spend {
 
 /// Ask the engine for JSON, repairing once if validation rejects it.
 async fn call_validated<T, F>(
+    pool: &SqlitePool,
     engine: &Engine,
     schema: &str,
     system: &str,
@@ -513,11 +514,23 @@ where
             images: Vec::new(),
         };
         let completion = match engine.complete(&req).await {
-            Ok(c) => c,
+            Ok(c) => {
+                // A key that answered is healthy: clear any cooldown it earned
+                // earlier so it returns to its priority slot.
+                if let Some(key_id) = engine.key_id() {
+                    let _ = crate::provider::record_key_success(pool, key_id).await;
+                }
+                c
+            }
             Err(e) => {
                 // 429s and 5xx are the provider's problem, not the article's:
                 // retry them here rather than spending one of the job's
-                // attempts on a transient failure.
+                // attempts on a transient failure. Blame the key that earned
+                // it, so the pool demotes it and the next attempt tries the
+                // next key instead of hammering a rate-limited one.
+                if let Some(key_id) = engine.key_id() {
+                    let _ = crate::provider::record_key_failure(pool, key_id, &e).await;
+                }
                 if e.retryable() && attempts <= MAX_REPAIRS {
                     feedback = None;
                     continue;
@@ -704,7 +717,7 @@ pub async fn run_blueprint(
     let article_id = ensure_article(pool, job_id, site_id, website_id, keyword, now).await?;
     let (system, user) = blueprint_prompt(keyword, site_name);
     let (bp, spend, attempts) =
-        call_validated(engine, "blueprint", &system, &user, validate_blueprint).await?;
+        call_validated(pool, engine, "blueprint", &system, &user, validate_blueprint).await?;
     let outcome = StageOutcome {
         tokens_in: spend.tokens_in,
         tokens_out: spend.tokens_out,
@@ -760,7 +773,7 @@ pub async fn run_draft(
 
     let (system, user) = draft_prompt(keyword, &bp);
     let (draft, spend, attempts) =
-        call_validated(engine, "draft", &system, &user, validate_draft).await?;
+        call_validated(pool, engine, "draft", &system, &user, validate_draft).await?;
     let outcome = StageOutcome {
         tokens_in: spend.tokens_in,
         tokens_out: spend.tokens_out,
@@ -879,6 +892,7 @@ pub async fn run_revision(
         let (system, user) = revision_prompt(keyword, &bp, &draft_json, &lint_note);
         let covers = bp.must_cover.clone();
         let (rev, spend, attempts) = call_validated(
+            pool,
             engine,
             "revision",
             &system,
@@ -999,7 +1013,7 @@ pub async fn run_metadata(
 
     let (system, user) = metadata_prompt(keyword, &bp, &prose);
     let (meta, spend, attempts) =
-        call_validated(engine, "metadata", &system, &user, validate_metadata).await?;
+        call_validated(pool, engine, "metadata", &system, &user, validate_metadata).await?;
     let outcome = StageOutcome {
         tokens_in: spend.tokens_in,
         tokens_out: spend.tokens_out,
@@ -1766,6 +1780,23 @@ pub async fn run_validation(
 mod tests {
     use super::*;
 
+    /// A migrated in-memory DB. The mock engine carries no key, so the pool is
+    /// only here to satisfy `call_validated`'s signature — but it must be real,
+    /// because the billing assertions below run against it.
+    async fn test_pool() -> SqlitePool {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let p = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("db");
+        sqlx::migrate!("../migrations")
+            .run(&p)
+            .await
+            .expect("migrate");
+        p
+    }
+
     fn bp(must: usize, sections: usize) -> Value {
         json!({
             "intent": "informational",
@@ -1957,16 +1988,17 @@ mod tests {
     #[tokio::test]
     async fn a_rejected_answer_is_still_charged() {
         use std::cell::Cell;
+        let pool = test_pool().await;
         let engine = Engine::Mock(crate::provider::MockEngine {
             model_id: "mock-1".into(),
         });
         // One clean call, for the baseline spend.
-        let (_, once, _) = call_validated(&engine, "blueprint", "s", "u", |_v| Ok(()))
+        let (_, once, _) = call_validated(&pool, &engine, "blueprint", "s", "u", |_v| Ok(()))
             .await
             .unwrap();
         // One rejected call plus the accepted repair: both were billed.
         let calls = Cell::new(0);
-        let (_, twice, attempts) = call_validated(&engine, "blueprint", "s", "u", |_v| {
+        let (_, twice, attempts) = call_validated(&pool, &engine, "blueprint", "s", "u", |_v| {
             calls.set(calls.get() + 1);
             if calls.get() == 1 {
                 Err(vec!["nope".to_string()])
@@ -1993,13 +2025,14 @@ mod tests {
     #[tokio::test]
     async fn validator_rejection_triggers_one_repair_then_succeeds() {
         use std::cell::Cell;
+        let pool = test_pool().await;
         let calls = Cell::new(0);
         let engine = Engine::Mock(crate::provider::MockEngine {
             model_id: "mock-1".into(),
         });
         // Rejects the first answer, accepts the second — exactly what happens
         // when a real model gets told what it got wrong.
-        let out = call_validated(&engine, "blueprint", "s", "u", |_v| {
+        let out = call_validated(&pool, &engine, "blueprint", "s", "u", |_v| {
             calls.set(calls.get() + 1);
             if calls.get() == 1 {
                 Err(vec!["mustCover must have 3-10 items (got 1)".into()])
@@ -2015,10 +2048,11 @@ mod tests {
 
     #[tokio::test]
     async fn repair_is_bounded_and_then_the_stage_fails() {
+        let pool = test_pool().await;
         let engine = Engine::Mock(crate::provider::MockEngine {
             model_id: "mock-1".into(),
         });
-        let err = call_validated(&engine, "draft", "s", "u", |_v| {
+        let err = call_validated(&pool, &engine, "draft", "s", "u", |_v| {
             Err::<(), _>(vec!["body must be 200-9000 chars (got 42)".into()])
         })
         .await
