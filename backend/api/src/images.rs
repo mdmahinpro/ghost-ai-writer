@@ -397,6 +397,26 @@ pub async fn read_batch(req: &ReadMediaRequest) -> Value {
     json!({ "files": out })
 }
 
+/// Read one image for upload: from disk when we placed it, otherwise fetch the
+/// remote URL. Returns `(filename, mime, bytes)`.
+pub async fn read_one(name: Option<&str>, remote: Option<&str>) -> Option<(String, String, Vec<u8>)> {
+    if let Some(name) = name.and_then(safe_name) {
+        for dir in media_dirs() {
+            if let Ok(bytes) = std::fs::read(dir.join(&name)) {
+                let mime = match name.rsplit_once('.').map(|(_, ext)| ext) {
+                    Some("png") => "image/png",
+                    Some("webp") => "image/webp",
+                    _ => "image/jpeg",
+                };
+                return Some((name, mime.to_string(), bytes));
+            }
+        }
+    }
+    let fetched = fetch_image(remote?).await?;
+    let stored = name_for(&fetched.bytes, &fetched.mime);
+    Some((stored, fetched.mime, fetched.bytes))
+}
+
 /// Serve a stored image. Public on purpose: published posts embed these URLs.
 pub fn open(name: &str) -> Option<(String, Vec<u8>)> {
     let safe = safe_name(name)?;

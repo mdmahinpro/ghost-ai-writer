@@ -4,8 +4,9 @@
 //! and called Ghost from the page's origin. The signing key is the site's Admin
 //! API key, which arrives with each request — it is never stored here.
 //!
-//! Publishing stays in [`crate::ghost::push_post`], which the pipeline already
-//! uses, so there is one definition of a Ghost payload rather than two.
+//! The pipeline keeps its own narrow publisher in [`crate::ghost::push_post`];
+//! this module owns the studio's richer path — images uploaded into Ghost, tags,
+//! authors, and the PUT-only re-weave with its optimistic lock.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -340,5 +341,592 @@ mod tests {
             validate_public_url("https://blog.example.com/post/").unwrap(),
             "https://blog.example.com/post"
         );
+    }
+}
+
+/// One image to upload into Ghost before the post is written.
+#[derive(Debug, Deserialize)]
+pub struct PublishImage {
+    #[serde(default)]
+    pub src: Option<String>,
+    #[serde(default)]
+    pub remote: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub alt: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishAuthor {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    // Carried for the wire contract only: Ghost accepts these when *creating* an
+    // author, and this path never creates one. The studio renders them into the
+    // article HTML before publishing.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub bio: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub profile_image: Option<String>,
+    #[serde(default)]
+    pub known_ghost_author_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishRequest {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub admin_key: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub html: String,
+    #[serde(default)]
+    pub excerpt: String,
+    #[serde(default)]
+    pub meta_description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub images: Vec<PublishImage>,
+    #[serde(default)]
+    pub author: Option<PublishAuthor>,
+}
+
+/// A placeholder CMS path must never reach Ghost: it would come back as
+/// `/content/images/...` and be served as a broken image forever.
+fn is_fake_cms_image(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if let Some(rest) = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+    {
+        if rest.starts_with("cms.") && rest.contains('/') {
+            return true;
+        }
+    }
+    lower.contains("/content/images/")
+}
+
+fn slug_of(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(80)
+        .collect()
+}
+
+fn post_from(body: &str) -> Option<Value> {
+    let parsed: Value = serde_json::from_str(body).ok()?;
+    parsed.get("posts")?.get(0).cloned()
+}
+
+fn field(post: &Value, name: &str) -> String {
+    post.get(name)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+async fn admin_json(
+    origin: &str,
+    path: &str,
+    token: &str,
+    method: &str,
+    body: Option<Value>,
+) -> Result<(u16, String), String> {
+    let mut request = match method {
+        "PUT" => client().put(format!("{origin}{path}")),
+        _ => client().post(format!("{origin}{path}")),
+    }
+    .header("Authorization", format!("Bearer {token}"))
+    .header("Accept", "application/json");
+    if let Some(body) = body {
+        request = request
+            .header("Content-Type", "application/json")
+            .body(body.to_string());
+    }
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| ghost::safe_message(&e.to_string()))?;
+    let status = resp.status();
+    if status.is_redirection() {
+        return Err("Redirects are blocked. Use the canonical https origin.".to_string());
+    }
+    let body = resp.text().await.unwrap_or_default();
+    Ok((status.as_u16(), body))
+}
+
+/// Upload one image and return the URL Ghost serves it from.
+async fn upload_image(
+    origin: &str,
+    token: &str,
+    name: String,
+    mime: String,
+    bytes: Vec<u8>,
+) -> Option<String> {
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(name)
+        .mime_str(&mime)
+        .ok()?;
+    let form = reqwest::multipart::Form::new().part("file", part);
+    let resp = client()
+        .post(format!("{origin}/ghost/api/admin/images/upload/"))
+        .header("Authorization", format!("Bearer {token}"))
+        .multipart(form)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: Value = resp.json().await.ok()?;
+    body.get("images")?
+        .get(0)?
+        .get("url")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// Resolve the assigned author. Only a real Ghost author id is ever attached —
+/// creation is never attempted, and a failed lookup keeps Ghost's default byline
+/// while the article HTML keeps its byline and Person JSON-LD.
+async fn resolve_author(origin: &str, token: &str, wanted: &PublishAuthor) -> (String, String, bool) {
+    let known = wanted.known_ghost_author_id.as_deref().unwrap_or("");
+    if known.len() == 24 && known.chars().all(|c| c.is_ascii_hexdigit()) {
+        let (status, _) = admin_get(origin, &format!("/ghost/api/admin/authors/{known}/"), token)
+            .await
+            .unwrap_or((0, String::new()));
+        if (200..300).contains(&status) {
+            return (
+                known.to_string(),
+                "Existing Ghost author id verified and attached.".to_string(),
+                true,
+            );
+        }
+        return (
+            String::new(),
+            format!("Stored Ghost author id did not resolve (HTTP {status}). Ghost default byline kept; article byline + Person JSON-LD preserved."),
+            false,
+        );
+    }
+    let query = match wanted.slug.as_deref().filter(|s| !s.is_empty()) {
+        Some(slug) => format!("/ghost/api/admin/authors/slug/{slug}/"),
+        None => format!(
+            "/ghost/api/admin/authors/?filter={}&limit=1",
+            crate::image::encode(&format!("name:['{}']", wanted.name.replace('\'', "\\'")))
+        ),
+    };
+    let (status, body) = admin_get(origin, &query, token)
+        .await
+        .unwrap_or((0, String::new()));
+    if !(200..300).contains(&status) {
+        return (
+            String::new(),
+            format!("Ghost author lookup failed (HTTP {status}). Ghost default byline kept; article byline + Person JSON-LD preserved."),
+            false,
+        );
+    }
+    let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    let hit = parsed
+        .get("authors")
+        .and_then(|a| a.get(0))
+        .and_then(|a| a.get("id"))
+        .and_then(|v| v.as_str())
+        .or_else(|| parsed.get("id").and_then(|v| v.as_str()));
+    match hit {
+        Some(id) => (
+            id.to_string(),
+            "Matched an existing Ghost author by slug/name and attached it.".to_string(),
+            true,
+        ),
+        None => (
+            String::new(),
+            "No matching Ghost author; Admin-key role does not permit author creation. Ghost default byline kept; article byline + Person JSON-LD preserved.".to_string(),
+            false,
+        ),
+    }
+}
+
+/// Publish (or reconcile) one article into Ghost.
+pub async fn publish(req: &PublishRequest) -> Value {
+    let target = GhostTarget {
+        url: req.url.clone(),
+        admin_key: req.admin_key.clone(),
+    };
+    let (origin, token) = match resolve(&target) {
+        Ok(pair) => pair,
+        Err(error) => return json!({ "ok": false, "error": error }),
+    };
+    let slug = slug_of(&req.slug);
+    if slug.is_empty() {
+        return json!({ "ok": false, "error": "A slug is required." });
+    }
+
+    let lookup = format!("/ghost/api/admin/posts/slug/{slug}/");
+    let (mut post_id, mut updated_at, mut existing_url) =
+        (String::new(), String::new(), String::new());
+    if let Ok((status, body)) = admin_get(&origin, &lookup, &token).await {
+        if (200..300).contains(&status) {
+            if let Some(post) = post_from(&body) {
+                post_id = field(&post, "id");
+                updated_at = field(&post, "updated_at");
+                existing_url = field(&post, "url");
+            }
+        }
+    }
+
+    let mut html = req.html.clone();
+    let (mut feature, mut feature_alt) = (String::new(), String::new());
+    for image in req.images.iter().take(6) {
+        let src = image
+            .src
+            .as_deref()
+            .filter(|s| !is_fake_cms_image(s))
+            .map(|s| s.to_string());
+        let remote = image
+            .remote
+            .as_deref()
+            .filter(|s| !is_fake_cms_image(s))
+            .map(|s| s.to_string());
+        // `src` arrives as `/media/<hash>.jpg`; the media store keys on the bare
+        // filename.
+        let src_name = src.as_deref().and_then(|s| s.rsplit('/').next());
+        let Some((name, mime, bytes)) =
+            crate::images::read_one(src_name, remote.as_deref()).await
+        else {
+            continue;
+        };
+        let Some(uploaded) = upload_image(&origin, &token, name, mime, bytes).await else {
+            continue;
+        };
+        let figure = format!(
+            "<figure class=\"kg-card kg-image-card\"><img src=\"{uploaded}\" alt=\"{}\" /></figure>\n",
+            image.alt.replace('"', "")
+        );
+        match src.as_deref() {
+            Some(src) if html.contains(src) => html = html.replace(src, &uploaded),
+            _ => html = format!("{figure}{html}"),
+        }
+        if image.role.as_deref() == Some("featured") && feature.is_empty() {
+            feature = uploaded;
+            feature_alt = image.alt.clone();
+        }
+    }
+
+    let mut body = serde_json::Map::new();
+    body.insert("title".into(), json!(req.title));
+    body.insert("slug".into(), json!(slug));
+    body.insert("html".into(), json!(html));
+    body.insert("custom_excerpt".into(), json!(req.excerpt));
+    let meta = req
+        .meta_description
+        .as_deref()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or(&req.excerpt);
+    body.insert("meta_description".into(), json!(meta));
+    body.insert(
+        "status".into(),
+        json!(if req.status.as_deref() == Some("published") {
+            "published"
+        } else {
+            "draft"
+        }),
+    );
+    if !feature.is_empty() {
+        body.insert("feature_image".into(), json!(feature));
+        body.insert("feature_image_alt".into(), json!(feature_alt));
+    }
+    let tags: Vec<Value> = req
+        .tags
+        .iter()
+        .filter(|t| !t.is_empty())
+        .take(5)
+        .map(|t| json!({ "name": t.chars().take(40).collect::<String>() }))
+        .collect();
+    body.insert("tags".into(), json!(tags));
+
+    let mut author_result = Value::Null;
+    if let Some(wanted) = req.author.as_ref().filter(|a| !a.name.is_empty()) {
+        let (id, note, matched) = resolve_author(&origin, &token, wanted).await;
+        if !id.is_empty() {
+            body.insert("authors".into(), json!([{ "id": id }]));
+        }
+        author_result = json!({
+            "matched": matched,
+            "ghostAuthorId": if id.is_empty() { Value::Null } else { json!(id) },
+            "note": note,
+        });
+    }
+
+    let mut reconciled = false;
+    if !post_id.is_empty() {
+        let mut put = body.clone();
+        if !updated_at.is_empty() {
+            put.insert("updated_at".into(), json!(updated_at));
+        }
+        let path = format!("/ghost/api/admin/posts/{post_id}/?source=html");
+        if let Ok((status, response)) =
+            admin_json(&origin, &path, &token, "PUT", Some(json!({ "posts": [put] }))).await
+        {
+            if (200..300).contains(&status) {
+                let post = post_from(&response);
+                return json!({
+                    "ok": true,
+                    "reconciled": true,
+                    "postId": post_id,
+                    "url": post.as_ref().map(|p| field(p, "url")).filter(|u| !u.is_empty()).unwrap_or(existing_url),
+                    "html": html,
+                    "imaged": !feature.is_empty(),
+                    "author": author_result,
+                    "updatedAt": post.as_ref().map(|p| field(p, "updated_at")).unwrap_or_default(),
+                });
+            }
+        }
+        reconciled = true;
+    }
+
+    let payload = json!({ "posts": [body] });
+    match admin_json(
+        &origin,
+        "/ghost/api/admin/posts/?source=html",
+        &token,
+        "POST",
+        Some(payload),
+    )
+    .await
+    {
+        Err(error) => json!({ "ok": false, "error": error }),
+        Ok((status, response)) => {
+            if status == 422 {
+                if let Ok((ok_status, body)) = admin_get(&origin, &lookup, &token).await {
+                    if (200..300).contains(&ok_status) {
+                        if let Some(post) = post_from(&body) {
+                            if !field(&post, "id").is_empty() {
+                                return json!({
+                                    "ok": true,
+                                    "reconciled": true,
+                                    "postId": field(&post, "id"),
+                                    "url": field(&post, "url"),
+                                    "html": html,
+                                    "imaged": !feature.is_empty(),
+                                    "author": author_result,
+                                    "updatedAt": field(&post, "updated_at"),
+                                });
+                            }
+                        }
+                    }
+                }
+                return json!({ "ok": false, "error": "Ghost rejected the post. The slug may already exist, and it was not created again." });
+            }
+            if status == 401 || status == 403 {
+                return json!({ "ok": false, "error": "Ghost refused the Admin API key." });
+            }
+            if !(200..300).contains(&status) {
+                return json!({ "ok": false, "error": format!("Ghost returned HTTP {status}.") });
+            }
+            let post = post_from(&response).unwrap_or(Value::Null);
+            let id = field(&post, "id");
+            if id.is_empty() {
+                return json!({ "ok": false, "error": "Ghost did not return a post id." });
+            }
+            json!({
+                "ok": true,
+                "reconciled": reconciled,
+                "postId": id,
+                "url": field(&post, "url"),
+                "html": html,
+                "imaged": !feature.is_empty(),
+                "author": author_result,
+                "updatedAt": field(&post, "updated_at"),
+            })
+        }
+    }
+}
+
+/// Rule 6's guard, kept pure so the optimistic-lock behaviour is verifiable
+/// without a live Ghost instance: skip only when a different revision is on
+/// Ghost and the operator has not acknowledged the hand edit.
+fn reweave_skips_stale(expected: &str, remote: &str, acknowledged: bool) -> bool {
+    if expected.is_empty() || remote.is_empty() {
+        return false;
+    }
+    expected != remote && !acknowledged
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReWeaveRequest {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub admin_key: String,
+    #[serde(default)]
+    pub post_id: Option<String>,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub html: String,
+    #[serde(default)]
+    pub expected_updated_at: Option<String>,
+    #[serde(default)]
+    pub acknowledge_hand_edited: bool,
+}
+
+/// Rule 6 — PUT-only re-weave.
+///
+/// Reads Ghost's current `updated_at`, refuses to touch a post that changed
+/// since our last publish (unless the operator acknowledged the hand edit), then
+/// PUTs the new HTML with the lock it just read. Ghost is never asked to create
+/// anything here.
+pub async fn reweave(req: &ReWeaveRequest) -> Value {
+    let fail = |code: &str, error: &str| json!({ "ok": false, "code": code, "error": error });
+    if req.html.trim().is_empty() {
+        return fail("ERROR", "Post HTML is required for a re-weave.");
+    }
+    let target = GhostTarget {
+        url: req.url.clone(),
+        admin_key: req.admin_key.clone(),
+    };
+    let (origin, token) = match resolve(&target) {
+        Ok(pair) => pair,
+        Err(error) => return fail("BAD_URL", &error),
+    };
+    let post_id = req
+        .post_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let slug = req.slug.as_deref().map(slug_of).filter(|s| !s.is_empty());
+    let query = match (post_id, slug.as_deref()) {
+        (Some(id), _) => format!("/ghost/api/admin/posts/{id}/?formats=html"),
+        (None, Some(slug)) => format!("/ghost/api/admin/posts/slug/{slug}/?formats=html"),
+        (None, None) => return fail("BAD_URL", "A post id or slug is required."),
+    };
+
+    let (status, body) = match admin_get(&origin, &query, &token).await {
+        Ok(pair) => pair,
+        Err(error) => return fail("ERROR", &error),
+    };
+    if status == 401 || status == 403 {
+        return fail("FORBIDDEN", "Ghost refused the Admin API key.");
+    }
+    if status == 404 {
+        return fail("NOT_FOUND", "That post is not on Ghost. Re-weave skipped.");
+    }
+    if !(200..300).contains(&status) {
+        return fail("HTTP", &format!("Ghost returned HTTP {status}."));
+    }
+    let Some(post) = post_from(&body) else {
+        return fail("NO_POST", "Ghost did not return the post.");
+    };
+    let id = field(&post, "id");
+    if id.is_empty() {
+        return fail("NO_POST", "Ghost did not return the post.");
+    }
+    let remote_updated_at = field(&post, "updated_at");
+
+    // Hand-edit guard: our local copy is stale, so the write is skipped (never
+    // clobbered) unless the operator says otherwise.
+    let expected = req.expected_updated_at.as_deref().unwrap_or("");
+    if reweave_skips_stale(expected, &remote_updated_at, req.acknowledge_hand_edited) {
+        return json!({
+            "ok": false,
+            "code": "STALE_LOCAL_COPY",
+            "error": "The post changed on Ghost since we published it (hand-edited). Re-weave skipped to protect the edit.",
+            "postId": id,
+            "remoteUpdatedAt": remote_updated_at,
+        });
+    }
+
+    let mut lock = serde_json::Map::new();
+    lock.insert("html".into(), json!(req.html));
+    if !remote_updated_at.is_empty() {
+        lock.insert("updated_at".into(), json!(remote_updated_at));
+    }
+    let path = format!("/ghost/api/admin/posts/{id}/?source=html");
+    let (status, body) = match admin_json(&origin, &path, &token, "PUT", Some(json!({ "posts": [lock] })))
+        .await
+    {
+        Ok(pair) => pair,
+        Err(error) => return fail("ERROR", &error),
+    };
+    if status == 401 || status == 403 {
+        return fail("FORBIDDEN", "Ghost refused the Admin API key.");
+    }
+    if status == 422 {
+        return fail(
+            "LOCK_CONFLICT",
+            "Ghost rejected the update (optimistic-lock conflict or invalid HTML). Nothing was written.",
+        );
+    }
+    if !(200..300).contains(&status) {
+        return fail("HTTP", &format!("Ghost returned HTTP {status}."));
+    }
+    let saved = post_from(&body).unwrap_or(Value::Null);
+    let saved_id = field(&saved, "id");
+    let saved_url = field(&saved, "url");
+    let saved_at = field(&saved, "updated_at");
+    json!({
+        "ok": true,
+        "code": "OK",
+        "postId": if saved_id.is_empty() { id } else { saved_id },
+        "url": if saved_url.is_empty() { field(&post, "url") } else { saved_url },
+        "updatedAt": if saved_at.is_empty() { remote_updated_at } else { saved_at },
+    })
+}
+
+#[cfg(test)]
+mod publish_tests {
+    use super::*;
+
+    #[test]
+    fn a_placeholder_cms_path_never_reaches_ghost() {
+        assert!(is_fake_cms_image(
+            "https://cms.example.com/content/images/2024/01/x.jpg"
+        ));
+        assert!(is_fake_cms_image("/content/images/2024/01/x.jpg"));
+        assert!(!is_fake_cms_image("https://images.bing.com/th?id=OIP.abc"));
+        assert!(!is_fake_cms_image("https://example.com/photo.jpg"));
+    }
+
+    #[test]
+    fn slugs_lose_everything_ghost_would_reject() {
+        assert_eq!(slug_of("Hello, World! 2026"), "HelloWorld2026");
+        assert_eq!(slug_of("already-a-slug"), "already-a-slug");
+        assert_eq!(slug_of("umlaut/../etc"), "umlautetc");
+        assert_eq!(slug_of(&"a".repeat(200)).len(), 80);
+    }
+
+    #[test]
+    fn a_hand_edit_is_never_clobbered() {
+        // Nothing to compare on either side: write.
+        assert!(!reweave_skips_stale("", "2026-01-01T00:00:00Z", false));
+        assert!(!reweave_skips_stale("2026-01-01T00:00:00Z", "", false));
+        // Same revision: our copy is current.
+        assert!(!reweave_skips_stale(
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            false
+        ));
+        // Ghost moved on: skip, unless the operator acknowledged the edit.
+        assert!(reweave_skips_stale(
+            "2026-01-01T00:00:00Z",
+            "2026-02-02T00:00:00Z",
+            false
+        ));
+        assert!(!reweave_skips_stale(
+            "2026-01-01T00:00:00Z",
+            "2026-02-02T00:00:00Z",
+            true
+        ));
     }
 }

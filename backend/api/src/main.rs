@@ -404,6 +404,14 @@ async fn ghost_probe(Json(req): Json<ProbeRequest>) -> Json<serde_json::Value> {
     Json(ghost_api::probe(&req.url).await)
 }
 
+async fn ghost_publish(Json(req): Json<ghost_api::PublishRequest>) -> Json<serde_json::Value> {
+    Json(ghost_api::publish(&req).await)
+}
+
+async fn ghost_reweave(Json(req): Json<ghost_api::ReWeaveRequest>) -> Json<serde_json::Value> {
+    Json(ghost_api::reweave(&req).await)
+}
+
 async fn pick_image(
     State(st): State<AppState>,
     Json(req): Json<ImagePickRequest>,
@@ -666,6 +674,8 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/ghost/test", post(ghost_test))
         .route("/v1/ghost/sync", post(ghost_sync))
         .route("/v1/ghost/probe", post(ghost_probe))
+        .route("/v1/ghost/publish", post(ghost_publish))
+        .route("/v1/ghost/reweave", post(ghost_reweave))
         .route("/v1/providers/keys", get(key_pool))
         .route("/v1/generate", post(generate))
         .route("/v1/providers", get(list_provider_routes).post(create_provider))
