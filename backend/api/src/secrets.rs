@@ -218,6 +218,15 @@ pub fn seal_secret(value: &str) -> String {
     )
 }
 
+/// True when a value already carries the sealed prefix.
+///
+/// Callers that backfill plaintext rows must skip on the prefix rather than on a
+/// successful decrypt: a payload that fails to open today may open once the
+/// right key is restored, and re-sealing it would encrypt the ciphertext itself.
+pub fn looks_sealed(value: &str) -> bool {
+    value.starts_with(PREFIX)
+}
+
 /// Decrypt a value. Returns `None` for anything that is not a well-formed,
 /// authentic `enc:v1:` payload — including plaintext, so callers can treat
 /// `None` as "leave it alone".

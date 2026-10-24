@@ -99,8 +99,14 @@ async function request<T>(
     }
 
     if (!resp.ok) {
+      // The API reports failures as {"error": {"code", "message"}}; older paths
+      // used a bare string. Render the message either way — a raw object here
+      // reaches the UI as "[object Object]".
+      const failed = json as { error?: string | { code?: string; message?: string } } | null;
       const err =
-        (json as ApiErrorBody)?.error || `HTTP ${resp.status}`;
+        typeof failed?.error === "string"
+          ? failed.error
+          : failed?.error?.message || `HTTP ${resp.status}`;
       return { ok: false, status: resp.status, error: err };
     }
 

@@ -858,13 +858,48 @@ fn engine_from_row(p: ProviderRow) -> Engine {
             .base_url
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
         model_id: p.model_id.unwrap_or_else(|| "gpt-4o-mini".to_string()),
-        api_key: p.key_enc,
+        // Rows written before the column was actually sealed still hold the raw
+        // key; `open_secret` returns None for plaintext, so fall back to it
+        // rather than break every existing installation.
+        api_key: crate::secrets::open_secret(&p.key_enc).unwrap_or(p.key_enc),
         price_in_per_mtok: p.price_in_per_mtok,
         price_out_per_mtok: p.price_out_per_mtok,
         max_tokens: p.max_tokens,
         temperature: p.temperature,
         key_id: Some(p.id),
     }))
+}
+
+/// Seal any `ai_keys.key_enc` rows that still hold a plaintext key.
+///
+/// Rows written before this column was actually encrypted must not be left
+/// readable indefinitely: the whole point is that a database copy is useless
+/// without the key. Idempotent — already-sealed rows are skipped, so running it
+/// on every boot costs one pass over a small table.
+pub async fn seal_existing_keys(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, key_enc FROM ai_keys WHERE key_enc IS NOT NULL AND key_enc != ''",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut sealed = 0usize;
+    for (id, value) in rows {
+        // Skip anything that already looks sealed, not just anything that
+        // decrypts. A value that fails today may decrypt once the operator
+        // restores the right GAW_ENC_KEY; re-sealing it would wrap the
+        // ciphertext as plaintext and destroy that chance for good.
+        if crate::secrets::looks_sealed(&value) {
+            continue;
+        }
+        sqlx::query("UPDATE ai_keys SET key_enc = ? WHERE id = ?")
+            .bind(crate::secrets::seal_secret(&value))
+            .bind(id)
+            .execute(pool)
+            .await?;
+        sealed += 1;
+    }
+    Ok(sealed)
 }
 
 pub async fn insert_provider(
@@ -890,7 +925,9 @@ pub async fn insert_provider(
     .bind(new.workspace_id)
     .bind(&new.provider)
     .bind(&new.label)
-    .bind(&new.api_key)
+    // `key_enc` is meant to hold ciphertext: the TypeScript app sealed this
+    // column, and the port had been writing the raw key under the same name.
+    .bind(crate::secrets::seal_secret(&new.api_key))
     .bind(hint(&new.api_key))
     .bind(
         new.kind
@@ -918,7 +955,8 @@ pub async fn list_providers(
 ) -> Result<Vec<ProviderView>, sqlx::Error> {
     let rows: Vec<ProviderRow> = sqlx::query_as(
         "SELECT id, workspace_id, provider, label, key_enc, key_hint, kind, base_url, model_id, \
-                price_in_per_mtok, price_out_per_mtok, max_tokens, temperature, role, status \
+                price_in_per_mtok, price_out_per_mtok, max_tokens, temperature, role, status, \
+                priority, disabled, cooldown_until \
          FROM ai_keys WHERE workspace_id = ? ORDER BY is_default DESC, id ASC",
     )
     .bind(workspace_id)
@@ -1226,5 +1264,151 @@ mod tests {
             "key 1 was rejected and is reported as paused"
         );
         assert_eq!(statuses[0].label, "key 2");
+    }
+
+    /// A migrated database with a workspace row, using the real schema.
+    async fn pool_with_workspace() -> sqlx::SqlitePool {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let p = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("db");
+        sqlx::migrate!("../migrations").run(&p).await.expect("migrate");
+        sqlx::query("INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')")
+            .execute(&p)
+            .await
+            .unwrap();
+        p
+    }
+
+    fn new_provider(api_key: &str) -> NewProvider {
+        NewProvider {
+            workspace_id: 1,
+            provider: "openai".into(),
+            label: "K".into(),
+            api_key: api_key.to_string(),
+            kind: None,
+            base_url: None,
+            model_id: "gpt-4o-mini".into(),
+            price_in_per_mtok: 0.0,
+            price_out_per_mtok: 0.0,
+            max_tokens: None,
+            temperature: None,
+            role: None,
+            is_default: false,
+        }
+    }
+
+    /// `key_enc` must actually hold ciphertext — the column was written raw by
+    /// the port, which made a database copy as good as the live server.
+    #[tokio::test]
+    async fn provider_keys_are_sealed_at_rest_and_decrypt_for_use() {
+        let p = pool_with_workspace().await;
+        let id = insert_provider(&p, "2026-01-01T00:00:00Z", &new_provider("sk-live-abc123"))
+            .await
+            .unwrap();
+
+        let raw: String = sqlx::query_scalar("SELECT key_enc FROM ai_keys WHERE id = ?")
+            .bind(id)
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert!(raw.starts_with("enc:v1:"), "stored value is ciphertext: {raw}");
+        assert!(!raw.contains("sk-live"), "the raw key must not be readable");
+
+        // A sealed key must still hand the exact original string to the engine.
+        let chain = load_pool(&p, 1, "text", None).await.unwrap();
+        assert_eq!(chain.len(), 1);
+        match &chain[0] {
+            Engine::Http(h) => assert_eq!(h.api_key, "sk-live-abc123"),
+            Engine::Mock(_) => panic!("expected the http engine"),
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_plaintext_keys_are_sealed_once_and_still_work() {
+        let p = pool_with_workspace().await;
+        sqlx::query(
+            "INSERT INTO ai_keys (id,workspace_id,provider,label,key_enc,priority,status,role,created_at) \
+             VALUES (9,1,'openai','legacy','sk-legacy-plain',100,'VERIFIED','text','2026-01-01T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        assert_eq!(seal_existing_keys(&p).await.unwrap(), 1);
+
+        let raw: String = sqlx::query_scalar("SELECT key_enc FROM ai_keys WHERE id = 9")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert!(raw.starts_with("enc:v1:"), "legacy row was not sealed");
+
+        // Sealing must not break the key it protects.
+        let chain = load_pool(&p, 1, "text", None).await.unwrap();
+        match &chain[0] {
+            Engine::Http(h) => assert_eq!(h.api_key, "sk-legacy-plain"),
+            Engine::Mock(_) => panic!("expected the http engine"),
+        }
+
+        // Idempotent: a second boot does not re-encrypt ciphertext.
+        assert_eq!(seal_existing_keys(&p).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_damaged_key_value_is_left_alone_rather_than_re_encrypted() {
+        let p = pool_with_workspace().await;
+        // Right prefix, garbage body: cannot be decrypted, so overwriting it
+        // would destroy whatever the operator might still recover.
+        sqlx::query(
+            "INSERT INTO ai_keys (id,workspace_id,provider,label,key_enc,priority,status,role,created_at) \
+             VALUES (11,1,'openai','broken','enc:v1:not:real:data',100,'VERIFIED','text','2026-01-01T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        assert_eq!(seal_existing_keys(&p).await.unwrap(), 0);
+        let raw: String = sqlx::query_scalar("SELECT key_enc FROM ai_keys WHERE id = 11")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(raw, "enc:v1:not:real:data");
+    }
+
+    /// `list_providers` used to project fewer columns than its row type needs,
+    /// which made `GET /api/v1/providers` a 500 on every request.
+    #[tokio::test]
+    async fn listing_providers_returns_the_saved_keys() {
+        let p = pool_with_workspace().await;
+        insert_provider(
+            &p,
+            "2026-01-01T00:00:00Z",
+            &NewProvider {
+                workspace_id: 1,
+                provider: "openai".into(),
+                label: "listed".into(),
+                api_key: "sk-listed-0001".into(),
+                kind: None,
+                base_url: None,
+                model_id: "gpt-4o-mini".into(),
+                price_in_per_mtok: 0.0,
+                price_out_per_mtok: 0.0,
+                max_tokens: None,
+                temperature: None,
+                role: None,
+                is_default: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let items = list_providers(&p, 1).await.expect("listing must not fail");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "listed");
+        // The secret is never part of the view.
+        let json = serde_json::to_string(&items[0]).unwrap();
+        assert!(!json.contains("sk-listed"), "the view must not expose the key: {json}");
     }
 }

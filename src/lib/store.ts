@@ -34,6 +34,7 @@ import {
   decideReview,
 } from "./engine";
 import { get, post } from "./api-client";
+import { addProvider, generate as serverGenerate } from "./server-generate";
 import {
   enqueueKeywords,
   ensureSite,
@@ -214,7 +215,7 @@ export type AppState = Persisted & {
     pricePerM?: number;
     /** Semantic (embeddings) model id for the L3 duplicate gate; blank = provider family default. */
     embeddingModel?: string;
-  }) => void;
+  }) => Promise<void>;
   toggleKey: (id: string) => void;
   /** Permanently remove a key/custom endpoint from this browser. Usage ledger rows are kept. */
   deleteKey: (id: string) => void;
@@ -317,7 +318,9 @@ function snap(s: AppState): Persisted {
     articles: s.articles,
     plans: s.plans,
     events: s.events,
-    keys: s.keys,
+    // Keys travel to the server as metadata only: the secret lives in `ai_keys`,
+    // sealed, and must never re-enter the synced snapshot.
+    keys: s.keys.map(({ secret: _secret, ...rest }) => rest),
     builds: s.builds,
     deploys: s.deploys,
     audits: s.audits,
@@ -656,10 +659,7 @@ export const useApp = create<AppState>()(
           if (key && keyCallsModel(key)) {
             const generated = await generateIdeas({
               data: {
-                baseUrl: key.baseUrl!,
-                apiKey: key.secret!,
-                model: key.model,
-                niche,
+                preferredKeyId: key.serverKeyId, niche,
                 corpus: corpusFor(snapshot, s.activeSiteId).map((item) => ({ title: item.title, slug: item.slug, permalink: item.permalink })),
               },
             });
@@ -999,48 +999,75 @@ auditNow: () => {
         })),
       patchDefaults: (patch) => set((s) => ({ ...s, defaults: { ...s.defaults, ...patch } })),
       patchAccount: (patch) => set((s) => ({ ...s, account: { ...s.account, ...patch } })),
-      addKey: (input) =>
-        set((s) => {
-          const id = uid("key");
-          const secret = input.secret?.trim() ?? "";
-          const tail = secret ? secret.slice(-4) : id.slice(-4);
-          const baseUrl = input.baseUrl?.trim() ?? "";
-          const model = input.model.trim() || "custom";
-          const providerKind =
-            input.providerKind ?? (baseUrl.includes("openrouter.ai") ? "openrouter" : baseUrl ? "custom" : "openai");
-          const custom = providerKind === "custom";
-          const catalog = catalogModel(input.catalogId);
-          const pricePerM = input.pricePerM ?? (catalog ? blendedPricePerMillion(catalog) : pricePerMillionForModelId(model));
-          const nextKey: AiKey = {
-            id,
+      addKey: async (input) => {
+        const id = uid("key");
+        const secret = input.secret?.trim() ?? "";
+        const tail = secret ? secret.slice(-4) : id.slice(-4);
+        const baseUrl = input.baseUrl?.trim() ?? "";
+        const model = input.model.trim() || "custom";
+        const providerKind =
+          input.providerKind ?? (baseUrl.includes("openrouter.ai") ? "openrouter" : baseUrl ? "custom" : "openai");
+        const custom = providerKind === "custom";
+        const catalog = catalogModel(input.catalogId);
+        const pricePerM = input.pricePerM ?? (catalog ? blendedPricePerMillion(catalog) : pricePerMillionForModelId(model));
+        const label = input.label?.trim() || input.provider.trim() || "Custom";
+
+        // The key is saved on the server and never kept here. Without a secret
+        // there is nothing to send and nothing that could generate, so the key
+        // stays local and is marked unusable rather than silently failing later.
+        let serverKeyId: number | undefined;
+        let saveError: string | undefined;
+        if (secret) {
+          const saved = await addProvider({
+            workspaceId: WORKSPACE_ID,
             provider: input.provider.trim() || "Custom",
-            model,
-            label: input.label?.trim() || input.provider.trim() || "Custom",
-            hint: `••••${tail}`,
-            priority: input.priority,
-            chat: true,
-            semantic: Boolean(embeddingModelFor({ provider: input.provider.trim(), providerKind, embeddingModel: input.embeddingModel })),
-            allowanceUsd: input.allowanceUsd,
-            disabled: false,
-            pricePerM,
+            label,
+            apiKey: secret,
+            modelId: model,
             baseUrl: baseUrl || undefined,
-            secret: secret || undefined,
-            kind: custom ? "custom" : "studio",
-            providerKind,
-            catalogId: input.catalogId,
-            embeddingModel: input.embeddingModel?.trim() || undefined,
-          };
-          return {
-            ...s,
-            notice: {
-              tone: "ok",
-              text: custom
-                ? "Custom endpoint saved in this browser. Set the base URL and key, then Test. The key is sent only when you test or generate."
-                : `${input.label?.trim() || input.provider.trim() || "Key"} saved in this browser. It joins the failover pool by priority.`,
-            },
-            keys: [...s.keys, nextKey],
-          };
-        }),
+            kind: custom ? "openai_compatible" : "openai",
+            priority: input.priority,
+            role: "text",
+          });
+          if (saved.ok) serverKeyId = saved.data.id;
+          else saveError = saved.error;
+        }
+
+        const nextKey: AiKey = {
+          id,
+          provider: input.provider.trim() || "Custom",
+          model,
+          label,
+          hint: `••••${tail}`,
+          priority: input.priority,
+          chat: true,
+          semantic: Boolean(embeddingModelFor({ provider: input.provider.trim(), providerKind, embeddingModel: input.embeddingModel })),
+          allowanceUsd: input.allowanceUsd,
+          disabled: false,
+          pricePerM,
+          baseUrl: baseUrl || undefined,
+          // No `secret`: it went to the server, which seals it at rest.
+          serverKeyId,
+          kind: custom ? "custom" : "studio",
+          providerKind,
+          catalogId: input.catalogId,
+          embeddingModel: input.embeddingModel?.trim() || undefined,
+        };
+        set((s) => ({
+          ...s,
+          notice: saveError
+            ? { tone: "danger" as const, text: `Could not save the key on the server: ${saveError}` }
+            : !secret
+              ? { tone: "warn" as const, text: `${label} saved without a secret, so it cannot generate yet. Add a key to use it.` }
+              : {
+                  tone: "ok" as const,
+                  text: custom
+                    ? `${label} saved on the server, encrypted. Keys are never stored in this browser.`
+                    : `${label} saved on the server, encrypted. It joins the failover pool by priority.`,
+                },
+          keys: [...s.keys, nextKey],
+        }));
+      },
       toggleKey: (id) =>
         set((s) => ({
           ...s,
@@ -1821,7 +1848,7 @@ auditNow: () => {
                 keys: pool,
                 onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error),
                 call: async (key) => {
-                  const result = await generateDraft({ data: { baseUrl: key.baseUrl!, apiKey: key.secret!, model: key.model, system, user } });
+                  const result = await generateDraft({ data: { preferredKeyId: key.serverKeyId, system, user } });
                   if (result.ok) return { ok: true as const, value: result };
                   return { ok: false as const, status: result.status ?? 0, error: result.error };
                 },
@@ -2133,7 +2160,7 @@ const chatTransport: ChatTransport = {
         keys,
         onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error),
         call: async (key) => {
-          const result = await generateDraft({ data: { baseUrl: key.baseUrl!, apiKey: key.secret!, model: key.model, system, user: modifiedUser } });
+          const result = await generateDraft({ data: { preferredKeyId: key.serverKeyId, system, user: modifiedUser } });
           if (result.ok) return { ok: true as const, value: result };
           return { ok: false as const, status: result.status ?? 0, error: result.error };
         },
@@ -2155,7 +2182,7 @@ const chatTransport: ChatTransport = {
       keys: keys.filter((key) => keyCallsModel(key)),
       onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error),
       call: async (key) => {
-        const result = await generateDraft({ data: { baseUrl: key.baseUrl!, apiKey: key.secret!, model: key.model, system, user } });
+        const result = await generateDraft({ data: { preferredKeyId: key.serverKeyId, system, user } });
         if (result.ok) return { ok: true as const, value: result.text };
         return { ok: false as const, status: result.status ?? 0, error: result.error };
       },
@@ -2385,6 +2412,60 @@ async function pollServerPipeline(): Promise<boolean> {
 let pipelinePollStarted = false;
 let pipelinePollInFlight = false;
 
+let keysPushed = false;
+
+/**
+ * One-time move of keys that predate server-side storage.
+ *
+ * A key held only in this browser cannot generate any more: calls go through
+ * the server, which cannot see it. Rather than let those keys silently stop
+ * working, push each one once, remember the id, and drop the secret. Runs after
+ * hydration, and at most once per session.
+ */
+async function pushLocalKeysToServer(): Promise<void> {
+  if (keysPushed || typeof window === "undefined") return;
+  keysPushed = true;
+
+  const pending = useApp
+    .getState()
+    .keys.filter((key) => key.secret && key.serverKeyId === undefined);
+  if (!pending.length) return;
+
+  let moved = 0;
+  for (const key of pending) {
+    const saved = await addProvider({
+      workspaceId: WORKSPACE_ID,
+      provider: key.provider,
+      label: key.label,
+      apiKey: key.secret!,
+      modelId: key.model,
+      baseUrl: key.baseUrl,
+      kind: key.kind === "custom" ? "openai_compatible" : "openai",
+      priority: key.priority,
+      role: "text",
+    });
+    if (!saved.ok) continue;
+    const serverKeyId = saved.data.id;
+    moved += 1;
+    useApp.setState((cur) => ({
+      ...cur,
+      keys: cur.keys.map((item) =>
+        item.id === key.id ? { ...item, serverKeyId, secret: undefined } : item,
+      ),
+    }));
+  }
+
+  if (moved > 0) {
+    useApp.setState((cur) => ({
+      ...cur,
+      notice: {
+        tone: "ok",
+        text: `${moved} saved key${moved === 1 ? "" : "s"} moved to encrypted server storage. This browser no longer holds ${moved === 1 ? "it" : "them"}.`,
+      },
+    }));
+  }
+}
+
 /**
  * Server-run pipeline polling.
  *
@@ -2488,6 +2569,7 @@ export function useHydrated(): boolean {
       startServerSync();
       startServerPull();
       startPipelinePoll();
+      void pushLocalKeysToServer();
       setHydrated(true);
     });
     return () => {

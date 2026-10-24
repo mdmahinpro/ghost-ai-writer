@@ -2,11 +2,44 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { isPrivateHost } from "./engine";
 import { contentText } from "./chat-content";
+import { post } from "./api-client";
 
-/** Long-form generation budget: real 2,500–4,000 token drafts plus 2-pass
- *  Blader revisions routinely run for minutes, so every chat/completion call
- *  gets a 3-minute ceiling instead of the old 10–45s abort. */
-const LLM_TIMEOUT_MS = 180_000;
+/**
+ * One completion, executed by the Rust backend.
+ *
+ * These helpers used to call the provider directly with a key held in the
+ * browser. Keys now live in `ai_keys`, sealed, and the pool's failover runs
+ * server-side — so the prompt goes out and only text comes back. Nothing here
+ * accepts or needs a secret.
+ */
+async function serverCompletion(input: {
+  system: string;
+  user: string;
+  json?: boolean;
+  preferredKeyId?: number;
+}): Promise<
+  | { ok: true; text: string; usage: { prompt: number; completion: number; total: number } }
+  | { ok: false; status: number; error: string }
+> {
+  const res = await post<{ text: string; tokens_in: number; tokens_out: number }>(
+    "/api/v1/generate",
+    {
+      workspace_id: 1,
+      system: input.system,
+      user: input.user,
+      json: Boolean(input.json),
+      preferred_key_id: input.preferredKeyId,
+    },
+  );
+  if (!res.ok) return { ok: false as const, status: 0, error: res.error };
+  const prompt = Math.max(0, Math.round(res.data.tokens_in ?? 0));
+  const completion = Math.max(0, Math.round(res.data.tokens_out ?? 0));
+  return {
+    ok: true as const,
+    text: res.data.text,
+    usage: { prompt, completion, total: prompt + completion },
+  };
+}
 
 function safeMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : "Request failed.";
@@ -245,53 +278,25 @@ export const getEmbedding = createServerFn({ method: "POST" })
 
 export const generateDraft = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
-    const base = readModel(input);
-    const o = input as { system?: string; user?: string };
-    const system = typeof o.system === "string" ? o.system.slice(0, 4000) : "";
-    const user = typeof o.user === "string" ? o.user.slice(0, 14000) : "";
+    const o = input as { system?: string; user?: string; preferredKeyId?: number } | null;
+    const system = typeof o?.system === "string" ? o.system.slice(0, 4000) : "";
+    const user = typeof o?.user === "string" ? o.user.slice(0, 14000) : "";
     if (!system || !user) throw new Error("Prompt is empty.");
-    return { ...base, system, user };
+    // No baseUrl/apiKey: the server owns keys and endpoints now.
+    return { system, user, preferredKeyId: typeof o?.preferredKeyId === "number" ? o.preferredKeyId : undefined };
   })
   .handler(async ({ data }) => {
-    try {
-      await assertPublicHttps(chatEndpoint(data.baseUrl), true);
-      const response = await fetch(chatEndpoint(data.baseUrl), {
-        method: "POST",
-        redirect: "manual",
-        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-        headers: {
-          Authorization: `Bearer ${data.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: data.model,
-          temperature: 0.7,
-          // Long-form articles run well past 2000 words; 2400 tokens truncated
-          // drafts around ~1600 words. 8000 leaves headroom for a full article
-          // plus the JSON envelope on every modern chat model.
-          max_tokens: 8000,
-          messages: [
-            { role: "system", content: data.system },
-            { role: "user", content: data.user },
-          ],
-        }),
-      });
-      if (response.status >= 300 && response.status < 400) return { ok: false as const, status: response.status, error: "Redirects are blocked." };
-      if (response.status === 401 || response.status === 403) return { ok: false as const, status: response.status, error: "The provider refused the API key." };
-      if (!response.ok) return { ok: false as const, status: response.status, error: `Provider returned HTTP ${response.status}.` };
-      const body = (await response.json()) as {
-        choices?: { message?: unknown }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; input_tokens?: number; output_tokens?: number };
-      };
-      const text = contentText(body.choices?.[0]?.message).trim();
-      if (text.length < 80) return { ok: false as const, status: response.status, error: "The model returned an empty draft." };
-      const prompt = Math.max(0, Math.round(body.usage?.prompt_tokens ?? body.usage?.input_tokens ?? 0));
-      const completion = Math.max(0, Math.round(body.usage?.completion_tokens ?? body.usage?.output_tokens ?? 0));
-      const total = Math.max(0, Math.round(body.usage?.total_tokens ?? prompt + completion));
-      return { ok: true as const, text, usage: { prompt, completion, total } };
-    } catch (error) {
-      return { ok: false as const, status: 0, error: safeMessage(error) };
+    const result = await serverCompletion({
+      system: data.system,
+      user: data.user,
+      preferredKeyId: data.preferredKeyId,
+    });
+    if (!result.ok) return result;
+    // Same floor the direct call enforced: a stub is a failure, not a draft.
+    if (result.text.length < 80) {
+      return { ok: false as const, status: 200, error: "The model returned an empty draft." };
     }
+    return result;
   });
 
 const ideasResponseSchema = z.object({
@@ -300,53 +305,33 @@ const ideasResponseSchema = z.object({
 
 export const generateIdeas = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
-    const base = readModel(input);
-    const o = input as { niche?: string; corpus?: { title?: string; slug?: string; permalink?: string }[] };
-    const niche = typeof o.niche === "string" ? o.niche.trim().slice(0, 500) : "";
+    const o = input as { niche?: string; corpus?: { title?: string; slug?: string; permalink?: string }[]; preferredKeyId?: number } | null;
+    const niche = typeof o?.niche === "string" ? o.niche.trim().slice(0, 500) : "";
     if (niche.length < 3) throw new Error("Niche is too short.");
-    const corpus = Array.isArray(o.corpus)
+    const corpus = Array.isArray(o?.corpus)
       ? o.corpus.slice(0, 160).map((item) => ({ title: String(item.title ?? "").slice(0, 180), slug: String(item.slug ?? "").slice(0, 180), permalink: String(item.permalink ?? "").slice(0, 300) })).filter((item) => item.title)
       : [];
-    return { ...base, niche, corpus };
+    // No key or endpoint: the server owns both now.
+    const preferredKeyId = typeof o?.preferredKeyId === "number" ? o.preferredKeyId : undefined;
+    return { niche, corpus, preferredKeyId };
   })
   .handler(async ({ data }) => {
+    const call = await serverCompletion({
+      system: "You are a niche strategist. Return strict JSON only, with no markdown fences or prose outside JSON. The shape is {\"ideas\":[{\"keyword\":\"...\",\"why\":\"...\"}]}. Make ideas specific to the niche. Never repeat or lightly rephrase any existing or planned title.",
+      user: [`Niche: ${data.niche}`, "Existing or planned corpus:", JSON.stringify(data.corpus)].join("\n"),
+      json: true,
+      preferredKeyId: data.preferredKeyId,
+    });
+    if (!call.ok) return call;
+    let parsed: unknown;
     try {
-      await assertPublicHttps(chatEndpoint(data.baseUrl), true);
-      const response = await fetch(chatEndpoint(data.baseUrl), {
-        method: "POST",
-        redirect: "manual",
-        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-        headers: { Authorization: `Bearer ${data.apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: data.model,
-          temperature: 0.8,
-          max_tokens: 1800,
-          messages: [
-            { role: "system", content: "You are a niche strategist. Return strict JSON only, with no markdown fences or prose outside JSON. The shape is {\"ideas\":[{\"keyword\":\"...\",\"why\":\"...\"}]}. Make ideas specific to the niche. Never repeat or lightly rephrase any existing or planned title." },
-            { role: "user", content: [`Niche: ${data.niche}`, "Existing or planned corpus:", JSON.stringify(data.corpus)].join("\n") },
-          ],
-        }),
-      });
-      if (response.status >= 300 && response.status < 400) return { ok: false as const, status: response.status, error: "Redirects are blocked." };
-      if (response.status === 401 || response.status === 403) return { ok: false as const, status: response.status, error: "The provider refused the API key." };
-      if (!response.ok) return { ok: false as const, status: response.status, error: `Provider returned HTTP ${response.status}.` };
-      const body = (await response.json()) as { choices?: { message?: unknown }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; input_tokens?: number; output_tokens?: number } };
-      const raw = contentText(body.choices?.[0]?.message).trim();
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw.replace(/^```json\s*|```$/gi, "").trim());
-      } catch {
-        return { ok: false as const, status: 200, error: "The model returned invalid JSON." };
-      }
-      const checked = ideasResponseSchema.safeParse(parsed);
-      if (!checked.success) return { ok: false as const, status: 200, error: `Ideas schema validation failed: ${checked.error.issues.map((issue) => issue.message).join("; ")}` };
-      const prompt = Math.max(0, Math.round(body.usage?.prompt_tokens ?? body.usage?.input_tokens ?? 0));
-      const completion = Math.max(0, Math.round(body.usage?.completion_tokens ?? body.usage?.output_tokens ?? 0));
-      const total = Math.max(0, Math.round(body.usage?.total_tokens ?? prompt + completion));
-      return { ok: true as const, ideas: checked.data.ideas, usage: { prompt, completion, total } };
-    } catch (error) {
-      return { ok: false as const, status: 0, error: safeMessage(error) };
+      parsed = JSON.parse(call.text.replace(/^```json\s*|```$/gi, "").trim());
+    } catch {
+      return { ok: false as const, status: 200, error: "The model returned invalid JSON." };
     }
+    const checked = ideasResponseSchema.safeParse(parsed);
+    if (!checked.success) return { ok: false as const, status: 200, error: `Ideas schema validation failed: ${checked.error.issues.map((issue) => issue.message).join("; ")}` };
+    return { ok: true as const, ideas: checked.data.ideas, usage: call.usage };
   });
 
 export const scrapePage = createServerFn({ method: "POST" })

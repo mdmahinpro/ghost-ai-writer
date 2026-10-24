@@ -308,6 +308,15 @@ export type AiKey = {
   baseUrl?: string;
   /** Stored only in this browser. Sent to your provider when you generate. */
   secret?: string;
+  /**
+   * Numeric `ai_keys.id` once the key is saved on the server. Generation goes
+   * through the server with this id, so the browser never needs the secret.
+   *
+   * Unset means the key exists only here (added before keys moved server-side,
+   * or saved without a secret) and cannot be used to generate until it is
+   * pushed — see the one-time migration on hydrate.
+   */
+  serverKeyId?: number;
   kind?: "studio" | "custom";
   /** Rule 4: which provider family this key belongs to. Custom = any OpenAI-compatible endpoint. */
   providerKind?: "openai" | "openrouter" | "custom";

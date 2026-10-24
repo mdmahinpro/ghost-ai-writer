@@ -838,6 +838,14 @@ async fn main() {
         Err(e) => tracing::warn!("could not re-seal existing state rows: {e}"),
     }
 
+    // Provider keys were written raw under a column named `key_enc`. Seal the
+    // ones already on disk so a database copy is useless without the key.
+    match provider::seal_existing_keys(&pool).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("sealed {n} previously-plaintext provider key(s)"),
+        Err(e) => tracing::warn!("could not re-seal existing provider keys: {e}"),
+    }
+
     // One binary, three roles: ROLE=api | worker | all (default).
     if std::env::var("ROLE").unwrap_or_else(|_| "all".into()) != "api" {
         let pool_w = pool.clone();

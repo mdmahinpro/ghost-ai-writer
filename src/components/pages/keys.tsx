@@ -349,7 +349,7 @@ export function KeysPage() {
                 resetForm();
                 return;
               }
-              addKey({
+              void addKey({
                 provider: PROVIDER_LABELS[providerKind],
                 model: effectiveModel,
                 label: nextLabel,
