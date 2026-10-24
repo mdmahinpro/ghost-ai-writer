@@ -19,6 +19,17 @@ const API_BASE =
   "https://gaw-api.onrender.com";
 
 /**
+ * Absolute URL for an API-served path.
+ *
+ * Placed images come back as `/media/<hash>.jpg` because the API serves them;
+ * the page lives on another origin, so previews and exported HTML need the host.
+ */
+export function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE.replace(/\/$/, "")}${path.startsWith("/") ? "" : "/"}${path}`;
+}
+
+/**
  * The admin bearer token — held for this browser session only.
  *
  * It is deliberately NOT read from `import.meta.env`: a `VITE_*` value is

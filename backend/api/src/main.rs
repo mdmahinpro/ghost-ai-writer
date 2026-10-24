@@ -26,6 +26,7 @@ mod email;
 mod gate;
 mod ghost;
 mod image;
+mod images;
 mod lease;
 mod lint;
 mod pipeline;
@@ -405,6 +406,33 @@ async fn pick_image(
     }))
 }
 
+async fn place_images(Json(req): Json<images::PlaceRequest>) -> Json<serde_json::Value> {
+    Json(images::place(&req).await)
+}
+
+async fn read_media(Json(req): Json<images::ReadMediaRequest>) -> Json<serde_json::Value> {
+    Json(images::read_batch(&req).await)
+}
+
+/// Stored images are public: published posts embed these URLs. Names are
+/// hashes, so there is nothing to enumerate and nothing secret to leak.
+async fn serve_media(axum::extract::Path(name): axum::extract::Path<String>) -> Response {
+    match images::open(&name) {
+        Some((mime, bytes)) => (
+            [
+                (axum::http::header::CONTENT_TYPE, mime),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "public, max-age=31536000, immutable".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 async fn list_provider_routes(
     State(st): State<AppState>,
     Query(q): Query<ProviderQuery>,
@@ -604,6 +632,8 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/worker", get(worker_status))
         .route("/v1/worker/run-once", post(worker_run_once))
         .route("/v1/image/pick", post(pick_image))
+        .route("/v1/images/place", post(place_images))
+        .route("/v1/images/read", post(read_media))
         .route("/v1/lease/heartbeat", post(lease::heartbeat))
         .route("/v1/lease/claim", post(lease::claim_lease))
         .route("/v1/lease/release", post(lease::release_lease))
@@ -623,7 +653,10 @@ fn api_routes() -> Router<AppState> {
 /// mount `app`, so they exercise the same routes the server serves.
 fn routes() -> Router<AppState> {
     let api = api_routes().layer(middleware::from_fn_with_state(admin_token(), require_token));
-    Router::new().route("/health", get(health)).nest("/api", api)
+    Router::new()
+        .route("/health", get(health))
+        .route("/media/{name}", get(serve_media))
+        .nest("/api", api)
 }
 
 fn app(pool: SqlitePool) -> Router {
