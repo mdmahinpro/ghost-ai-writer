@@ -17,5 +17,3 @@ export {
 } from "./login.ts";
 export { classifyCallToolError } from "./errors.ts";
 export type { CallToolErrorKind, CallToolErrorState } from "./errors.ts";
-export { useRefetchWhenConnectorReady } from "./use-connector-readiness.ts";
-export type { ConnectorWaitStatus } from "./use-connector-readiness.ts";
