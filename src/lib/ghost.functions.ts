@@ -1,4 +1,5 @@
 ﻿import { createServerFn } from "@tanstack/react-start";
+import { post } from "./api-client";
 import { reweaveDecision, reweavePutBody } from "./reweave";
 import { isPrivateHost, validateGhostUrl, validatePublicUrl } from "./engine";
 import { collectGhostPages, ghostPostsQuery, mapGhostPost } from "./ghost-pages";
@@ -23,6 +24,87 @@ function safeMessage(error: unknown): string {
   return msg.slice(0, 180);
 }
 
+/**
+ * Ghost reads now run on the Rust API.
+ *
+ * The Admin API key still travels with the request — it is a per-site setting,
+ * not a model key, and it is not stored server-side. Signing the Admin JWT,
+ * refusing private hosts and blocking redirects all happen in `ghost_api.rs`.
+ */
+type GhostCall = { data: { url: string; adminKey: string } };
+
+export async function testGhostConnection(input: {
+  data: { url?: string; adminKey?: string };
+}): Promise<
+  { ok: true; version: string; origin: string } | { ok: false; version: string; origin: string; error: string }
+> {
+  const res = await post<{ ok: boolean; version?: string; origin?: string; error?: string }>(
+    "/api/v1/ghost/test",
+    { url: input?.data?.url ?? "", admin_key: input?.data?.adminKey ?? "" },
+  );
+  if (!res.ok) return { ok: false, version: "", origin: "", error: res.error };
+  if (!res.data.ok) {
+    return { ok: false, version: "", origin: "", error: res.data.error ?? "Live test failed." };
+  }
+  return { ok: true, version: res.data.version ?? "unknown", origin: res.data.origin ?? "" };
+}
+
+export async function syncGhostPosts(input: GhostCall): Promise<
+  | {
+      ok: true;
+      posts: { id: string; title: string; slug: string; status: string }[];
+      pages: number;
+      truncated: boolean;
+    }
+  | {
+      ok: false;
+      posts: { id: string; title: string; slug: string; status: string }[];
+      pages: number;
+      truncated: boolean;
+      error: string;
+    }
+> {
+  type Row = { id: string; title: string; slug: string; status: string };
+  const res = await post<{
+    ok: boolean;
+    posts?: Row[];
+    pages?: number;
+    truncated?: boolean;
+    error?: string;
+  }>("/api/v1/ghost/sync", { url: input?.data?.url ?? "", admin_key: input?.data?.adminKey ?? "" });
+  if (!res.ok) {
+    return { ok: false, posts: [], pages: 0, truncated: false, error: res.error };
+  }
+  const base = {
+    posts: res.data.posts ?? [],
+    pages: res.data.pages ?? 0,
+    truncated: res.data.truncated ?? false,
+  };
+  if (!res.data.ok) {
+    return { ok: false, ...base, error: res.data.error ?? "Ghost sync failed." };
+  }
+  return { ok: true, ...base };
+}
+
+export async function probePublicUrl(input: {
+  data: { url?: string };
+}): Promise<{ ok: true; detail: string } | { ok: false; detail: string; error: string }> {
+  const res = await post<{ ok: boolean; detail?: string; error?: string }>("/api/v1/ghost/probe", {
+    url: input?.data?.url ?? "",
+  });
+  if (!res.ok) return { ok: false, detail: "", error: res.error };
+  if (!res.data.ok) {
+    return { ok: false, detail: "", error: res.data.error ?? "Live probe failed." };
+  }
+  return { ok: true, detail: res.data.detail ?? "" };
+}
+
+/**
+ * Helpers still used by the publish path (which moves to the API next).
+ *
+ * The read paths above no longer need them: signing, DNS and redirect checks
+ * for test/sync/probe all happen in `ghost_api.rs`.
+ */
 async function assertPublicDns(hostname: string) {
   const dns = await import("node:dns/promises");
   let records: { address: string }[] = [];
@@ -62,83 +144,13 @@ async function ghostFetch(origin: string, path: string, token: string, init: Req
     ...init,
     redirect: "manual",
     signal: AbortSignal.timeout(8000),
-    headers: { Authorization: `Ghost ${token}`, Accept: "application/json", ...(init.headers ?? {}) },
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(init.headers ?? {}) },
   });
   if (response.status >= 300 && response.status < 400) {
     throw new Error("Redirects are blocked. Use the canonical https origin.");
   }
   return response;
 }
-
-export const testGhostConnection = createServerFn({ method: "POST" })
-  .validator(readInput)
-  .handler(async ({ data }) => {
-    try {
-      const checked = validateGhostUrl(data.url);
-      if (!checked.ok) return { ok: false as const, error: checked.error };
-      const origin = checked.url;
-      await assertPublicDns(new URL(origin).hostname);
-      const token = await ghostToken(data.adminKey);
-      const response = await ghostFetch(origin, "/ghost/api/admin/site/", token);
-      if (response.status === 401 || response.status === 403) return { ok: false as const, error: "Ghost refused the Admin API key." };
-      if (!response.ok) return { ok: false as const, error: `Ghost returned HTTP ${response.status}.` };
-      const body = (await response.json()) as { site?: { version?: string } };
-      return { ok: true as const, version: body.site?.version || "unknown", origin };
-    } catch (error) {
-      return { ok: false as const, error: safeMessage(error) };
-    }
-  });
-
-export const syncGhostPosts = createServerFn({ method: "POST" })
-  .validator(readInput)
-  .handler(async ({ data }) => {
-    try {
-      const checked = validateGhostUrl(data.url);
-      if (!checked.ok) return { ok: false as const, error: checked.error };
-      await assertPublicDns(new URL(checked.url).hostname);
-      const token = await ghostToken(data.adminKey);
-      const collected = await collectGhostPages(async (page) => {
-        const response = await ghostFetch(checked.url, ghostPostsQuery(page), token);
-        if (response.status === 401 || response.status === 403) throw new Error("Ghost refused the Admin API key.");
-        if (!response.ok) throw new Error(`Ghost returned HTTP ${response.status}.`);
-        const body = (await response.json()) as {
-          posts?: { id?: string; title?: string; slug?: string; status?: string }[];
-          meta?: { pagination?: { pages?: number } };
-        };
-        return {
-          rows: (body.posts ?? []).map(mapGhostPost).filter((post) => post.id && post.slug),
-          pages: typeof body.meta?.pagination?.pages === "number" ? body.meta.pagination.pages : 1,
-        };
-      });
-      return { ok: true as const, posts: collected.rows, pages: collected.pages, truncated: collected.truncated };
-    } catch (error) {
-      return { ok: false as const, error: safeMessage(error) };
-    }
-  });
-
-export const probePublicUrl = createServerFn({ method: "POST" })
-  .validator((input: unknown) => {
-    const url = typeof (input as { url?: string } | null)?.url === "string" ? (input as { url: string }).url : "";
-    if (!url) throw new Error("Public URL is required.");
-    return { url };
-  })
-  .handler(async ({ data }) => {
-    try {
-      const checked = validatePublicUrl(data.url);
-      if (!checked.ok) return { ok: false as const, error: checked.error };
-      await assertPublicDns(new URL(checked.url).hostname);
-      const response = await fetch(checked.url, { redirect: "manual", signal: AbortSignal.timeout(8000) });
-      if (response.status >= 300 && response.status < 400) {
-        return { ok: false as const, error: `Probe blocked a redirect (${response.status}).` };
-      }
-      if (response.status >= 200 && response.status < 300) {
-        return { ok: true as const, detail: `Live probe ${response.status} · ${checked.url}` };
-      }
-      return { ok: false as const, error: `Live probe HTTP ${response.status} · ${checked.url}` };
-    } catch (error) {
-      return { ok: false as const, error: safeMessage(error) };
-    }
-  });
 
 type PublishInput = {
   url: string;

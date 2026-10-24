@@ -25,6 +25,7 @@ use std::time::Instant;
 mod email;
 mod gate;
 mod ghost;
+mod ghost_api;
 mod image;
 mod images;
 mod lease;
@@ -385,6 +386,24 @@ struct ProviderQuery {
 }
 
 /// List providers for a workspace. Keys are never returned — only `key_hint`.
+async fn ghost_test(Json(req): Json<ghost_api::GhostTarget>) -> Json<serde_json::Value> {
+    Json(ghost_api::test_connection(&req).await)
+}
+
+async fn ghost_sync(Json(req): Json<ghost_api::GhostTarget>) -> Json<serde_json::Value> {
+    Json(ghost_api::sync_posts(&req).await)
+}
+
+#[derive(Deserialize)]
+struct ProbeRequest {
+    #[serde(default)]
+    url: String,
+}
+
+async fn ghost_probe(Json(req): Json<ProbeRequest>) -> Json<serde_json::Value> {
+    Json(ghost_api::probe(&req.url).await)
+}
+
 async fn pick_image(
     State(st): State<AppState>,
     Json(req): Json<ImagePickRequest>,
@@ -644,6 +663,9 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/email/verification", post(send_email_verification))
         .route("/v1/email/digest", post(send_email_digest))
         .route("/v1/ghost/check-url", post(check_ghost_url))
+        .route("/v1/ghost/test", post(ghost_test))
+        .route("/v1/ghost/sync", post(ghost_sync))
+        .route("/v1/ghost/probe", post(ghost_probe))
         .route("/v1/providers/keys", get(key_pool))
         .route("/v1/generate", post(generate))
         .route("/v1/providers", get(list_provider_routes).post(create_provider))
