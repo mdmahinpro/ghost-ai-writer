@@ -19,9 +19,134 @@ pub fn client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(25))
+            // Redirects are refused, not followed. Ghost is called with the
+            // Admin API key in an Authorization header; following a 3xx would
+            // hand that key to whatever the redirect points at. The TS push
+            // blocks them (`redirect: "manual"` + an explicit 3xx throw), so
+            // the pool of hosts that can see the key stays exactly the one the
+            // operator configured.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("ghost http client")
     })
+}
+
+/// A Ghost URL must be a full https origin on a public host. Port of the TS
+/// `validateGhostUrl`: http is refused outright (the key would travel in
+/// clear), and private/loopback hosts are refused so a misconfigured or
+/// hostile URL cannot make this server probe its own network.
+pub fn validate_ghost_url(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    let rest = raw
+        .strip_prefix("https://")
+        .or_else(|| raw.strip_prefix("http://"))
+        .ok_or_else(|| "Ghost URL must be a full https address.".to_string())?;
+    if !raw.starts_with("https://") {
+        return Err("Ghost URL must use https. Private hosts are blocked.".to_string());
+    }
+    // The authority ends at the first / ? or #. Split the port off carefully:
+    // an IPv6 literal keeps its colons inside brackets, so a plain split(':')
+    // would turn `[::1]` into `[` and let it through the private-host check.
+    let host_port = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .rsplit('@')
+        .next()
+        .unwrap_or("");
+    if host_port.is_empty() {
+        return Err("Ghost URL must be a full https address.".to_string());
+    }
+    let host = if host_port.starts_with('[') {
+        // [::1]:2368 → [::1]
+        match host_port.find(']') {
+            Some(end) => &host_port[..=end],
+            None => return Err("Ghost URL must be a full https address.".to_string()),
+        }
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    };
+    if host.is_empty() {
+        return Err("Ghost URL must be a full https address.".to_string());
+    }
+    if is_private_host(host) {
+        return Err("Private addresses and loopback hosts are blocked.".to_string());
+    }
+    Ok(format!("https://{host_port}"))
+}
+
+/// Loopback, link-local, private and carrier-NAT hosts, plus the names that
+/// only ever mean "this machine". Port of the TS `isPrivateHost`.
+pub fn is_private_host(host: &str) -> bool {
+    let h = host.to_lowercase();
+    let h = h.trim_end_matches('.');
+    if h.is_empty()
+        || h == "localhost"
+        || h.ends_with(".local")
+        || h.ends_with(".internal")
+    {
+        return true;
+    }
+    let h = h.trim_start_matches('[').trim_end_matches(']');
+    if h == "0.0.0.0" || h == "::1" {
+        return true;
+    }
+    let parts: Vec<&str> = h.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let oct: Option<Vec<u32>> = parts.iter().map(|p| p.parse::<u32>().ok()).collect();
+    let Some(oct) = oct else { return false };
+    if oct.iter().any(|o| *o > 255) {
+        return false;
+    }
+    let (a, b) = (oct[0], oct[1]);
+    if a == 10 || a == 127 || a == 0 {
+        return true;
+    }
+    if a == 169 && b == 254 {
+        return true;
+    }
+    if a == 172 && (16..=31).contains(&b) {
+        return true;
+    }
+    if a == 192 && b == 168 {
+        return true;
+    }
+    // Carrier-grade NAT.
+    if a == 100 && (64..=127).contains(&b) {
+        return true;
+    }
+    false
+}
+
+/// The Admin API key must look like `id:secret`, hex only (TS `readInput`).
+/// Checked here so an obvious paste error is reported before a request is made.
+pub fn valid_admin_key(key: &str) -> bool {
+    let k = key.trim();
+    let Some((id, secret)) = k.split_once(':') else {
+        return false;
+    };
+    let hex = |s: &str, min: usize, max: usize| {
+        s.len() >= min && s.len() <= max && s.bytes().all(|c| c.is_ascii_hexdigit())
+    };
+    hex(id, 8, 64) && hex(secret, 16, 128)
+}
+
+/// Never let a key or a JWT reach a log or an API response. Port of the TS
+/// `safeMessage`: a message that smells like it echoes credentials is replaced
+/// with a fixed sentence, otherwise it is capped.
+pub fn safe_message(message: &str) -> String {
+    let lower = message.to_lowercase();
+    if lower.contains("secret")
+        || lower.contains("adminkey")
+        || lower.contains("jwt")
+        || lower.contains("authorization")
+        || lower.contains("bearer")
+    {
+        return "Ghost refused the Admin API key.".to_string();
+    }
+    message.chars().take(180).collect()
 }
 
 fn base(ghost_url: &str) -> String {
@@ -70,6 +195,17 @@ pub async fn push_post(
         (Some(u), Some(k)) if !u.trim().is_empty() && !k.trim().is_empty() => (u, k),
         _ => return Err(PushError::Unconfigured),
     };
+    // Refuse a non-https or private-host URL before the key is attached to a
+    // request. `Unconfigured` rather than a hard error: the article stays
+    // REVIEW_HELD for manual publish, which is the honest outcome when the
+    // stored integration is unusable.
+    let url = match validate_ghost_url(url) {
+        Ok(u) => u,
+        Err(_) => return Err(PushError::Unconfigured),
+    };
+    if !valid_admin_key(key) {
+        return Err(PushError::Unconfigured);
+    }
     let mut body = json!({
         "title": title,
         "slug": slug,
@@ -82,7 +218,7 @@ pub async fn push_post(
         }
     }
     let resp = client()
-        .post(format!("{}/posts", base(url)))
+        .post(format!("{}/posts", base(&url)))
         .header("Authorization", format!("Bearer {key}"))
         .header("Content-Type", "application/json")
         .json(&body)
@@ -92,7 +228,12 @@ pub async fn push_post(
     let code = resp.status().as_u16();
     let text = resp.text().await.map_err(PushError::Http)?;
     if !(200..300).contains(&code) {
-        return Err(PushError::Rejected { status: code, body: text });
+        // The Ghost response body can echo the request headers. Scrub it before
+        // it becomes an error the operator reads or that lands in a log.
+        return Err(PushError::Rejected {
+            status: code,
+            body: safe_message(&text),
+        });
     }
     let v: Value = serde_json::from_str(&text).map_err(PushError::Parse)?;
     let id = v.get("post")
@@ -109,4 +250,161 @@ pub async fn push_post(
         .unwrap_or_default()
         .to_string();
     Ok(PushResult { ghost_post_id: id, url })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A followed 3xx would deliver the Authorization header to whatever host
+    /// the redirect names. This exercises it for real: an axum server answers
+    /// 302 and the redirect target records whether it was ever reached.
+    #[tokio::test]
+    async fn the_shared_client_refuses_to_follow_a_redirect() {
+        use axum::{routing::get, Router};
+
+        let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hit_for_target = hit.clone();
+        let target = Router::new().route(
+            "/",
+            get(move || {
+                let hit = hit_for_target.clone();
+                async move {
+                    hit.store(true, std::sync::atomic::Ordering::SeqCst);
+                    "ok"
+                }
+            }),
+        );
+        let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_port = target_listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(target_listener, target).await;
+        });
+
+        // The redirector points at the target.
+        let hop = format!("http://127.0.0.1:{target_port}/");
+        let redirector = Router::new().route(
+            "/",
+            get(move || {
+                let hop = hop.clone();
+                async move {
+                    (
+                        axum::http::StatusCode::FOUND,
+                        [(axum::http::header::LOCATION, hop)],
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, redirector).await;
+        });
+
+        let resp = client()
+            .get(format!("http://127.0.0.1:{port}/"))
+            .header("Authorization", "Bearer must-not-travel")
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(
+            resp.status().as_u16(),
+            302,
+            "the 3xx must be handed back to the caller, not followed"
+        );
+        // Give any (incorrect) follow time to land, then assert it did not.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(
+            !hit.load(std::sync::atomic::Ordering::SeqCst),
+            "the client followed the redirect and would have leaked the key"
+        );
+    }
+
+    #[test]
+    fn a_ghost_url_must_be_https_and_public() {
+        // Accepted: a plain public https origin.
+        assert_eq!(
+            validate_ghost_url("https://blog.example.com").unwrap(),
+            "https://blog.example.com"
+        );
+        assert_eq!(
+            validate_ghost_url("  https://blog.example.com/  ").unwrap(),
+            "https://blog.example.com"
+        );
+        // http is refused: the key would travel in clear.
+        assert!(validate_ghost_url("http://blog.example.com").is_err());
+        // Every private/loopback shape is refused.
+        for bad in [
+            "https://localhost",
+            "https://localhost:2368",
+            "https://127.0.0.1",
+            "https://127.0.0.1:2368",
+            "https://10.0.0.5",
+            "https://192.168.1.10",
+            "https://172.16.4.4",
+            "https://169.254.169.254",
+            "https://100.64.0.1",
+            "https://0.0.0.0",
+            "https://[::1]",
+            "https://box.local",
+            "https://svc.internal",
+        ] {
+            assert!(
+                validate_ghost_url(bad).is_err(),
+                "{bad} should have been blocked"
+            );
+        }
+        // Not a URL at all.
+        assert!(validate_ghost_url("blog.example.com").is_err());
+        assert!(validate_ghost_url("").is_err());
+        // A public host that merely contains digits is fine.
+        assert!(validate_ghost_url("https://blog4.example.com").is_ok());
+        assert_eq!(
+            validate_ghost_url("https://blog.example.com/ghost").unwrap(),
+            "https://blog.example.com"
+        );
+    }
+
+    #[test]
+    fn private_host_classification_matches_the_ts_ranges() {
+        for bad in ["172.16.0.1", "172.31.255.255", "100.64.0.0", "100.127.255.255"] {
+            assert!(is_private_host(bad), "{bad} is private");
+        }
+        for ok in ["172.15.0.1", "172.32.0.1", "100.63.0.1", "100.128.0.1", "8.8.8.8"] {
+            assert!(!is_private_host(ok), "{ok} is public");
+        }
+        // A hostname is not an IP and is not blocked by the range check.
+        assert!(!is_private_host("blog.example.com"));
+        assert!(is_private_host("LOCALHOST"));
+    }
+
+    #[test]
+    fn an_admin_key_must_be_hex_id_colon_hex_secret() {
+        assert!(valid_admin_key("0123456789abcdef0123456789abcdef:abcdef0123456789abcdef"));
+        assert!(valid_admin_key("abcdef01:0123456789abcdef"));
+        // No colon, empty halves, wrong lengths, non-hex characters.
+        assert!(!valid_admin_key("nocolon"));
+        assert!(!valid_admin_key(":abc"));
+        assert!(!valid_admin_key("abcdef01:"));
+        assert!(!valid_admin_key("short:0123456789abcdef"));
+        assert!(!valid_admin_key("abcdef01:tooshort"));
+        assert!(!valid_admin_key("zzzzzzzz:0123456789abcdef"));
+    }
+
+    #[test]
+    fn a_message_that_echoes_credentials_is_replaced() {
+        // Anything carrying these words is assumed to echo the request headers.
+        for leaky in [
+            "the secret was sk_abc",
+            "adminKey rejected",
+            "invalid jwt",
+            "Authorization header",
+            "Bearer re_123",
+        ] {
+            assert_eq!(safe_message(leaky), "Ghost refused the Admin API key.");
+        }
+        // An ordinary message survives, capped.
+        assert_eq!(safe_message("Not Found"), "Not Found");
+        assert!(safe_message(&"x".repeat(400)).chars().count() <= 180);
+    }
 }

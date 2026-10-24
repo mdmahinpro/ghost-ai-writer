@@ -22,6 +22,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
 use std::time::Instant;
 
+mod email;
 mod gate;
 mod ghost;
 mod image;
@@ -265,6 +266,64 @@ async fn worker_run_once(State(st): State<AppState>) -> Result<Json<serde_json::
     Ok(Json(serde_json::json!({ "processed_job": job })))
 }
 
+// ---------------------------------------------------------------- email routes
+
+#[derive(Deserialize)]
+struct SendEmailRequest {
+    vendor: String,
+    /// The vendor API key. Never stored, never returned, never logged.
+    secret: String,
+    from: String,
+    to: String,
+    /// Required for a verification letter; the link the reader will click.
+    #[serde(default)]
+    verify_url: Option<String>,
+    /// Required for a digest.
+    #[serde(default)]
+    body: Option<String>,
+}
+
+/// Send a verification letter. The key is used for this one request and
+/// discarded; it is never written to the database.
+async fn send_email_verification(
+    Json(req): Json<SendEmailRequest>,
+) -> Result<Json<email::Sent>, ApiError> {
+    let verify_url = req
+        .verify_url
+        .as_deref()
+        .ok_or(ApiError::BadRequest("verify_url is required"))?;
+    Ok(Json(
+        email::send_verification(&req.vendor, &req.secret, &req.from, &req.to, verify_url).await,
+    ))
+}
+
+/// Send a notification digest.
+async fn send_email_digest(
+    Json(req): Json<SendEmailRequest>,
+) -> Result<Json<email::Sent>, ApiError> {
+    let body = req.body.as_deref().ok_or(ApiError::BadRequest("body is required"))?;
+    Ok(Json(
+        email::send_digest(&req.vendor, &req.secret, &req.from, &req.to, body).await,
+    ))
+}
+
+// ---------------------------------------------------------------- ghost routes
+
+#[derive(Deserialize)]
+struct GhostUrlRequest {
+    url: String,
+}
+
+/// Validate a Ghost URL before it is stored. Reports the same refusals the
+/// push path enforces, so a misconfiguration is caught at entry rather than at
+/// publish time.
+async fn check_ghost_url(Json(req): Json<GhostUrlRequest>) -> Json<serde_json::Value> {
+    match ghost::validate_ghost_url(&req.url) {
+        Ok(url) => Json(serde_json::json!({ "ok": true, "url": url })),
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
+    }
+}
+
 // ---------------------------------------------------------------- provider routes
 
 #[derive(Deserialize)]
@@ -393,6 +452,9 @@ fn app(pool: SqlitePool) -> Router {
         .route("/api/v1/worker", get(worker_status))
         .route("/api/v1/worker/run-once", post(worker_run_once))
         .route("/api/v1/image/pick", post(pick_image))
+        .route("/api/v1/email/verification", post(send_email_verification))
+        .route("/api/v1/email/digest", post(send_email_digest))
+        .route("/api/v1/ghost/check-url", post(check_ghost_url))
         .route("/api/v1/providers/keys", get(key_pool))
         .route(
             "/api/v1/providers",
