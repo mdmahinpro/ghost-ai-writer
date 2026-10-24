@@ -5,6 +5,9 @@
 
 # Local app state + workspace encryption key (.data/enc.key)
 .data/
+# The key file is written beside the database, so it can land in the repo root
+# when DATABASE_URL is a bare filename.
+enc.key
 
 # Captured live Ghost session cookies
 knowledge-base/cookies.json

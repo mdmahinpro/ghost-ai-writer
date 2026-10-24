@@ -90,11 +90,14 @@ fn key_material() -> ([u8; 32], KeySource) {
         }
     }
 
-    // 3/4: a key file. Same path the TS store used by default, so a shared
-    // working directory keeps working across implementations.
-    let path = std::env::var("GAW_ENC_KEY_FILE").unwrap_or_else(|_| ".data/enc.key".to_string());
-    let p = std::path::Path::new(&path);
-    if let Ok(hex) = std::fs::read_to_string(p) {
+    // 3/4: a key file, placed beside the database by default. The database
+    // directory is the persistent volume in every deployment we ship, so the
+    // key survives a redeploy; a key in the container's own filesystem does
+    // not, and losing it makes every stored secret unreadable.
+    let path = std::env::var("GAW_ENC_KEY_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| default_key_file());
+    if let Ok(hex) = std::fs::read_to_string(&path) {
         let hex = hex.trim();
         if hex.len() >= 64 {
             if let Some(bytes) = hex_decode_32(&hex[..64]) {
@@ -102,7 +105,7 @@ fn key_material() -> ([u8; 32], KeySource) {
             }
         }
     }
-    if let Ok(bytes) = generate_and_store_key(p) {
+    if let Ok(bytes) = generate_and_store_key(&path) {
         return (bytes, KeySource::GeneratedFile);
     }
 
@@ -111,11 +114,36 @@ fn key_material() -> ([u8; 32], KeySource) {
     (sha256(b"ghost-grok-local-fallback"), KeySource::Fallback)
 }
 
+/// Where to keep the key when no env var names a location: beside the
+/// database. In every deployment we ship the database lives on a persistent
+/// volume, so its directory is the one place guaranteed to survive a redeploy.
+fn default_key_file() -> std::path::PathBuf {
+    if let Ok(url) = std::env::var("DATABASE_URL") {
+        if let Some(rest) = url.strip_prefix("sqlite:") {
+            // Strip query parameters: `sqlite:/data/gaw.db?mode=rwc`.
+            let path = rest.split('?').next().unwrap_or(rest);
+            let file = std::path::Path::new(path);
+            if let Some(dir) = file.parent() {
+                if !dir.as_os_str().is_empty() {
+                    return dir.join("enc.key");
+                }
+            }
+        }
+    }
+    // A bare `sqlite:gaw.db`, or no DATABASE_URL at all: keep it in the
+    // working directory.
+    std::path::PathBuf::from("enc.key")
+}
+
 fn generate_and_store_key(path: &std::path::Path) -> Result<[u8; 32], ()> {
     let mut bytes = [0u8; 32];
     SystemRandom::new().fill(&mut bytes).map_err(|_| ())?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|_| ())?;
+        // An empty parent means "the working directory", which always exists —
+        // create_dir_all("") would fail and wrongly drop us to the fallback.
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir).map_err(|_| ())?;
+        }
     }
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     std::fs::write(path, format!("{hex}\n")).map_err(|_| ())?;
@@ -480,5 +508,58 @@ mod tests {
                 "{name} must not be treated as secret"
             );
         }
+    }
+
+    /// The key file must land on the persistent volume, not inside the
+    /// container. Getting this wrong loses every stored credential on the next
+    /// redeploy, and the failure is silent — so pin the derivation.
+    #[test]
+    fn the_default_key_file_sits_beside_the_database() {
+        let saved = std::env::var("DATABASE_URL").ok();
+
+        std::env::set_var("DATABASE_URL", "sqlite:/data/gaw.db?mode=rwc");
+        assert_eq!(
+            default_key_file(),
+            std::path::PathBuf::from("/data/enc.key"),
+            "the key belongs on the mounted volume with the database"
+        );
+
+        // No query string.
+        std::env::set_var("DATABASE_URL", "sqlite:/var/lib/gaw/gaw.db");
+        assert_eq!(
+            default_key_file(),
+            std::path::PathBuf::from("/var/lib/gaw/enc.key")
+        );
+
+        // A bare filename means the working directory, not an empty path.
+        std::env::set_var("DATABASE_URL", "sqlite:gaw.db");
+        assert_eq!(default_key_file(), std::path::PathBuf::from("enc.key"));
+
+        // No DATABASE_URL at all.
+        std::env::remove_var("DATABASE_URL");
+        assert_eq!(default_key_file(), std::path::PathBuf::from("enc.key"));
+
+        match saved {
+            Some(v) => std::env::set_var("DATABASE_URL", v),
+            None => std::env::remove_var("DATABASE_URL"),
+        }
+    }
+
+    /// A generated key must actually be written for a bare filename, not
+    /// silently dropped to the constant fallback.
+    #[test]
+    fn a_bare_key_filename_is_written_next_to_the_working_directory() {
+        let dir = std::path::PathBuf::from("/opt/data/cache/scratch/enc-key-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("enc.key");
+
+        let first = generate_and_store_key(&path).expect("key written");
+        assert!(path.exists(), "key file should exist on disk");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(written.trim().len(), 64);
+        assert_eq!(hex_decode_32(written.trim()).unwrap(), first);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
