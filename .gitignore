@@ -29,6 +29,14 @@ data/
 # Rust build output
 backend/target/
 
+# Local SQLite databases created by running the API (DATABASE_URL default
+# is sqlite:gaw.db?mode=rwc, so a local run drops one in backend/).
+gaw.db
+gaw.db-shm
+gaw.db-wal
+*.sqlite
+*.sqlite3
+
 # deploy/build artifacts (regenerated per host)
 .output/
 .vercel/
