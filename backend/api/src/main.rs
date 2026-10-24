@@ -24,6 +24,7 @@ use std::time::Instant;
 
 mod email;
 mod gate;
+mod deploy;
 mod ghost;
 mod ghost_api;
 mod image;
@@ -412,6 +413,18 @@ async fn ghost_reweave(Json(req): Json<ghost_api::ReWeaveRequest>) -> Json<serde
     Json(ghost_api::reweave(&req).await)
 }
 
+async fn deploy_cloudflare(Json(req): Json<deploy::CloudflareRequest>) -> Json<serde_json::Value> {
+    Json(deploy::deploy_cloudflare(&req).await)
+}
+
+async fn deploy_vercel(Json(req): Json<deploy::VercelRequest>) -> Json<serde_json::Value> {
+    Json(deploy::deploy_vercel(&req).await)
+}
+
+async fn deploy_github(Json(req): Json<deploy::GithubRequest>) -> Json<serde_json::Value> {
+    Json(deploy::deploy_github(&req).await)
+}
+
 async fn pick_image(
     State(st): State<AppState>,
     Json(req): Json<ImagePickRequest>,
@@ -676,6 +689,9 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/ghost/probe", post(ghost_probe))
         .route("/v1/ghost/publish", post(ghost_publish))
         .route("/v1/ghost/reweave", post(ghost_reweave))
+        .route("/v1/deploy/cloudflare", post(deploy_cloudflare))
+        .route("/v1/deploy/vercel", post(deploy_vercel))
+        .route("/v1/deploy/github", post(deploy_github))
         .route("/v1/providers/keys", get(key_pool))
         .route("/v1/generate", post(generate))
         .route("/v1/providers", get(list_provider_routes).post(create_provider))

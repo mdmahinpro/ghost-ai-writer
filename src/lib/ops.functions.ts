@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { post } from "./api-client";
 import net from "node:net";
 import tls from "node:tls";
 import { isPrivateHost } from "./engine";
@@ -554,119 +555,47 @@ function adapterError(error: unknown): AdapterResult {
   return { ok: false, error: safe(error) };
 }
 
-export const deployCloudflarePages = createServerFn({ method: "POST" })
-  .validator((input: unknown) => {
-    const raw = input as { accountId?: unknown; token?: unknown; projectName?: unknown; files?: unknown } | null;
-    const accountId = typeof raw?.accountId === "string" ? raw.accountId.trim().slice(0, 64) : "";
-    const token = typeof raw?.token === "string" ? raw.token.trim().slice(0, 256) : "";
-    const projectName = typeof raw?.projectName === "string" ? raw.projectName.trim().replace(/[^a-z0-9-]/gi, "").slice(0, 64) : "";
-    if (!token) throw new Error("A Cloudflare API token is required. Save it on Connections first.");
-    if (!accountId || !projectName) throw new Error("Cloudflare needs the account id and the Pages project name.");
-    const checked = readDeployFiles(raw?.files);
-    if (checked.error) throw new Error(checked.error);
-    return { accountId, token, projectName, files: checked.files };
-  })
-  .handler(async ({ data }): Promise<AdapterResult> => {
-    try {
-      let lastError = "Cloudflare did not accept the deployment.";
-      for (const branch of ["production"]) {
-        const form = new FormData();
-        const manifest: Record<string, string> = {};
-        for (const file of data.files) {
-          const key = file.name;
-          manifest[`/${key}`] = key;
-          form.append(key, new Blob([Buffer.from(file.base64, "base64")]), key);
-        }
-        form.append("manifest", JSON.stringify(manifest));
-        form.append("branch", branch);
-        const response = await fetch(`${DEPLOY_HOSTS.cloudflare}/client/v4/accounts/${encodeURIComponent(data.accountId)}/pages/projects/${encodeURIComponent(data.projectName)}/deployments`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${data.token}` },
-          body: form,
-          signal: AbortSignal.timeout(120_000),
-        });
-        if (response.status === 401 || response.status === 403) return { ok: false, error: "Cloudflare refused the API token (check Pages:Edit scope)." };
-        if (!response.ok) {
-          const text = await response.text();
-          lastError = `Cloudflare returned HTTP ${response.status}: ${text.slice(0, 200)}`;
-          continue;
-        }
-        const body = (await response.json()) as { result?: { url?: string; id?: string } };
-        return { ok: true, detail: `Cloudflare Pages deployment ${body.result?.id ?? "created"}.`, url: body.result?.url, files: data.files.length };
-      }
-      return { ok: false, error: lastError };
-    } catch (error) {
-      return adapterError(error);
-    }
-  });
+/**
+ * The three adapters now run on the Rust API.
+ *
+ * They only ever existed to reach a provider from the page's origin; the token
+ * still travels with each request as a Connections setting and is never stored
+ * server-side. Payload validation (unsafe names, base64, the 32 MiB cap) is
+ * repeated in `deploy.rs` so a bad payload is refused before any upload.
+ */
+type DeployPayloadFile = { name: string; base64: string };
 
-export const deployVercel = createServerFn({ method: "POST" })
-  .validator((input: unknown) => {
-    const raw = input as { token?: unknown; projectName?: unknown; files?: unknown } | null;
-    const token = typeof raw?.token === "string" ? raw.token.trim().slice(0, 256) : "";
-    const projectName = typeof raw?.projectName === "string" ? raw.projectName.trim().replace(/[^a-z0-9-]/gi, "").slice(0, 64) : "";
-    if (!token) throw new Error("A Vercel token is required. Save it on Connections first.");
-    if (!projectName) throw new Error("Vercel needs the project name.");
-    const checked = readDeployFiles(raw?.files);
-    if (checked.error) throw new Error(checked.error);
-    const files = checked.files.slice(0, 100);
-    return { token, projectName, files };
-  })
-  .handler(async ({ data }): Promise<AdapterResult> => {
-    try {
-      const response = await fetch(`${DEPLOY_HOSTS.vercel}/v13/deployments`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${data.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: data.projectName,
-          target: "production",
-          files: data.files.map((file) => ({ file: file.name, data: file.base64, encoding: "base64" })),
-          projectSettings: { framework: null, buildCommand: null, outputDirectory: null, installCommand: null },
-        }),
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (response.status === 401 || response.status === 403) return { ok: false, error: "Vercel refused the token." };
-      if (!response.ok) return { ok: false, error: `Vercel returned HTTP ${response.status}: ${(await response.text()).slice(0, 200)}` };
-      const body = (await response.json()) as { url?: string; id?: string };
-      return { ok: true, detail: `Vercel deployment ${body.id ?? "created"}.`, url: body.url ? `https://${body.url}` : undefined, files: data.files.length };
-    } catch (error) {
-      return adapterError(error);
-    }
+export async function deployCloudflarePages(input: {
+  data: { accountId?: string; token?: string; projectName?: string; files?: DeployPayloadFile[] };
+}): Promise<AdapterResult> {
+  const res = await post<AdapterResult>("/api/v1/deploy/cloudflare", {
+    account_id: input?.data?.accountId ?? "",
+    token: input?.data?.token ?? "",
+    project_name: input?.data?.projectName ?? "",
+    files: input?.data?.files ?? [],
   });
+  return res.ok ? res.data : { ok: false, error: res.error };
+}
 
-export const deployGithubPages = createServerFn({ method: "POST" })
-  .validator((input: unknown) => {
-    const raw = input as { token?: unknown; repo?: unknown; branch?: unknown; files?: unknown } | null;
-    const token = typeof raw?.token === "string" ? raw.token.trim().slice(0, 256) : "";
-    const repo = typeof raw?.repo === "string" ? raw.repo.trim().slice(0, 120) : "";
-    const branch = typeof raw?.branch === "string" && raw.branch.trim() ? raw.branch.trim().replace(/[^A-Za-z0-9._/-]/g, "").slice(0, 64) : "gh-pages";
-    if (!token) throw new Error("A GitHub token is required. Save it on Connections first.");
-    if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) throw new Error("GitHub needs the repo as owner/name.");
-    const checked = readDeployFiles(raw?.files);
-    if (checked.error) throw new Error(checked.error);
-    return { token, repo, branch, files: checked.files.slice(0, 120) };
-  })
-  .handler(async ({ data }): Promise<AdapterResult> => {
-    try {
-      const headers = { Authorization: `Bearer ${data.token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json", "User-Agent": "ghost-grok-static" };
-      let written = 0;
-      for (const file of data.files) {
-        const path = file.name;
-        // Existing files need their sha for an update; a 404 means a fresh create.
-        const head = await fetch(`${DEPLOY_HOSTS.github}/repos/${data.repo}/contents/${path}?ref=${encodeURIComponent(data.branch)}`, { headers, signal: AbortSignal.timeout(30_000) });
-        const sha = head.ok ? ((await head.json()) as { sha?: string }).sha : undefined;
-        const put = await fetch(`${DEPLOY_HOSTS.github}/repos/${data.repo}/contents/${path}`, {
-          method: "PUT",
-          headers,
-          body: JSON.stringify({ message: `Deploy ${path}`, content: file.base64, branch: data.branch, ...(sha ? { sha } : {}) }),
-          signal: AbortSignal.timeout(30_000),
-        });
-        if (put.status === 401 || put.status === 403) return { ok: false, error: "GitHub refused the token (needs contents:write on that repo)." };
-        if (!put.ok) return { ok: false, error: `GitHub returned HTTP ${put.status} while writing ${path}.` };
-        written += 1;
-      }
-      return { ok: true, detail: `Pushed ${written} files to ${data.repo}@${data.branch}. GitHub Pages serves the branch after its own build.`, files: written };
-    } catch (error) {
-      return adapterError(error);
-    }
+export async function deployVercel(input: {
+  data: { token?: string; projectName?: string; files?: DeployPayloadFile[] };
+}): Promise<AdapterResult> {
+  const res = await post<AdapterResult>("/api/v1/deploy/vercel", {
+    token: input?.data?.token ?? "",
+    project_name: input?.data?.projectName ?? "",
+    files: input?.data?.files ?? [],
   });
+  return res.ok ? res.data : { ok: false, error: res.error };
+}
+
+export async function deployGithubPages(input: {
+  data: { token?: string; repo?: string; branch?: string; files?: DeployPayloadFile[] };
+}): Promise<AdapterResult> {
+  const res = await post<AdapterResult>("/api/v1/deploy/github", {
+    token: input?.data?.token ?? "",
+    repo: input?.data?.repo ?? "",
+    branch: input?.data?.branch ?? "gh-pages",
+    files: input?.data?.files ?? [],
+  });
+  return res.ok ? res.data : { ok: false, error: res.error };
+}
