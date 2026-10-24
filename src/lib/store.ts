@@ -34,7 +34,7 @@ import {
   usableKey,
   decideReview,
 } from "./engine";
-import { loadAppState, saveAppState, resetAppState } from "./server-store.functions";
+import { get, post } from "./api-client";
 import { placeImages } from "./images.functions";
 import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow, publishSlots, queueCalendarItem, withSummaries } from "./operator";
 import { workerClaimLease, workerHeartbeat } from "./worker.functions";
@@ -1371,8 +1371,10 @@ auditNow: () => {
         // Server-authoritative reset: wipe the durable store first so another
         // window (or a fresh incognito context) can never resurrect old rows.
         lastServerGeneration = "";
-        void resetAppState().then((result) => {
-          lastServerGeneration = result.generation || "";
+        void post<{ success: boolean; generation: number }>(
+          `/api/v1/state/reset?workspace_id=${WORKSPACE_ID}`,
+        ).then((res) => {
+          lastServerGeneration = res.ok ? String(res.data.generation ?? "") : "";
         }).catch(() => {});
         set({ ...emptyPersisted(), notice: { tone: "info", text: "Studio reset. Every workspace, key, and article was cleared across all devices." } });
       },
@@ -2015,6 +2017,15 @@ function migratePersistedSnapshot(persisted: Persisted, version?: number): Persi
 // ---------------------------------------------------------------------------
 
 let lastServerGeneration = "";
+
+/**
+ * Which workspace's server snapshot this browser window syncs against.
+ *
+ * The Rust backend stores one app-state blob per workspace. There is a single
+ * implicit studio workspace today (id 1), matching what the migration seeds;
+ * when multi-workspace lands, this becomes the selected workspace id.
+ */
+const WORKSPACE_ID = 1;
 let serverSyncStarted = false;
 let serverPullStarted = false;
 let pullInFlight = false;
@@ -2229,10 +2240,20 @@ function ingestRemote(remoteRaw: unknown): void {
   useApp.setState(cur as AppState);
 }
 
-/** Pull the server snapshot; called on boot and periodically for cross-window sync. */
+/**
+ * Pull the server snapshot; called on boot and periodically for cross-window sync.
+ *
+ * Throws on failure so the caller's `catch` can fall back to the local mirror.
+ * The API client returns a discriminated result rather than throwing, so the
+ * failure is re-raised here — every existing caller already guards with try/catch.
+ */
 async function pullServerState(): Promise<void> {
-  const remote = await loadAppState();
-  lastServerGeneration = remote.generation || lastServerGeneration;
+  const res = await get<{ savedAt: number; generation: number; state: unknown }>(
+    `/api/v1/state?workspace_id=${WORKSPACE_ID}`,
+  );
+  if (!res.ok) throw new Error(res.error);
+  const remote = res.data;
+  lastServerGeneration = String(remote.generation || lastServerGeneration);
   ingestRemote(remote.state);
 }
 
@@ -2245,8 +2266,12 @@ export function startServerSync(): void {
     timer = undefined;
     const data = snap(useApp.getState());
     try {
-      const result = await saveAppState({ data: { state: { ...data, __generation: lastServerGeneration || undefined }, purges: drainPurges() } });
-      if (result?.generation) lastServerGeneration = result.generation;
+      const res = await post<{ success: boolean; generation: number }>("/api/v1/state", {
+        workspace_id: WORKSPACE_ID,
+        state: { ...data, __generation: lastServerGeneration || undefined },
+      });
+      if (res.ok && res.data?.generation) lastServerGeneration = String(res.data.generation);
+      else if (!res.ok) throw new Error(res.error);
     } catch (error) {
       console.error("[server-sync] save failed:", error instanceof Error ? error.message : error);
       /* offline — the local durable mirror keeps the studio usable */
@@ -2281,8 +2306,12 @@ function hydrateFromServer(): Promise<void> {
     hydratingServer = (async () => {
       let fromServer = false;
       try {
-        const remote = await loadAppState();
-        lastServerGeneration = remote.generation || "";
+        const res = await get<{ savedAt: number; generation: number; state: unknown }>(
+          `/api/v1/state?workspace_id=${WORKSPACE_ID}`,
+        );
+        if (!res.ok) throw new Error(res.error);
+        const remote = res.data;
+        lastServerGeneration = String(remote.generation || "");
         if (remote.state && typeof remote.state === "object") {
           fromServer = true;
           ingestRemote(remote.state);

@@ -22,6 +22,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
 use std::time::Instant;
 
+mod state;
 mod email;
 mod gate;
 mod ghost;
@@ -38,7 +39,7 @@ const DEFAULT_LIMIT: i64 = 50;
 const NOW: &str = "2026-10-22T00:00:00Z";
 
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     pool: SqlitePool,
 }
 
@@ -452,6 +453,8 @@ fn app(pool: SqlitePool) -> Router {
         .route("/api/v1/worker", get(worker_status))
         .route("/api/v1/worker/run-once", post(worker_run_once))
         .route("/api/v1/image/pick", post(pick_image))
+        .route("/api/v1/state", get(state::load_state).post(state::save_state))
+        .route("/api/v1/state/reset", post(state::reset_state))
         .route("/api/v1/email/verification", post(send_email_verification))
         .route("/api/v1/email/digest", post(send_email_digest))
         .route("/api/v1/ghost/check-url", post(check_ghost_url))
