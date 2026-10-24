@@ -25,6 +25,7 @@ use std::time::Instant;
 mod email;
 mod gate;
 mod deploy;
+mod ftp;
 mod ghost;
 mod ghost_api;
 mod image;
@@ -425,6 +426,26 @@ async fn deploy_github(Json(req): Json<deploy::GithubRequest>) -> Json<serde_jso
     Json(deploy::deploy_github(&req).await)
 }
 
+async fn ftp_test(Json(req): Json<ftp::LoginRequest>) -> Json<serde_json::Value> {
+    Json(ftp::test_login(&req).await)
+}
+
+#[derive(Deserialize)]
+struct FtpUploadRequest {
+    #[serde(flatten)]
+    target: ftp::FtpTarget,
+    #[serde(default)]
+    files: Vec<ftp::UploadedFile>,
+}
+
+async fn ftp_upload(Json(req): Json<FtpUploadRequest>) -> Json<serde_json::Value> {
+    Json(ftp::upload(&req.target, &req.files).await)
+}
+
+async fn index_now(Json(req): Json<ftp::IndexNowRequest>) -> Json<serde_json::Value> {
+    Json(ftp::submit_index_now(&req).await)
+}
+
 async fn pick_image(
     State(st): State<AppState>,
     Json(req): Json<ImagePickRequest>,
@@ -692,6 +713,9 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/deploy/cloudflare", post(deploy_cloudflare))
         .route("/v1/deploy/vercel", post(deploy_vercel))
         .route("/v1/deploy/github", post(deploy_github))
+        .route("/v1/ftp/test", post(ftp_test))
+        .route("/v1/ftp/upload", post(ftp_upload))
+        .route("/v1/indexnow", post(index_now))
         .route("/v1/providers/keys", get(key_pool))
         .route("/v1/generate", post(generate))
         .route("/v1/providers", get(list_provider_routes).post(create_provider))
