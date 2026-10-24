@@ -52,6 +52,21 @@ struct Health {
     status: &'static str,
     service: &'static str,
     version: &'static str,
+    /// The commit this process was built from, so a deploy can prove it is
+    /// serving. Render sets `RENDER_GIT_COMMIT`; otherwise `GIT_SHA`.
+    commit: String,
+}
+
+fn build_commit() -> String {
+    let raw = std::env::var("RENDER_GIT_COMMIT")
+        .or_else(|_| std::env::var("GIT_SHA"))
+        .or_else(|_| std::env::var("SOURCE_VERSION"))
+        .unwrap_or_else(|_| "unknown".to_string());
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "unknown".to_string();
+    }
+    trimmed.chars().take(7).collect()
 }
 
 async fn health() -> Json<Health> {
@@ -59,6 +74,7 @@ async fn health() -> Json<Health> {
         status: "ok",
         service: "gaw-api",
         version: API_VERSION,
+        commit: build_commit(),
     })
 }
 
@@ -572,39 +588,46 @@ impl IntoResponse for ApiError {
 
 /// The route table, with no middleware.
 ///
+/// The API surface, mounted under `/api`.
+///
+/// Kept separate from the public routes so the auth layer wraps only these:
+/// when the token layer covered the whole router, an unknown path answered 401
+/// instead of 404, which made it impossible to tell a missing route from a
+/// missing credential — and impossible to prove from outside which build was
+/// serving.
+fn api_routes() -> Router<AppState> {
+    Router::new()
+        .route("/v1/workspaces", get(list_workspaces))
+        .route("/v1/jobs", get(list_jobs))
+        .route("/v1/keywords", post(intake_keywords))
+        .route("/v1/lint", post(lint_text))
+        .route("/v1/worker", get(worker_status))
+        .route("/v1/worker/run-once", post(worker_run_once))
+        .route("/v1/image/pick", post(pick_image))
+        .route("/v1/lease/heartbeat", post(lease::heartbeat))
+        .route("/v1/lease/claim", post(lease::claim_lease))
+        .route("/v1/lease/release", post(lease::release_lease))
+        .route("/v1/state", get(state::load_state).post(state::save_state))
+        .route("/v1/state/reset", post(state::reset_state))
+        .route("/v1/pipeline/state", get(pipeline::pipeline_state))
+        .route("/v1/sites/ensure", post(sites::ensure_site))
+        .route("/v1/email/verification", post(send_email_verification))
+        .route("/v1/email/digest", post(send_email_digest))
+        .route("/v1/ghost/check-url", post(check_ghost_url))
+        .route("/v1/providers/keys", get(key_pool))
+        .route("/v1/generate", post(generate))
+        .route("/v1/providers", get(list_provider_routes).post(create_provider))
+}
+
 /// Split out from `app` so the layers below can be read on their own; the tests
 /// mount `app`, so they exercise the same routes the server serves.
 fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/health", get(health))
-        .route("/api/v1/workspaces", get(list_workspaces))
-        .route("/api/v1/jobs", get(list_jobs))
-        .route("/api/v1/keywords", post(intake_keywords))
-        .route("/api/v1/lint", post(lint_text))
-        .route("/api/v1/worker", get(worker_status))
-        .route("/api/v1/worker/run-once", post(worker_run_once))
-        .route("/api/v1/image/pick", post(pick_image))
-        .route("/api/v1/lease/heartbeat", post(lease::heartbeat))
-        .route("/api/v1/lease/claim", post(lease::claim_lease))
-        .route("/api/v1/lease/release", post(lease::release_lease))
-        .route("/api/v1/state", get(state::load_state).post(state::save_state))
-        .route("/api/v1/state/reset", post(state::reset_state))
-        .route("/api/v1/pipeline/state", get(pipeline::pipeline_state))
-        .route("/api/v1/sites/ensure", post(sites::ensure_site))
-        .route("/api/v1/email/verification", post(send_email_verification))
-        .route("/api/v1/email/digest", post(send_email_digest))
-        .route("/api/v1/ghost/check-url", post(check_ghost_url))
-        .route("/api/v1/providers/keys", get(key_pool))
-        .route("/api/v1/generate", post(generate))
-        .route(
-            "/api/v1/providers",
-            get(list_provider_routes).post(create_provider),
-        )
+    let api = api_routes().layer(middleware::from_fn_with_state(admin_token(), require_token));
+    Router::new().route("/health", get(health)).nest("/api", api)
 }
 
 fn app(pool: SqlitePool) -> Router {
     routes()
-        .layer(middleware::from_fn_with_state(admin_token(), require_token))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors_layer())
         .with_state(AppState { pool })
@@ -1318,6 +1341,59 @@ mod tests {
         unsafe {
             std::env::remove_var("GAW_ADMIN_TOKEN");
         }
+    }
+
+    /// A missing route must answer 404 even when a token is configured. While
+    /// the auth layer wrapped the whole router, every unknown path returned 401,
+    /// so "route exists but you are unauthenticated" and "no such route" were
+    /// indistinguishable from outside — which is why deploys could not be
+    /// verified.
+    #[tokio::test]
+    async fn an_unknown_path_is_404_not_401() {
+        // SAFETY: single-threaded test setup, and the value is removed below.
+        unsafe {
+            std::env::set_var("GAW_ADMIN_TOKEN", "0123456789abcdef-test");
+        }
+        let pool = memory_pool().await;
+        seed(&pool, 0).await.expect("seed");
+        let app = app(pool);
+
+        for path in ["/api/v1/not-a-real-route", "/nope", "/api/v2/workspaces"] {
+            let (status, _) = call(app.clone(), "GET", path, None).await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "{path} must be 404, not an auth failure"
+            );
+        }
+
+        let (status, _) = call(app.clone(), "GET", "/api/v1/workspaces", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "a real route stays gated");
+
+        unsafe {
+            std::env::remove_var("GAW_ADMIN_TOKEN");
+        }
+    }
+
+    /// `/health` carries the build's commit so a deploy can prove what is live.
+    #[tokio::test]
+    async fn health_reports_a_build_commit() {
+        let pool = memory_pool().await;
+        seed(&pool, 0).await.expect("seed");
+        let app = app(pool);
+
+        let (status, body) = call(app, "GET", "/health", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_str(&body).expect("health is JSON");
+        let commit = json
+            .get("commit")
+            .and_then(|value| value.as_str())
+            .expect("health must report a commit");
+        assert!(!commit.is_empty(), "commit must not be blank");
+        assert!(
+            commit == "unknown" || commit.chars().count() <= 7,
+            "commit is short: {commit}"
+        );
     }
 
     #[tokio::test]
