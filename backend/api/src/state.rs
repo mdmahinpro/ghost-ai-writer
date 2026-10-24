@@ -13,6 +13,7 @@
 
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 
 use crate::ApiError;
 
@@ -87,8 +88,12 @@ pub async fn load_state(
 
     match row {
         Some(r) => {
-            let state: Option<serde_json::Value> =
-                serde_json::from_str(&r.payload).ok();
+            let mut state: Option<serde_json::Value> = serde_json::from_str(&r.payload).ok();
+            // Credentials are stored sealed; hand the client plaintext, exactly
+            // as the TS store did on load.
+            if let Some(v) = state.as_mut() {
+                crate::secrets::decrypt_tree(v);
+            }
             Ok(Json(StateEnvelope {
                 saved_at: chrono_now_ms(),
                 generation: r.generation,
@@ -108,8 +113,13 @@ pub async fn save_state(
     State(st): State<AppState>,
     Json(input): Json<SaveStateInput>,
 ) -> Result<Json<SaveStateOutput>, ApiError> {
-    let payload = serde_json::to_string(&input.state)
-        .map_err(|_| ApiError::BadRequest("invalid state JSON"))?;
+    // Seal every credential-shaped field before it reaches the database. The
+    // client sends plaintext (it must, to render a masked hint); the store is
+    // not the place to keep it in the clear.
+    let mut state = input.state;
+    crate::secrets::encrypt_tree(&mut state);
+    let payload =
+        serde_json::to_string(&state).map_err(|_| ApiError::BadRequest("invalid state JSON"))?;
 
     let existing: Option<(i64,)> =
         sqlx::query_as("SELECT id FROM app_state WHERE workspace_id = ?1")
@@ -183,6 +193,55 @@ pub async fn reset_state(
 }
 
 // --- Helpers --------------------------------------------------------------
+
+/// Seal any credentials sitting in the store as plaintext.
+///
+/// Rows written before at-rest encryption existed hold raw keys. A client save
+/// would eventually encrypt them, but "eventually" is unbounded — a workspace
+/// that is created and then left alone would keep its key readable in the
+/// database indefinitely. This runs once at startup so the exposure ends on
+/// deploy rather than on the next edit.
+///
+/// Safe to run repeatedly: already-sealed values are skipped, so it is a no-op
+/// on every boot after the first. Rows that cannot be parsed are left alone and
+/// reported, never dropped.
+pub async fn seal_existing(pool: &SqlitePool) -> Result<(usize, usize), sqlx::Error> {
+    let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, payload FROM app_state")
+        .fetch_all(pool)
+        .await?;
+
+    let mut sealed = 0usize;
+    let mut unreadable = 0usize;
+
+    for (id, payload) in rows {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&payload) else {
+            unreadable += 1;
+            continue;
+        };
+        // Normalise first: a value that arrived already sealed under another
+        // key still needs no change, and one that is plaintext gets sealed.
+        let before = value.clone();
+        crate::secrets::encrypt_tree(&mut value);
+        if value == before {
+            continue;
+        }
+        let updated = match serde_json::to_string(&value) {
+            Ok(s) => s,
+            Err(_) => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        sqlx::query("UPDATE app_state SET payload = ?1 WHERE id = ?2")
+            .bind(updated)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        sealed += 1;
+    }
+
+    Ok((sealed, unreadable))
+}
 
 fn iso_now() -> String {
     use std::time::SystemTime;
@@ -274,21 +333,16 @@ mod tests {
                     .uri("/api/v1/state")
                     .method("POST")
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"workspace_id":1,"state":{"key":"val"}}"#,
-                    ))
+                    .body(Body::from(r#"{"workspace_id":1,"state":{"key":"val"}}"#))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(save.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(
-            save.into_body(),
-            1024 * 1024,
-        )
-        .await
-        .unwrap();
+        let body = axum::body::to_bytes(save.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let out: SaveStateOutput = serde_json::from_slice(&body).unwrap();
         assert!(out.success);
         assert!(out.generation > 0);
@@ -323,10 +377,9 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            let body =
-                axum::body::to_bytes(resp.into_body(), 1024 * 1024)
-                    .await
-                    .unwrap();
+            let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
             serde_json::from_slice::<SaveStateOutput>(&body)
                 .unwrap()
                 .generation
@@ -345,10 +398,9 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            let body =
-                axum::body::to_bytes(resp.into_body(), 1024 * 1024)
-                    .await
-                    .unwrap();
+            let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
             serde_json::from_slice::<SaveStateOutput>(&body)
                 .unwrap()
                 .generation
@@ -389,10 +441,9 @@ mod tests {
             .unwrap();
         assert_eq!(reset.status(), StatusCode::OK);
 
-        let body =
-            axum::body::to_bytes(reset.into_body(), 1024 * 1024)
-                .await
-                .unwrap();
+        let body = axum::body::to_bytes(reset.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let out: ResetStateOutput = serde_json::from_slice(&body).unwrap();
         assert_eq!(out.generation, 0);
 
@@ -406,11 +457,217 @@ mod tests {
             )
             .await
             .unwrap();
-        let body =
-            axum::body::to_bytes(load.into_body(), 1024 * 1024)
-                .await
-                .unwrap();
+        let body = axum::body::to_bytes(load.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let env: StateEnvelope = serde_json::from_slice(&body).unwrap();
         assert_eq!(env.generation, 0);
+    }
+
+    /// All secret-touching tests pin the same key so the process-wide key
+    /// resolves deterministically regardless of which test initialises first.
+    fn init_test_key() {
+        if std::env::var("GAW_ENC_KEY").is_err() {
+            std::env::set_var("GAW_ENC_KEY", "state-test-key-0123456789");
+        }
+    }
+
+    /// The whole point of the fix: a credential sent by the client must not be
+    /// readable in the stored row, but must come back intact on load.
+    #[tokio::test]
+    async fn a_saved_credential_is_sealed_in_the_database() {
+        init_test_key();
+        let pool = test_pool().await;
+        let app = app(pool.clone());
+
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/state")
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"workspace_id":1,"state":{
+                            "keys":[{"id":"k1","secret":"sk-live-SECRETVALUE"}],
+                            "sites":[{"id":"s1","ghost":{"adminKey":"id:KEYVALUE"}}],
+                            "harmless":"VISIBLE"
+                        }}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Read the row straight out of SQLite, bypassing the handler.
+        let raw: (String,) = sqlx::query_as("SELECT payload FROM app_state WHERE workspace_id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            !raw.0.contains("sk-live-SECRETVALUE"),
+            "AI key was written to the database in the clear: {}",
+            raw.0
+        );
+        assert!(
+            !raw.0.contains("KEYVALUE"),
+            "Ghost admin key was written to the database in the clear: {}",
+            raw.0
+        );
+        assert!(
+            raw.0.contains("enc:v1:"),
+            "no sealed value in the stored payload: {}",
+            raw.0
+        );
+        // Non-secret fields stay readable so the row can still be inspected.
+        assert!(raw.0.contains("VISIBLE"));
+
+        // And the client gets its plaintext back.
+        let load = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/state?workspace_id=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(load.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let env: StateEnvelope = serde_json::from_slice(&body).unwrap();
+        let state = env.state.expect("state");
+        assert_eq!(
+            state["keys"][0]["secret"],
+            serde_json::json!("sk-live-SECRETVALUE")
+        );
+        assert_eq!(
+            state["sites"][0]["ghost"]["adminKey"],
+            serde_json::json!("id:KEYVALUE")
+        );
+        assert_eq!(state["harmless"], serde_json::json!("VISIBLE"));
+    }
+
+    /// Rows written before encryption existed are sealed on startup.
+    #[tokio::test]
+    async fn seal_existing_encrypts_a_plaintext_row() {
+        init_test_key();
+        let pool = test_pool().await;
+
+        // Exactly what the pre-fix store would have written.
+        let plaintext = r#"{"keys":[{"id":"k1","secret":"sk-OLDPLAINTEXT"}]}"#;
+        sqlx::query(
+            "INSERT INTO app_state (workspace_id, generation, payload)
+             VALUES (1, 5, ?1)",
+        )
+        .bind(plaintext)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (sealed, unreadable) = seal_existing(&pool).await.unwrap();
+        assert_eq!(sealed, 1, "the plaintext row should have been sealed");
+        assert_eq!(unreadable, 0);
+
+        let raw: (String,) = sqlx::query_as("SELECT payload FROM app_state WHERE workspace_id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !raw.0.contains("sk-OLDPLAINTEXT"),
+            "still readable after sealing: {}",
+            raw.0
+        );
+
+        // Generation is untouched by the backfill.
+        let gen: (i64,) = sqlx::query_as("SELECT generation FROM app_state WHERE workspace_id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(gen.0, 5, "the backfill must not bump generation");
+
+        // And it still reads back correctly through the handler.
+        let load = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/state?workspace_id=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(load.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let env: StateEnvelope = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            env.state.expect("state")["keys"][0]["secret"],
+            serde_json::json!("sk-OLDPLAINTEXT")
+        );
+    }
+
+    #[tokio::test]
+    async fn seal_existing_is_a_no_op_after_the_first_run() {
+        init_test_key();
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO app_state (workspace_id, generation, payload)
+             VALUES (1, 1, ?1)",
+        )
+        .bind(r#"{"keys":[{"id":"k1","secret":"sk-ONE"}]}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(seal_existing(&pool).await.unwrap(), (1, 0));
+        // Second boot must not rewrite, or every restart would churn the row.
+        assert_eq!(seal_existing(&pool).await.unwrap(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn seal_existing_reports_but_does_not_destroy_unparseable_rows() {
+        init_test_key();
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO app_state (workspace_id, generation, payload)
+             VALUES (1, 1, ?1)",
+        )
+        .bind("{not json at all")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (sealed, unreadable) = seal_existing(&pool).await.unwrap();
+        assert_eq!(sealed, 0);
+        assert_eq!(unreadable, 1);
+
+        let raw: (String,) = sqlx::query_as("SELECT payload FROM app_state WHERE workspace_id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            raw.0, "{not json at all",
+            "an unparseable row must be left exactly as found, never dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_row_without_secrets_is_not_rewritten() {
+        init_test_key();
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO app_state (workspace_id, generation, payload)
+             VALUES (1, 1, ?1)",
+        )
+        .bind(r#"{"sites":[{"id":"s1","url":"https://example.com"}]}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            seal_existing(&pool).await.unwrap(),
+            (0, 0),
+            "a row with no secret-shaped fields needs no write"
+        );
     }
 }

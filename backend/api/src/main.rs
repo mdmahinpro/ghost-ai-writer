@@ -22,16 +22,17 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
 use std::time::Instant;
 
-mod lease;
-mod state;
 mod email;
 mod gate;
 mod ghost;
 mod image;
+mod lease;
 mod lint;
 mod provider;
 mod runs;
+mod secrets;
 mod stages;
+mod state;
 mod worker;
 
 const API_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -666,6 +667,39 @@ async fn main() {
     let addr = SocketAddr::from((ip, port));
     if std::env::var("GAW_ADMIN_TOKEN").is_err() {
         tracing::warn!("GAW_ADMIN_TOKEN is unset: every route is unauthenticated");
+    }
+
+    // Credentials in the stored snapshot are encrypted at rest. Warn loudly
+    // when the key cannot survive a redeploy — losing it makes every stored
+    // secret permanently unreadable, and the failure is silent at read time.
+    let source = secrets::key_source();
+    if source.is_unsafe_for_production() {
+        tracing::warn!(
+            "encryption key source is {:?}: stored credentials will NOT survive a \
+             redeploy once the filesystem is reset. Set GAW_ENC_KEY on the host.",
+            source
+        );
+    } else {
+        tracing::info!("state encryption key source: {source:?}");
+    }
+
+    // Close the plaintext window left by the pre-encryption store.
+    match state::seal_existing(&pool).await {
+        Ok((0, 0)) => {}
+        Ok((0, bad)) if bad > 0 => {
+            tracing::warn!("{bad} stored state row(s) could not be parsed and were left alone");
+        }
+        Ok((fixed, bad)) => {
+            tracing::info!(
+                "sealed credentials in {fixed} previously-plaintext state row(s){}",
+                if bad > 0 {
+                    format!(", {bad} unparseable and skipped")
+                } else {
+                    String::new()
+                }
+            );
+        }
+        Err(e) => tracing::warn!("could not re-seal existing state rows: {e}"),
     }
 
     // One binary, three roles: ROLE=api | worker | all (default).
