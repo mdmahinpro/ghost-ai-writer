@@ -3,6 +3,7 @@ import { AuthProvider } from "@/lib/auth/provider";
 import { AppCrashBoundary } from "@/lib/error-component";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { AppShell } from "@/components/shell";
+import { TokenGate } from "@/components/token-gate";
 import appCss from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -39,9 +40,11 @@ export const Route = createRootRoute({
         <PreviewHostBridge />
         <AppCrashBoundary>
           <AuthProvider>
-            <AppShell>
-              <Outlet />
-            </AppShell>
+            <TokenGate>
+              <AppShell>
+                <Outlet />
+              </AppShell>
+            </TokenGate>
           </AuthProvider>
         </AppCrashBoundary>
         <Scripts />

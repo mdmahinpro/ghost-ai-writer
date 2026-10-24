@@ -19,18 +19,82 @@ const API_BASE =
   "https://gaw-api.onrender.com";
 
 /**
- * The admin bearer token — injected by the build or set at runtime.
+ * The admin bearer token — held for this browser session only.
  *
- * For deployed apps: set `VITE_GAW_ADMIN_TOKEN` at build time (it becomes
- * baked into the JS bundle — acceptable for an admin-only tool).
- *
- * For dev: paste the Render-generated token into a `.env` file:
- *   VITE_GAW_ADMIN_TOKEN=rw_...
+ * It is deliberately NOT read from `import.meta.env`: a `VITE_*` value is
+ * inlined into the JS bundle at build time, so "setting it in .env when
+ * hosting" publishes the credential to anyone who can load the page. The token
+ * is pasted into the UI instead, kept in `sessionStorage`, and cleared when the
+ * tab closes.
  */
-const ADMIN_TOKEN: string | undefined =
-  typeof import.meta !== "undefined"
-    ? (import.meta as { env?: Record<string, string> }).env?.VITE_GAW_ADMIN_TOKEN
-    : undefined;
+const TOKEN_KEY = "gaw_admin_token";
+
+/** `undefined` = not read yet; distinguishes "no token" from "not loaded". */
+let tokenCache: string | undefined;
+
+function storage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.sessionStorage;
+  } catch {
+    // Private mode / blocked storage: stay in memory for this page view.
+    return null;
+  }
+}
+
+/** The token in use right now, or "" when none has been entered. */
+export function getAdminToken(): string {
+  if (tokenCache !== undefined) return tokenCache;
+  const store = storage();
+  tokenCache = store?.getItem(TOKEN_KEY) ?? "";
+  return tokenCache;
+}
+
+/** Save (or, with an empty string, forget) the token for this session. */
+export function setAdminToken(value: string): void {
+  const token = value.trim();
+  tokenCache = token;
+  const store = storage();
+  try {
+    if (token) store?.setItem(TOKEN_KEY, token);
+    else store?.removeItem(TOKEN_KEY);
+  } catch {
+    // Memory copy is still authoritative for this page view.
+  }
+  tokenRejected = false;
+  notifyTokenState();
+}
+
+export function hasAdminToken(): boolean {
+  return getAdminToken().length > 0;
+}
+
+/**
+ * True when the backend refused the token we hold.
+ *
+ * The gate distinguishes this from "no token yet" so a mistyped token reads as
+ * "that was rejected" instead of silently doing nothing.
+ */
+let tokenRejected = false;
+
+export function isTokenRejected(): boolean {
+  return tokenRejected;
+}
+
+/**
+ * Fired when the API answers 401, so the UI can ask for a token instead of
+ * showing an empty app. A wrong token looks exactly like no token from here.
+ */
+type TokenListener = () => void;
+const tokenListeners = new Set<TokenListener>();
+
+export function onTokenStateChange(listener: TokenListener): () => void {
+  tokenListeners.add(listener);
+  return () => tokenListeners.delete(listener);
+}
+
+function notifyTokenState(): void {
+  for (const listener of tokenListeners) listener();
+}
 
 /** Standard timeout for every API call (seconds). */
 const TIMEOUT_S = 30;
@@ -63,8 +127,9 @@ export type ApiResponse<T = unknown> = ApiResult<T> | ApiFailure;
 
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (ADMIN_TOKEN) {
-    h["Authorization"] = `Bearer ${ADMIN_TOKEN}`;
+  const token = getAdminToken();
+  if (token) {
+    h["Authorization"] = `Bearer ${token}`;
   }
   return h;
 }
@@ -99,6 +164,11 @@ async function request<T>(
     }
 
     if (!resp.ok) {
+      if (resp.status === 401) {
+        // The stored token is missing or no longer valid; let the UI ask again.
+        tokenRejected = getAdminToken().length > 0;
+        notifyTokenState();
+      }
       // The API reports failures as {"error": {"code", "message"}}; older paths
       // used a bare string. Render the message either way — a raw object here
       // reaches the UI as "[object Object]".
