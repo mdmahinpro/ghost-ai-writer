@@ -67,6 +67,12 @@ export type Job = {
   costUsd: number;
   createdAt: number;
   attempt?: number;
+  /**
+   * Set when this job is owned by the Rust worker rather than the browser.
+   * Server-owned jobs are read-only here: the engine must not advance them, or
+   * a tab and the worker would both run the same stages and pay twice.
+   */
+  origin?: "server";
   /** Written, but stage 6 must not send it to Ghost until the calendar releases it. */
   publishHold?: boolean;
   /** How the semantic gate was scored for this job. */
@@ -444,6 +450,12 @@ export function defaultAdSlots(): AdSlotConfig[] {
 
 export type Site = {
   id: string;
+  /**
+   * Numeric id of this site in the Rust backend, set the first time it queues
+   * work. The UI keys on the uid string; the server tables key on integers, so
+   * this is the link between them (`POST /api/v1/sites/ensure`).
+   */
+  serverSiteId?: number;
   name: string;
   createdAt: number;
   staticName: string;

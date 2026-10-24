@@ -2437,7 +2437,16 @@ function startJob(data: Persisted, job: Job, now: number): boolean {
 
 export function needsWork(data: Persisted, now: number): boolean {
   if (data.workerPaused) return false;
-  if (data.jobs.some((j) => j.status === "queued" || j.status === "running")) return true;
+  // Server-owned jobs are advanced by the Rust worker. Counting them here would
+  // keep this tab's tick busy running stages the worker already runs.
+  if (
+    data.jobs.some(
+      (j) =>
+        j.origin !== "server" &&
+        (j.status === "queued" || j.status === "running"),
+    )
+  )
+    return true;
   if (data.sites.some((s) => s.ghost.corpus === "SYNCING" && s.ghost.syncReadyAt && s.ghost.syncReadyAt <= now)) return true;
   if (data.sites.some((s) => s.pendingRebuildAt && s.pendingRebuildAt <= now)) return true;
   return false;
@@ -2559,14 +2568,18 @@ export async function advance(
   for (const site of next.sites) {
     const concurrency = Math.max(1, limitsOf(next).concurrency);
     const runningJobs = () => next.jobs.filter((j) => j.siteId === site.id && j.status === "running");
-    const queued = next.jobs.filter((j) => j.siteId === site.id && j.status === "queued");
+    const queued = next.jobs.filter(
+      (j) => j.siteId === site.id && j.status === "queued" && j.origin !== "server",
+    );
     let slots = concurrency - runningJobs().length;
     for (const job of [...queued].reverse()) {
       if (slots <= 0) break;
       if (!depsResolved(job, next.jobs)) continue;
       if (startJob(next, job, now)) slots -= 1;
     }
-    const active = next.jobs.filter((j) => j.siteId === site.id && j.status === "running");
+    const active = next.jobs.filter(
+      (j) => j.siteId === site.id && j.status === "running" && j.origin !== "server",
+    );
     await Promise.all(active.map((job) => runJobPipeline(next, job.id, now, site, opts, opts.provider)));
   }
 

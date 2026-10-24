@@ -144,7 +144,7 @@ pub async fn pipeline_state(
                 engine, uniqueness_score, intent_match, coverage_score,
                 featured_image_url, featured_alt, content_json, meta_json
            FROM articles
-          WHERE website_id IN (SELECT id FROM websites WHERE workspace_id = ?1)
+          WHERE site_id IN (SELECT id FROM sites WHERE workspace_id = ?1)
             AND (?2 IS NULL OR site_id = ?2)
           ORDER BY id DESC
           LIMIT ?3",
@@ -168,12 +168,15 @@ pub async fn pipeline_state(
            JOIN websites w ON w.id = r.website_id
            LEFT JOIN jobs j ON j.run_id = r.id
           WHERE w.workspace_id = ?1
+            AND (?3 IS NULL OR r.website_id IN (
+                  SELECT COALESCE(website_id, id) FROM sites WHERE id = ?3))
           GROUP BY r.id
           ORDER BY r.id DESC
           LIMIT ?2",
     )
     .bind(workspace_id)
     .bind(limit)
+    .bind(site_id)
     .fetch_all(&st.pool)
     .await
     .map_err(ApiError::Db)?;
@@ -211,6 +214,8 @@ mod tests {
             .await
             .unwrap();
         for sql in [
+            "CREATE TABLE sites (id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL,
+                 domain TEXT NOT NULL, created_at TEXT, client_uid TEXT, website_id INTEGER)",
             "CREATE TABLE websites (id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL,
                  name TEXT, ghost_mode TEXT, ghost_url TEXT, ghost_admin_key_enc TEXT,
                  static_site_name TEXT, created_at TEXT)",
@@ -249,6 +254,21 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+        // Articles are scoped by their site, so both workspaces need one.
+        sqlx::query(
+            "INSERT INTO sites (id, workspace_id, domain, client_uid, website_id)
+             VALUES (1, 1, 'one.example', 'site_one', 1)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO sites (id, workspace_id, domain, client_uid, website_id)
+             VALUES (2, 2, 'two.example', 'site_two', 2)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO runs (id, website_id, status, created_at)
              VALUES (1, 1, 'RUNNING', '2026-01-01T00:00:00Z')",
@@ -396,6 +416,46 @@ mod tests {
 
         let one = get_state(pool, "/api/v1/pipeline/state?workspace_id=1&site_id=1").await;
         assert_eq!(one.jobs.len(), 2, "site 2's job is excluded");
+    }
+
+    #[tokio::test]
+    async fn runs_are_scoped_to_the_requested_site() {
+        // Regression: the runs query filtered by workspace only, so asking for
+        // one site returned every site's runs — and the client re-labelled them
+        // as the active site's.
+        let pool = pool().await;
+        seed(&pool).await;
+        sqlx::query(
+            "INSERT INTO websites (id, workspace_id, name) VALUES (3, 1, 'Site 3')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO sites (id, workspace_id, domain, client_uid, website_id)
+             VALUES (3, 1, 'three.example', 'site_three', 3)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // seed() already owns run 1 for website 1; this is a second site in the
+        // same workspace, which is what the workspace-only filter got wrong.
+        sqlx::query("INSERT INTO runs (id, website_id, type, status) VALUES (9, 3, 'keyword', 'COMPLETED')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let one = get_state(
+            pool.clone(),
+            "/api/v1/pipeline/state?workspace_id=1&site_id=3",
+        )
+        .await;
+        assert_eq!(one.runs.len(), 1, "only the requested site's run");
+        assert_eq!(one.runs[0].id, 9);
+
+        // Without a site filter the workspace still sees both.
+        let all = get_state(pool, "/api/v1/pipeline/state?workspace_id=1").await;
+        assert_eq!(all.runs.len(), 2);
     }
 
     #[tokio::test]

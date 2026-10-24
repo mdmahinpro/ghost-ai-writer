@@ -89,6 +89,13 @@ export type EnqueueResult = {
   runId: number;
 };
 
+export type EnsureSiteResult = {
+  siteId: number;
+  websiteId: number;
+  /** False when the site was already linked, so a repeat call is harmless. */
+  created: boolean;
+};
+
 /** Raw shapes exactly as they arrive. */
 type RawJob = {
   id: number;
@@ -143,6 +150,39 @@ type RawSnapshot = {
 };
 
 type RawEnqueue = { inserted: number; run_id: number; elapsed_ms: number };
+
+/**
+ * Link a browser site to its server row.
+ *
+ * The store creates sites with uid strings while the Rust tables key on
+ * numeric ids, so the first time a site queues work it must be registered and
+ * the numeric ids kept. Idempotent: safe to call before every enqueue.
+ */
+export async function ensureSite(input: {
+  workspaceId: number;
+  clientUid: string;
+  name: string;
+  domain?: string;
+}): Promise<ApiResponse<EnsureSiteResult>> {
+  const res = await post<{ site_id: number; website_id: number; created: boolean }>(
+    "/api/v1/sites/ensure",
+    {
+      workspace_id: input.workspaceId,
+      client_uid: input.clientUid,
+      name: input.name,
+      domain: input.domain,
+    },
+  );
+  if (!res.ok) return res;
+  return {
+    ok: true,
+    data: {
+      siteId: res.data.site_id,
+      websiteId: res.data.website_id,
+      created: res.data.created,
+    },
+  };
+}
 
 /**
  * Enqueue keywords for the server worker to process.

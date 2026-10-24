@@ -18,7 +18,6 @@ import {
   queuePlan,
   regenerateVariant,
   restartJob,
-  submitKeywords,
   suggestIdeas,
   usdFor,
   weaveOrphans,
@@ -35,6 +34,12 @@ import {
   decideReview,
 } from "./engine";
 import { get, post } from "./api-client";
+import {
+  enqueueKeywords,
+  ensureSite,
+  pipelineSnapshot,
+} from "./pipeline-api";
+import { mergeSnapshot } from "./server-pipeline-merge";
 import { placeImages } from "./images.functions";
 import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow, publishSlots, queueCalendarItem, withSummaries } from "./operator";
 import { claimLease, heartbeat } from "./worker-api";
@@ -571,19 +576,75 @@ export const useApp = create<AppState>()(
       queueKeywords: async (input) => {
         const s = get();
         const site = s.sites.find((item) => item.id === s.activeSiteId);
-        const keyId = input.modelKeyId === "default" ? site?.voice.modelKeyId : input.modelKeyId;
-        const result = await submitKeywords(snap(s), {
-          ...input,
-          siteId: s.activeSiteId,
-          now: Date.now(),
-          provider: embeddingProvider(s.keys.find((key) => key.id === keyId)).provider,
+        if (!site) {
+          set((cur) => ({ ...cur, notice: { tone: "danger", text: "Pick a site first." } }));
+          return undefined;
+        }
+        // One keyword per line, trimmed, blanks dropped — the same shape the
+        // local intake accepted.
+        const keywords = input.lines
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (!keywords.length) {
+          set((cur) => ({ ...cur, notice: { tone: "danger", text: "Add at least one keyword." } }));
+          return undefined;
+        }
+
+        // Link this browser site to a server row the first time it queues work,
+        // then keep the numeric id. Idempotent server-side, so a repeat call is
+        // only a cost if the id were missing.
+        let serverSiteId = site.serverSiteId;
+        if (serverSiteId === undefined) {
+          const linked = await ensureSite({
+            workspaceId: WORKSPACE_ID,
+            clientUid: site.id,
+            name: site.name,
+            domain: site.publicUrl || undefined,
+          });
+          if (!linked.ok) {
+            set((cur) => ({
+              ...cur,
+              notice: { tone: "danger", text: `Could not link this site: ${linked.error}` },
+            }));
+            return undefined;
+          }
+          serverSiteId = linked.data.siteId;
+          const linkedId = serverSiteId;
+          set((cur) => ({
+            ...cur,
+            sites: cur.sites.map((item) =>
+              item.id === site.id ? { ...item, serverSiteId: linkedId } : item,
+            ),
+          }));
+        }
+
+        // The Rust worker runs the pipeline; this tab no longer generates
+        // anything, so it only enqueues and then reads progress back.
+        const enq = await enqueueKeywords({
+          workspaceId: WORKSPACE_ID,
+          siteId: serverSiteId,
+          keywords,
         });
-        set((cur) => {
-          if (result.error && !result.runId) return { ...cur, notice: { tone: "danger", text: result.error } };
-          // Hotfix: upsert-merge so a run committed by a concurrent action/tick survives.
-          return { ...cur, ...result.data, ...mergePersisted(cur, result.data, CHURNED_COLLECTIONS), notice: result.error ? { tone: "danger", text: result.error } : result.data.notice };
-        });
-        return result.runId;
+        if (!enq.ok) {
+          set((cur) => ({
+            ...cur,
+            notice: { tone: "danger", text: `Queue failed: ${enq.error}` },
+          }));
+          return undefined;
+        }
+
+        // Pull immediately so the run appears without waiting for the poll.
+        await pollServerPipeline();
+
+        set((cur) => ({
+          ...cur,
+          notice: {
+            tone: "ok",
+            text: `Queued ${enq.data.inserted} keyword${enq.data.inserted === 1 ? "" : "s"} on the server worker.`,
+          },
+        }));
+        return `srv_run_${enq.data.runId}`;
       },
       runIdeas: (niche, count = 8) => {
         void (async () => {
@@ -2292,6 +2353,68 @@ export function startServerSync(): void {
   void flush();
 }
 
+/**
+ * Poll the server pipeline for the active site and merge what it reports.
+ *
+ * Returns whether the server still has work, so the caller can poll quickly
+ * while a queue drains and slowly when it is idle.
+ */
+async function pollServerPipeline(): Promise<boolean> {
+  const s = useApp.getState();
+  const site = s.sites.find((item) => item.id === s.activeSiteId);
+  const serverSiteId = site?.serverSiteId;
+  if (!site || serverSiteId === undefined) return false;
+
+  const res = await pipelineSnapshot({
+    workspaceId: WORKSPACE_ID,
+    siteId: serverSiteId,
+  });
+  if (!res.ok) return false;
+
+  useApp.setState((cur) => ({
+    ...cur,
+    ...mergeSnapshot(site.id, res.data, {
+      jobs: cur.jobs,
+      articles: cur.articles,
+      runs: cur.runs,
+    }),
+  }));
+  return res.data.active;
+}
+
+let pipelinePollStarted = false;
+let pipelinePollInFlight = false;
+
+/**
+ * Server-run pipeline polling.
+ *
+ * Kept separate from the worker tick on purpose: the tick is lease-guarded and
+ * stops when another tab holds it, but reading server progress is safe from any
+ * tab and should not stop just because this one is not the lease holder.
+ *
+ * Adaptive interval: 2.5s while jobs are in flight, 15s when idle, so an open
+ * tab does not hammer the API for a workspace with nothing running.
+ */
+function startPipelinePoll(): void {
+  if (pipelinePollStarted || typeof window === "undefined") return;
+  pipelinePollStarted = true;
+  const tick = async () => {
+    let active = false;
+    if (!document.hidden && !pipelinePollInFlight && !advancing) {
+      pipelinePollInFlight = true;
+      try {
+        active = await pollServerPipeline();
+      } catch {
+        active = false;
+      } finally {
+        pipelinePollInFlight = false;
+      }
+    }
+    window.setTimeout(tick, active ? 2500 : 15000);
+  };
+  window.setTimeout(tick, 1500);
+}
+
 /** Slow cross-window/context merge: window A's workspaces reach window B in seconds. */
 function startServerPull(): void {
   if (serverPullStarted || typeof window === "undefined") return;
@@ -2364,6 +2487,7 @@ export function useHydrated(): boolean {
       if (!alive) return;
       startServerSync();
       startServerPull();
+      startPipelinePoll();
       setHydrated(true);
     });
     return () => {

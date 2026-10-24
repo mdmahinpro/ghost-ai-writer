@@ -32,6 +32,7 @@ mod pipeline;
 mod provider;
 mod runs;
 mod secrets;
+mod sites;
 mod stages;
 mod state;
 mod worker;
@@ -204,6 +205,18 @@ async fn intake_keywords(
         return Err(ApiError::BadRequest("unknown site_id"));
     }
     let started = Instant::now();
+    // The website a job belongs to is the site's own link, not its id. Intake
+    // used to assume `website_id = site_id`, which only held because seeding
+    // numbered both tables identically; sites created through `sites/ensure`
+    // carry an explicit link, and a mismatch would attribute work to the wrong
+    // website (usage rollups and article visibility both key on it).
+    let website_id: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(website_id, id) FROM sites WHERE id = ?1",
+    )
+    .bind(req.site_id)
+    .fetch_one(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
     let mut tx = st.pool.begin().await.map_err(ApiError::Db)?;
     // One run per intake call. The UI groups its queue by run, and
     // `runs::refresh_run` already rolls status up from the jobs, so creating it
@@ -214,7 +227,7 @@ async fn intake_keywords(
          VALUES (?, 'keyword', 'keyword intake', 'RUNNING', 'default', ?)
          RETURNING id",
     )
-    .bind(req.site_id)
+    .bind(website_id)
     .bind(NOW)
     .fetch_one(&mut *tx)
     .await
@@ -226,7 +239,7 @@ async fn intake_keywords(
         )
         .bind(req.workspace_id)
         .bind(req.site_id)
-        .bind(req.site_id)
+        .bind(website_id)
         .bind(run_id)
         .bind(kw)
         .bind(NOW)
@@ -479,6 +492,7 @@ fn app(pool: SqlitePool) -> Router {
         .route("/api/v1/state", get(state::load_state).post(state::save_state))
         .route("/api/v1/state/reset", post(state::reset_state))
         .route("/api/v1/pipeline/state", get(pipeline::pipeline_state))
+        .route("/api/v1/sites/ensure", post(sites::ensure_site))
         .route("/api/v1/email/verification", post(send_email_verification))
         .route("/api/v1/email/digest", post(send_email_digest))
         .route("/api/v1/ghost/check-url", post(check_ghost_url))
