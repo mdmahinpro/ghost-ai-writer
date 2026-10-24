@@ -33,6 +33,7 @@ mod images;
 mod lease;
 mod lint;
 mod pipeline;
+mod providers;
 mod provider;
 mod runs;
 mod secrets;
@@ -446,6 +447,30 @@ async fn index_now(Json(req): Json<ftp::IndexNowRequest>) -> Json<serde_json::Va
     Json(ftp::submit_index_now(&req).await)
 }
 
+async fn test_model(Json(req): Json<providers::ModelRequest>) -> Json<serde_json::Value> {
+    Json(providers::test_model(&req).await)
+}
+
+async fn list_custom_models(Json(req): Json<providers::BaseKeyRequest>) -> Json<serde_json::Value> {
+    Json(providers::list_models(&req).await)
+}
+
+async fn get_embedding(Json(req): Json<providers::EmbeddingRequest>) -> Json<serde_json::Value> {
+    Json(providers::embedding(&req).await)
+}
+
+async fn scrape_page(Json(req): Json<providers::ScrapeRequest>) -> Json<serde_json::Value> {
+    Json(providers::scrape(&req).await)
+}
+
+async fn tavily_search(Json(req): Json<providers::SearchRequest>) -> Json<serde_json::Value> {
+    Json(providers::tavily_search(&req).await)
+}
+
+async fn firecrawl_search(Json(req): Json<providers::SearchRequest>) -> Json<serde_json::Value> {
+    Json(providers::firecrawl_search(&req).await)
+}
+
 async fn pick_image(
     State(st): State<AppState>,
     Json(req): Json<ImagePickRequest>,
@@ -716,6 +741,12 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/ftp/test", post(ftp_test))
         .route("/v1/ftp/upload", post(ftp_upload))
         .route("/v1/indexnow", post(index_now))
+        .route("/v1/providers/test-model", post(test_model))
+        .route("/v1/providers/models", post(list_custom_models))
+        .route("/v1/embeddings", post(get_embedding))
+        .route("/v1/scrape", post(scrape_page))
+        .route("/v1/search/tavily", post(tavily_search))
+        .route("/v1/search/firecrawl", post(firecrawl_search))
         .route("/v1/providers/keys", get(key_pool))
         .route("/v1/generate", post(generate))
         .route("/v1/providers", get(list_provider_routes).post(create_provider))

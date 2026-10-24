@@ -20,7 +20,7 @@ export function keyPoolChat(input: { keys: AiKey[]; onPenalty?: (keyId: string, 
       onPenalty: input.onPenalty ?? (() => {}),
       call: async (key) => {
         const result = await generateDraft({
-          data: { baseUrl: key.baseUrl!, apiKey: key.secret!, model: key.model, system, user },
+          data: { preferredKeyId: key.serverKeyId, system, user },
         });
         if (result.ok) return { ok: true as const, value: result };
         return { ok: false as const, status: result.status ?? 0, error: result.error };
@@ -122,7 +122,7 @@ export async function writeWithModel(input: {
     onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error),
     call: async (key) => {
       const result = await generateDraft({
-        data: { baseUrl: key.baseUrl!, apiKey: key.secret!, model: key.model, system, user },
+        data: { preferredKeyId: key.serverKeyId, system, user },
       });
       if (result.ok) return { ok: true as const, value: result.text };
       return { ok: false as const, status: result.status ?? 0, error: result.error };
@@ -143,9 +143,7 @@ export async function proposePlan(input: {
       call: async (key) => {
         const result = await generateDraft({
           data: {
-            baseUrl: key.baseUrl!,
-            apiKey: key.secret!,
-            model: key.model,
+            preferredKeyId: key.serverKeyId,
             system: [
               "You plan a pillar page and supporting articles for one website.",
               "Return JSON only, no markdown fence.",
