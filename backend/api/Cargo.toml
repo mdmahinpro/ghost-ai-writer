@@ -17,6 +17,9 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 regex = "1"
 ring = "0.17"
 base64 = "0.22"
+tokio-rustls.workspace = true
+rustls-pki-types.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
