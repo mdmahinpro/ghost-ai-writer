@@ -51,6 +51,31 @@ test("Rule 4: a 401 primary is penalized and the next key serves; all-fail retur
   assert.match(empty.error, /NO_USABLE_KEY/);
 });
 
+test("Rule 4: a key saved on the server needs no local secret to serve", async () => {
+  // The regression: every server-saved key has `secret: undefined` by design, and
+  // the pool used to skip those — so a perfectly good key could never generate.
+  let called = 0;
+  const outcome = await runWithKeyPool({
+    keys: [{ ...key({ id: "server" }), secret: undefined, serverKeyId: 42 }],
+    call: async () => {
+      called += 1;
+      return { ok: true as const, value: "generated" };
+    },
+  });
+  assert.equal(outcome.ok, true);
+  assert.equal(called, 1, "the server-saved key must actually be attempted");
+  if (outcome.ok) assert.equal(outcome.keyId, "server");
+});
+
+test("Rule 4: a key with neither a server id nor a local secret is still refused", async () => {
+  const outcome = await runWithKeyPool({
+    keys: [key({ id: "orphan", secret: undefined })],
+    call: async () => ({ ok: true as const, value: "should not run" }),
+  });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error, /Not saved on the server/);
+});
+
 test("Rule 4: files without a secret are skipped but do not stop the pool", async () => {
   const outcome = await runWithKeyPool({
     keys: [key({ id: "nosecret", secret: undefined }), key({ id: "ok", priority: 1 })],

@@ -32,9 +32,12 @@ export async function runWithKeyPool<T>(opts: {
   for (let index = 0; index < usable.length; index++) {
     const key = usable[index]!;
     opts.onAttempt?.(key, index);
-    if (!key.secret || !key.baseUrl) {
-      attempted.push({ keyId: key.id, label: `${key.provider} · ${key.model}`, status: 0, error: "No base URL or secret stored in this browser." });
-      opts.onPenalty?.(key.id, 0, "No base URL or secret stored in this browser.");
+    // `call` sends `preferredKeyId: key.serverKeyId` to the Rust service, so a key
+    // saved there needs no local secret. Only a key with neither a server id nor
+    // a local secret can reach no provider at all.
+    if (key.serverKeyId === undefined && !(key.secret && key.baseUrl)) {
+      attempted.push({ keyId: key.id, label: `${key.provider} · ${key.model}`, status: 0, error: "Not saved on the server and no local secret — add the key again." });
+      opts.onPenalty?.(key.id, 0, "Not saved on the server and no local secret — add the key again.");
       continue;
     }
     const result = await opts.call(key);

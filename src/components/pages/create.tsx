@@ -45,7 +45,11 @@ export function CreatePage() {
   const ideaOptions = useMemo(() => [8, 12, 16, 20, 50, 100].filter((count) => limits.ideaCap == null || count <= limits.ideaCap), [limits.ideaCap]);
   const effective = publishMode === "default" ? site.voice.publishAs : publishMode;
   const chosen = keys.find((key) => key.id === (modelKeyId === "default" ? site.voice.modelKeyId : modelKeyId));
-  const needsKey = Boolean(chosen && chosen.kind === "custom" && !chosen.secret && chosen.provider !== "Studio");
+  // A key saved on the server keeps no local `secret` by design — `addKey` seals it
+  // there and drops it here, leaving `serverKeyId` as the proof it exists. Treating
+  // "no secret" as "no key" disabled Start run for every server-saved key.
+  const keyReady = Boolean(chosen && (chosen.serverKeyId !== undefined || chosen.secret));
+  const needsKey = Boolean(chosen && chosen.kind === "custom" && !keyReady && chosen.provider !== "Studio");
 
   function addKeyword(keyword: string) {
     setLines((prev) => (prev.trim() ? `${prev.replace(/\s*$/, "")}\n${keyword}` : keyword));

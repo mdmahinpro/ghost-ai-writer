@@ -171,15 +171,25 @@ export function KeysPage() {
                     {key.baseUrl ? ` · ${key.baseUrl}` : ""}
                   </div>
                 </div>
-                <Badge tone={key.disabled ? "danger" : cooling ? "brass" : key.providerKind === "custom" ? "brass" : "ok"}>
-                  {key.disabled ? "disabled" : cooling ? `cooling ${Math.max(1, Math.round((key.cooldownUntil! - Date.now()) / 60000))}m` : key.providerKind === "custom" ? "custom" : "active"}
+                <Badge tone={key.disabled || (key.serverKeyId === undefined && !key.secret) ? "danger" : cooling ? "brass" : key.providerKind === "custom" ? "brass" : "ok"}>
+                  {key.disabled
+                    ? "disabled"
+                    : key.serverKeyId === undefined && !key.secret
+                      // Nothing on the server and nothing local: this row exists in
+                      // this browser only and cannot generate.
+                      ? "not saved"
+                      : cooling
+                        ? `cooling ${Math.max(1, Math.round((key.cooldownUntil! - Date.now()) / 60000))}m`
+                        : key.providerKind === "custom"
+                          ? "custom"
+                          : "active"}
                 </Badge>
               </div>
               <dl className="mt-3 min-w-0 space-y-1 text-[12px]">
                 <div className="flex justify-between gap-3">
                   <dt className="text-muted">Capabilities</dt>
                   <dd className="min-w-0 break-words text-right">
-                    {[key.chat ? "Chat" : "", embeddingModelFor(key) ? `Semantic (${embeddingModelFor(key)})` : "Semantic: hash fallback", key.secret ? "Live key" : ""].filter(Boolean).join(" + ")}
+                    {[key.chat ? "Chat" : "", embeddingModelFor(key) ? `Semantic (${embeddingModelFor(key)})` : "Semantic: hash fallback", key.serverKeyId !== undefined || key.secret ? "Live key" : "No key saved"].filter(Boolean).join(" + ")}
                   </dd>
                 </div>
                 <div className="flex justify-between">

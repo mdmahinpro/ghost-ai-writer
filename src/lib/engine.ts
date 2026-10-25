@@ -132,8 +132,21 @@ export function stageTokenCount(keyword: string, index: number): number {
 
 export const NO_MODEL_NOTE = "estimated — no model called";
 
-export function keyCallsModel(key: { secret?: string; baseUrl?: string } | undefined): boolean {
-  return Boolean(key?.secret && key?.baseUrl);
+/**
+ * Can this key call a model?
+ *
+ * Since credentials moved server-side, a saved key has NO local `secret` — it has
+ * a `serverKeyId` and the Rust service holds the sealed secret. Generation is
+ * requested with that id, so "no local secret" must not read as "no key": that
+ * mistake disabled Start run for every key saved on the server.
+ *
+ * A local secret plus base URL is still accepted for a key that was never pushed
+ * to the server.
+ */
+export function keyCallsModel(key: { secret?: string; baseUrl?: string; serverKeyId?: number } | undefined): boolean {
+  if (!key) return false;
+  if (key.serverKeyId !== undefined) return true;
+  return Boolean(key.secret && key.baseUrl);
 }
 
 export function usageNote(usage: { prompt: number; completion: number }): string {
