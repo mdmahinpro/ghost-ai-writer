@@ -121,8 +121,8 @@ async function drive(data: Persisted, predicate: (value: Persisted) => boolean, 
   return current;
 }
 
-test("Rule 7: all ten themes define a complete, valid token set", () => {
-  assert.equal(THEMES.length, 10);
+test("Rule 7: all twelve themes define a complete, valid token set", () => {
+  assert.equal(THEMES.length, 12);
   for (const theme of THEMES) {
     const tokens = THEME_TOKENS[theme.id];
     assert.ok(tokens, `${theme.id} has tokens`);

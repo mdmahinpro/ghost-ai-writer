@@ -1,6 +1,6 @@
 /**
  * Rule 7 — custom theme system.
- * Ten hand-built themes, all our own. Each one must define the COMPLETE token
+ * Twelve hand-built themes, all our own. Each one must define the COMPLETE token
  * set (styles.css mirrors these values under `html[data-theme="…"]`, and the
  * release gate test compares the two so they can never drift).
  *
@@ -20,7 +20,16 @@ export const THEMES = [
   { id: "telemetry", label: "Telemetry", canvas: "#090a0c", accent: "#34d399" },
   { id: "crimson", label: "Crimson", canvas: "#0b0709", accent: "#ff1e56" },
   { id: "clay", label: "Clay", canvas: "#fdf6f4", accent: "#b3261e" },
+  { id: "graphite", label: "Graphite", canvas: "#010b17", accent: "#5b9dff" },
+  { id: "daylight", label: "Daylight", canvas: "#f4f6fa", accent: "#1f5fd0" },
 ] as const;
+
+/**
+ * The reference-matched pair is the default: Graphite is the Revolut-style navy
+ * dark room (sampled straight from the Mobbin screen — page #010B17, cards
+ * #1E2530, rail #0B274B), and Daylight is its light counterpart.
+ */
+export const DEFAULT_THEME: ThemeId = "graphite";
 
 export type ThemeId = (typeof THEMES)[number]["id"];
 
@@ -257,6 +266,51 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     "paper-ink": "#241715",
     "paper-muted": "#6f5b56",
   },
+  /**
+   * Sampled from the reference screen: page #010B17, cards #1E2530, nav rail
+   * #0B274B, white text. The accent is the reference's link/nav blue lifted far
+   * enough off the canvas to stay legible (7.3:1) instead of the screen's own
+   * #0C2E59, which is a surface tint rather than an action colour.
+   */
+  graphite: {
+    bg: "#010b17",
+    elev: "#1e2530",
+    surface: "#1e2530",
+    "surface-2": "#0b274b",
+    line: "#2a3341",
+    "line-strong": "#3a4757",
+    fg: "#ffffff",
+    muted: "#9aa7b8",
+    faint: "#7c8b9c",
+    brass: "#5b9dff",
+    "brass-2": "#8dbcff",
+    ink: "#03101f",
+    ok: "#4ade80",
+    danger: "#f87171",
+    paper: "#f5f7fa",
+    "paper-ink": "#0b1622",
+    "paper-muted": "#4a5766",
+  },
+  /** The same structure in daylight: white cards on a cool grey page. */
+  daylight: {
+    bg: "#f4f6fa",
+    elev: "#ffffff",
+    surface: "#ffffff",
+    "surface-2": "#eef1f7",
+    line: "#e3e8f0",
+    "line-strong": "#cbd4e1",
+    fg: "#0d1b2a",
+    muted: "#5a6b80",
+    faint: "#71808f",
+    brass: "#1f5fd0",
+    "brass-2": "#3f7ae0",
+    ink: "#ffffff",
+    ok: "#15803d",
+    danger: "#b91c1c",
+    paper: "#ffffff",
+    "paper-ink": "#0d1b2a",
+    "paper-muted": "#5a6b80",
+  },
 };
 
 export function themeTokens(id: ThemeId): ThemeTokens {
@@ -286,8 +340,8 @@ export function contrastRatio(a: string, b: string): number {
 export function readStoredTheme(): ThemeId {
   try {
     const saved = localStorage.getItem("gaw-theme");
-    if (saved === "light") return "paper";
-    if (saved === "dark" || saved == null || saved === "") return "midnight";
+    if (saved === "light") return "daylight";
+    if (saved === "dark" || saved == null || saved === "") return DEFAULT_THEME;
     if (THEMES.some((theme) => theme.id === saved)) return saved as ThemeId;
   } catch {
     /* private mode */
