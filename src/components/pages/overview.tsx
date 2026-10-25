@@ -8,6 +8,7 @@ import { Badge, Card, statusTone } from "@/components/ui";
 import { compact, nextUtcResetLabel, relTime, utcDay } from "@/lib/utils";
 import { BENTO_BUTTER, BENTO_CORAL, BENTO_PINK, BENTO_SKY, KpiBento, type BentoCard } from "@/components/dash/kpi-bento";
 import { VelocityChart } from "@/components/dash/velocity-chart";
+import { BreakdownCard, type BreakdownRow } from "@/components/dash/breakdown-card";
 import { PostLedger, type LedgerRow } from "@/components/dash/post-ledger";
 import { TelemetryDrawer } from "@/components/dash/telemetry-drawer";
 import { CommandBar } from "@/components/dash/command-bar";
@@ -102,6 +103,17 @@ export function OverviewPage() {
     },
   ];
 
+  // The reference puts a proportional breakdown beside the hero figure. These are
+  // counted from the same state the KPIs use, so the two can never disagree.
+  const drafts = articles.filter((article) => article.status === "draft").length;
+  const published = articles.filter((article) => article.status === "published").length;
+  const pipeline: BreakdownRow[] = [
+    { label: "Queued topics", value: queued, tone: "queued" },
+    { label: "Drafting now", value: drafting, tone: "drafting" },
+    { label: "Drafts awaiting publish", value: drafts, tone: "review" },
+    { label: "Published to Ghost", value: published, tone: "shipped" },
+  ];
+
   const ledger: LedgerRow[] = [...articles]
     .sort((left, right) => right.publishedAt - left.publishedAt)
     .slice(0, 8)
@@ -165,10 +177,14 @@ export function OverviewPage() {
             points={buckets.map((bucket) => ({ label: bucket.label, published: bucket.published, generated: bucket.generated }))}
             timeframe={timeframe}
             onTimeframe={setTimeframe}
+            deltaPct={week.deltaPct}
           />
           <PostLedger rows={ledger} />
         </div>
-        <TelemetryDrawer series={telemetry} logs={logs} />
+        <div className="min-w-0 space-y-4">
+          <BreakdownCard rows={pipeline} hint="Every stage of the desk, right now." />
+          <TelemetryDrawer series={telemetry} logs={logs} />
+        </div>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-5">

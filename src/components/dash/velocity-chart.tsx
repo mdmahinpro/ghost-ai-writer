@@ -24,27 +24,53 @@ const SLOT_COLOR = "#262626";
 
 type Mode = "velocity" | "bursts";
 
+const WINDOW_LABEL: Record<Timeframe, string> = {
+  "1D": "today",
+  "1W": "this week",
+  "1M": "this month",
+  ALL: "all time",
+};
+
 export function VelocityChart({
   points,
   timeframe,
   onTimeframe,
+  deltaPct,
 }: {
   points: VelocityPoint[];
   timeframe: Timeframe;
   onTimeframe: (next: Timeframe) => void;
+  /** Week-over-week change; null with no baseline, so nothing is invented. */
+  deltaPct?: number | null;
 }) {
   const [mode, setMode] = useState<Mode>("velocity");
   const total = points.reduce((sum, point) => sum + (mode === "velocity" ? point.published : point.generated), 0);
 
   return (
     <section data-surface="card" className="rounded-lg border border-line bg-elev p-5">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      {/* The reference leads with the figure, not the chart: one number big enough
+          to read across the room, the window it covers, then the curve. */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h2 className="text-[15px] font-semibold tracking-[-0.01em]">Publishing velocity</h2>
-          <p className="mt-0.5 text-[13px] leading-5 text-faint">
-            {mode === "velocity" ? "Articles shipped per bucket" : "Articles generated per bucket"} ·{" "}
-            <span className="tabular-nums">{total}</span> total
-          </p>
+          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-faint">Publishing velocity</p>
+          <div className="mt-2 flex flex-wrap items-end gap-3">
+            <span className="text-4xl font-semibold leading-none tracking-[-0.02em] tabular-nums sm:text-5xl">{total}</span>
+            <span className="pb-1 text-[13px] text-muted">
+              {mode === "velocity" ? "articles shipped" : "articles generated"} · {WINDOW_LABEL[timeframe]}
+            </span>
+            {deltaPct == null ? null : (
+              <span
+                className={
+                  deltaPct >= 0
+                    ? "mb-1 rounded-full bg-ok/15 px-2 py-0.5 font-mono text-[11px] tabular-nums text-ok"
+                    : "mb-1 rounded-full bg-danger/15 px-2 py-0.5 font-mono text-[11px] tabular-nums text-danger"
+                }
+              >
+                {deltaPct > 0 ? "+" : ""}
+                {deltaPct}% wk/wk
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-full border border-line bg-surface-2 p-0.5" role="group" aria-label="Chart shape">
@@ -64,6 +90,8 @@ export function VelocityChart({
           </div>
         </div>
       </div>
+
+      <div className="mt-5">
 
       {points.length ? (
         <div className="h-52 w-full">
@@ -105,6 +133,7 @@ export function VelocityChart({
           Nothing in this window yet.
         </div>
       )}
+      </div>
     </section>
   );
 }
