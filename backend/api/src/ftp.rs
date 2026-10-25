@@ -308,23 +308,40 @@ fn parse_pasv(reply: &str, fallback_host: &str) -> Option<(String, u16)> {
     Some((host, port))
 }
 
-/// Open the data connection, resuming the control connection's TLS session.
-async fn open_data(stream: &mut Stream, host: &str, config: &Arc<ClientConfig>) -> Result<Stream, String> {
+/// Begin a data connection: `PASV`, then connect to the port the server names.
+///
+/// The TLS handshake deliberately does not happen here — see `secure_data`.
+async fn open_data_tcp(stream: &mut Stream, host: &str) -> Result<TcpStream, String> {
     let reply = send(stream, "PASV").await?;
     if !is_ok(&reply, &["227"]) {
         return Err("The server refused a passive connection.".to_string());
     }
     let (data_host, port) = parse_pasv(&reply, host)
         .ok_or_else(|| "The server sent an unreadable passive address.".to_string())?;
-    let tcp = tokio::time::timeout(IO_TIMEOUT, TcpStream::connect(format!("{data_host}:{port}")))
+    tokio::time::timeout(IO_TIMEOUT, TcpStream::connect(format!("{data_host}:{port}")))
         .await
         .map_err(|_| "The data connection did not open (passive ports may be blocked).".to_string())?
-        .map_err(|_| "The data connection was refused (passive ports may be blocked).".to_string())?;
+        .map_err(|_| "The data connection was refused (passive ports may be blocked).".to_string())
+}
+
+/// Protect the data connection, resuming the control connection's TLS session.
+///
+/// This must run *concurrently with* the transfer command, never before it. A
+/// server starts the protected data channel when the command arrives, so a
+/// client that waits for the handshake first leaves both sides waiting and the
+/// handshake dies on the timeout — connect and login look fine, and only the
+/// data step fails. Callers pair it with `tokio::join!`.
+async fn secure_data(tcp: TcpStream, host: &str, config: &Arc<ClientConfig>) -> Result<Stream, String> {
     let connector = TlsConnector::from(config.clone());
     let name = server_name(host).ok_or_else(|| "That host is not a valid name.".to_string())?;
     tokio::time::timeout(IO_TIMEOUT, connector.connect(name, tcp))
         .await
-        .map_err(|_| "The data TLS handshake timed out.".to_string())?
+        .map_err(|_| {
+            "The data TLS handshake timed out. The protected data channel never came up: the \
+             passive port range is most likely blocked, or the server refused to open it for \
+             this transfer."
+                .to_string()
+        })?
         .map_err(|e| format!("The data channel was refused: {}", redact(&e.to_string())))
 }
 
@@ -335,11 +352,16 @@ async fn store_one(
     name: &str,
     bytes: Vec<u8>,
 ) -> Result<(), String> {
-    let mut data = open_data(control, host, config).await?;
-    let started = send(control, &format!("STOR {name}")).await?;
+    let tcp = open_data_tcp(control, host).await?;
+    // The command and the handshake must be in flight together: the server
+    // starts the protected data channel when it sees STOR. See `secure_data`.
+    let command = format!("STOR {name}");
+    let (reply, secured) = tokio::join!(send(control, &command), secure_data(tcp, host, config));
+    let started = reply?;
     if !is_ok(&started, &["150", "125"]) {
         return Err(format!("The server refused to store {name}."));
     }
+    let mut data = secured?;
     data.write_all(&bytes).await.map_err(|e| e.to_string())?;
     data.flush().await.map_err(|e| e.to_string())?;
     data.shutdown().await.map_err(|e| e.to_string())?;
@@ -531,18 +553,28 @@ pub async fn test_login(req: &LoginRequest) -> Value {
         }
     }
     let list_started = Instant::now();
-    let listing = match open_data(&mut control, &target.host, &config).await {
-        Ok(mut data) => match send(&mut control, "LIST").await {
-            Ok(reply) if is_ok(&reply, &["150", "125"]) => {
-                let mut buf = Vec::new();
-                let _ = data.read_to_end(&mut buf).await;
-                let text = String::from_utf8_lossy(&buf).to_string();
-                let _ = read_reply(&mut control).await;
-                Ok(text)
+    let listing = match open_data_tcp(&mut control, &target.host).await {
+        Ok(tcp) => {
+            // Command and handshake together. A server opens the protected data
+            // channel only once it sees LIST, so awaiting the handshake first
+            // would deadlock both sides until the timeout.
+            let (reply, secured) =
+                tokio::join!(send(&mut control, "LIST"), secure_data(tcp, &target.host, &config));
+            match reply {
+                Err(error) => Err(error),
+                Ok(reply) => match secured {
+                    Ok(mut data) if is_ok(&reply, &["150", "125"]) => {
+                        let mut buf = Vec::new();
+                        let _ = data.read_to_end(&mut buf).await;
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        let _ = read_reply(&mut control).await;
+                        Ok(text)
+                    }
+                    Ok(_) => Err("The server refused to list the directory.".to_string()),
+                    Err(error) => Err(error),
+                },
             }
-            Ok(_) => Err("The server refused to list the directory.".to_string()),
-            Err(error) => Err(error),
-        },
+        }
         Err(error) => Err(error),
     };
     match listing {
@@ -835,5 +867,72 @@ mod index_tests {
         );
         assert!(url_host("https://127.0.0.1/x").is_none());
         assert!(url_host("http://example.com").is_none());
+    }
+}
+
+/// Live checks against the local FTPS rig in `/opt/data/cache/scratch`:
+///
+/// ```text
+/// python3 ftps-server.py --port 2121 --mode defer &     # server waits for the command
+/// python3 ftps-server.py --port 2122 --mode eager &     # server handshakes on accept
+/// GAW_FTP_ALLOW_PRIVATE=1 GAW_FTP_LIVE_PORT=2121 \
+///   cargo test ftp_live -- --ignored --nocapture
+/// ```
+///
+/// `defer` is the mode that catches a handshake-before-command client: the
+/// protected data channel only comes up once the command lands, so the old
+/// ordering timed out with "The data TLS handshake timed out" while connect,
+/// login and CWD all looked healthy.
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    fn target(port: u16) -> FtpTarget {
+        FtpTarget {
+            host: "127.0.0.1".to_string(),
+            user: "u605638561.blogger".to_string(),
+            password: "test-password".to_string(),
+            port: Some(port),
+            path: Some("/public_html".to_string()),
+            trust_cert: Some(true),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the local FTPS rig; sets GAW_FTP_LIVE_PORT"]
+    async fn ftp_live_login_and_upload_against_the_test_rig() {
+        let Ok(port) = std::env::var("GAW_FTP_LIVE_PORT") else {
+            return;
+        };
+        let port: u16 = port.parse().expect("GAW_FTP_LIVE_PORT must be a port number");
+        assert_eq!(
+            std::env::var("GAW_FTP_ALLOW_PRIVATE").as_deref(),
+            Ok("1"),
+            "the rig is on loopback; set GAW_FTP_ALLOW_PRIVATE=1"
+        );
+
+        let target = target(port);
+        let request = LoginRequest {
+            target: target.clone(),
+            via: None,
+            workspace_id: None,
+        };
+        let login = test_login(&request).await;
+        assert_eq!(login["ok"], true, "login + LIST failed: {login}");
+        assert!(
+            login["banner"].as_str().unwrap_or_default().contains("public_html"),
+            "expected the configured directory to be the one read: {login}"
+        );
+
+        let body = b"<!doctype html><title>hello</title>\n".to_vec();
+        let files = vec![UploadedFile {
+            name: "index.html".to_string(),
+            base64: {
+                use base64::Engine as _;
+                base64::engine::general_purpose::STANDARD.encode(&body)
+            },
+        }];
+        let upload = upload(&target, &files).await;
+        assert_eq!(upload["ok"], true, "upload failed: {upload}");
     }
 }
