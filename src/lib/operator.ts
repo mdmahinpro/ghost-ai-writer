@@ -1,5 +1,4 @@
 ﻿import { normalizeKeyword, releaseHeld, submitKeywords } from "./engine.ts";
-import { anchorPhrase } from "./link-graph.ts";
 import type { CalendarEntry, ContentCalendar, Persisted } from "./types.ts";
 import { uid } from "./utils.ts";
 
@@ -290,36 +289,6 @@ export function publishCalendarItemNow(data: Persisted, calendarId: string, item
 }
 
 /**
- * Rule 6 autoReweave: link a freshly published article to its same-calendar
- * siblings (pillars first) with LOCAL edges. The PUT-only Ghost re-weave path
- * (optimistic lock on updated_at) is executed by the desk worker, which
- * transitions each edge to GHOST_CONFIRMED.
- */
-export function reweaveCalendar(data: Persisted, calendar: ContentCalendar, now: number): boolean {
-  const published = calendar.items.filter((entry) => entry.status === "PUBLISHED" && entry.articleId);
-  if (published.length < 2) return false;
-  const kindOf = new Map(published.map((entry) => [entry.articleId!, entry.kind]));
-  let changed = false;
-  for (const entry of published) {
-    const article = data.articles.find((row) => row.id === entry.articleId);
-    if (!article) continue;
-    const siblings = published.filter((other) => other.articleId !== entry.articleId);
-    const targetEntry = siblings.find((other) => kindOf.get(other.articleId!) === "pillar") ?? siblings[0];
-    const target = data.articles.find((row) => row.id === targetEntry?.articleId);
-    if (!target) continue;
-    if (article.links.some((link) => link.targetSlug === target.slug)) continue;
-    article.links.push({ anchor: anchorPhrase(target.title), targetSlug: target.slug, state: "LOCAL" });
-    changed = true;
-    logReweave(data, calendar.siteId, `${article.title} → ${target.title}`, now);
-  }
-  return changed;
-}
-
-function logReweave(data: Persisted, siteId: string, pair: string, now: number): void {
-  data.activity.unshift({ id: uid("act"), at: now, siteId, tone: "info", message: `Auto-reweave proposed link · ${pair}` });
-}
-
-/**
  * Rule 6 pulse: the 3 switches act independently.
  *  - autoGenerate: queue SCHEDULED entries whose write_at has passed.
  *  - autoPublish : release READY entries at publish_at (published → live, or draft mode → save draft).
@@ -338,11 +307,11 @@ export async function pulseCalendars(data: Persisted, now: number): Promise<Pers
   // `autoPublish` moved with it, for the same reason: the server releases the
   // item and pushes it to Ghost itself now. Publishing from both sides would
   // create the post twice.
+  //
+  // `autoReweave` moved too — `calendar::reweave` proposes the sibling links on
+  // the server. All three switches are the server's now; this function only
+  // keeps the local item rows in step with what the server reports.
   syncCalendarItems(next);
-  for (const calendar of [...next.calendars]) {
-    if (!calendar.autoReweave) continue;
-    if (reweaveCalendar(next, calendar, now)) changed = true;
-  }
   return changed ? next : null;
 }
 

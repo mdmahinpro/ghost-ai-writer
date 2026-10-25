@@ -50,6 +50,8 @@ pub struct Summary {
     pub held: usize,
     /// Items whose publish was attempted and refused.
     pub failed: usize,
+    /// Calendars that gained at least one proposed link.
+    pub reweaved: usize,
 }
 
 /// A calendar item that is due to start writing.
@@ -335,6 +337,179 @@ pub fn publish_request(
     })
 }
 
+/// Words that make a poor anchor; mirrors `STOP` in `src/lib/link-graph.ts` so a
+/// link proposed on the server reads the same as one proposed in the browser.
+const ANCHOR_STOP: &[&str] = &[
+    "a", "an", "the", "of", "for", "and", "to", "in", "on", "how", "with", "your",
+    "that", "this", "from", "what", "when", "who", "why", "into", "over", "about",
+    "between", "without", "than", "then", "are", "was", "were", "will", "just",
+    "more", "most",
+];
+
+/// The words a link should hang on: up to four content words, or the raw title
+/// when it is too short to be useful.
+pub fn anchor_phrase(title: &str) -> String {
+    let raw: String = title
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\'' | '\u{201c}' | '\u{201d}'))
+        .collect();
+    let raw = raw.trim().to_string();
+    let words: Vec<&str> = raw.split_whitespace().collect();
+    let content: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|word| {
+            let cleaned: String = word
+                .to_lowercase()
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect();
+            !ANCHOR_STOP.contains(&cleaned.as_str())
+        })
+        .collect();
+    let pick: Vec<&str> = if content.len() >= 2 {
+        content
+    } else {
+        words.clone()
+    };
+    let phrase: String = pick
+        .iter()
+        .take(4)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches(['.', ':', ';', ','])
+        .to_string();
+    if phrase.chars().count() >= 8 {
+        phrase
+    } else {
+        raw.chars().take(72).collect()
+    }
+}
+
+fn index_by_id(state: &Value, key: &str, id: &str) -> Option<usize> {
+    state.get(key).and_then(Value::as_array)?.iter().position(|row| {
+        row.get("id").and_then(Value::as_str) == Some(id)
+    })
+}
+
+/// One published calendar item, as reweave sees it.
+struct PublishedItem {
+    article_id: String,
+    kind: String,
+}
+
+/// Propose sibling links between the published items of one calendar.
+///
+/// Each article points at one sibling — a pillar when the calendar has one,
+/// otherwise the first published sibling — and only once. Returns the number of
+/// links added, so a pulse that changed nothing writes nothing.
+pub fn reweave(state: &mut Value, calendar_index: usize, now_ms: i64) -> usize {
+    let Some(calendar) = state
+        .get("calendars")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.get(calendar_index))
+    else {
+        return 0;
+    };
+    if calendar.get("autoReweave").and_then(Value::as_bool) != Some(true) {
+        return 0;
+    }
+    let site_id = text(calendar, "siteId");
+    let published: Vec<PublishedItem> = calendar
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.get("status").and_then(Value::as_str) == Some("PUBLISHED"))
+                .filter_map(|item| {
+                    let article_id = item.get("articleId").and_then(Value::as_str)?.to_string();
+                    Some(PublishedItem {
+                        article_id,
+                        kind: text(item, "kind"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if published.len() < 2 {
+        return 0;
+    }
+
+    let mut added: Vec<(String, String)> = Vec::new();
+    for item in &published {
+        let Some(own) = index_by_id(state, "articles", &item.article_id) else {
+            continue;
+        };
+        let siblings: Vec<&PublishedItem> = published
+            .iter()
+            .filter(|other| other.article_id != item.article_id)
+            .collect();
+        let target = siblings
+            .iter()
+            .find(|other| other.kind == "pillar")
+            .or_else(|| siblings.first());
+        let Some(target) = target else { continue };
+        let Some(theirs) = index_by_id(state, "articles", &target.article_id) else {
+            continue;
+        };
+        let target_slug = text(&state["articles"][theirs], "slug");
+        if target_slug.is_empty() {
+            continue;
+        }
+        let linked = state["articles"][own]
+            .get("links")
+            .and_then(Value::as_array)
+            .map(|links| {
+                links.iter().any(|link| {
+                    link.get("targetSlug").and_then(Value::as_str) == Some(target_slug.as_str())
+                })
+            })
+            .unwrap_or(false);
+        if linked {
+            continue;
+        }
+        let anchor = anchor_phrase(&text(&state["articles"][theirs], "title"));
+        let own_title = text(&state["articles"][own], "title");
+        let target_title = text(&state["articles"][theirs], "title");
+
+        let row = &mut state["articles"][own];
+        if !row.get("links").map(Value::is_array).unwrap_or(false) {
+            row["links"] = Value::Array(Vec::new());
+        }
+        if let Some(links) = row.get_mut("links").and_then(Value::as_array_mut) {
+            links.push(serde_json::json!({
+                "anchor": anchor,
+                "targetSlug": target_slug,
+                "state": "LOCAL",
+            }));
+        }
+        added.push((own_title, target_title));
+    }
+    if added.is_empty() {
+        return 0;
+    }
+
+    // Newest first, the same place the client logged it.
+    for (offset, (from, to)) in added.iter().enumerate() {
+        let entry = serde_json::json!({
+            "id": format!("act_{}_{}", now_ms, offset),
+            "at": now_ms,
+            "siteId": site_id,
+            "tone": "info",
+            "message": format!("Auto-reweave proposed link · {from} → {to}"),
+        });
+        if !state.get("activity").map(Value::is_array).unwrap_or(false) {
+            state["activity"] = Value::Array(Vec::new());
+        }
+        if let Some(activity) = state.get_mut("activity").and_then(Value::as_array_mut) {
+            activity.insert(offset.min(activity.len()), entry);
+        }
+    }
+    added.len()
+}
+
 /// One workspace's worth of queueing, decided before anything is mutated.
 struct PlannedWrite {
     calendar_index: usize,
@@ -394,7 +569,12 @@ pub async fn pulse(
             });
         }
     }
-    if planned.is_empty() && publishes.is_empty() {
+    // Reweave has no due-time of its own: it only needs published items, so a
+    // workspace with reweave armed must still be visited when nothing queued.
+    let reweave_armed = calendars
+        .iter()
+        .any(|calendar| calendar.get("autoReweave").and_then(Value::as_bool) == Some(true));
+    if planned.is_empty() && publishes.is_empty() && !reweave_armed {
         return Ok(summary);
     }
 
@@ -501,6 +681,31 @@ pub async fn pulse(
         }
     }
 
+    // --- reweave: propose sibling links among what is already published ---
+    //
+    // After publishing, so an item that went live this pulse can take part.
+    let calendar_count = state
+        .get("calendars")
+        .and_then(Value::as_array)
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    for index in 0..calendar_count {
+        let armed = state
+            .get("calendars")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(index))
+            .and_then(|calendar| calendar.get("autoReweave"))
+            .and_then(Value::as_bool)
+            == Some(true);
+        if !armed {
+            continue;
+        }
+        if reweave(&mut state, index, now_ms) > 0 {
+            summary.reweaved += 1;
+            changed = true;
+        }
+    }
+
     if changed {
         let payload = serde_json::to_string(&state).unwrap_or(payload);
         sqlx::query(
@@ -530,6 +735,7 @@ pub async fn pulse_all(pool: &SqlitePool, now_ms: i64) -> Result<Summary, sqlx::
         total.published += one.published;
         total.held += one.held;
         total.failed += one.failed;
+        total.reweaved += one.reweaved;
     }
     Ok(total)
 }
@@ -674,6 +880,69 @@ mod tests {
                 "images": [{ "selected": true, "src": "https://img/x.jpg", "alt": "x" }],
             }],
         })
+    }
+
+    #[test]
+    fn anchor_phrases_match_the_client_rule() {
+        // Up to four content words, stopwords dropped.
+        assert_eq!(anchor_phrase("How to build a content calendar"), "build content calendar");
+        // A title that is already short keeps its whole self.
+        assert_eq!(anchor_phrase("Pricing"), "Pricing");
+        // Quotes are stripped, and "that" is a stopword like in the client set.
+        assert_eq!(anchor_phrase("\u{201c}Caching strategies that work\u{201d}"), "Caching strategies work");
+    }
+
+    fn reweave_state(auto_reweave: bool) -> Value {
+        json!({
+            "calendars": [{
+                "id": "cal_1",
+                "siteId": "site_1",
+                "autoReweave": auto_reweave,
+                "items": [
+                    { "id": "i1", "status": "PUBLISHED", "articleId": "art_1", "kind": "pillar" },
+                    { "id": "i2", "status": "PUBLISHED", "articleId": "art_2", "kind": "cluster" },
+                    { "id": "i3", "status": "SCHEDULED", "articleId": "art_3", "kind": "cluster" },
+                ],
+            }],
+            "articles": [
+                { "id": "art_1", "title": "The Pillar Guide", "slug": "pillar-guide", "links": [] },
+                { "id": "art_2", "title": "A Cluster Post", "slug": "cluster-post", "links": [] },
+                { "id": "art_3", "title": "Not Published", "slug": "not-published", "links": [] },
+            ],
+            "activity": [],
+        })
+    }
+
+    #[test]
+    fn reweave_points_each_published_article_at_the_pillar() {
+        let mut state = reweave_state(true);
+        // Both published articles gain one link each: the cluster points at the
+        // pillar, and the pillar at its only sibling.
+        assert_eq!(reweave(&mut state, 0, 1_000), 2);
+        // The cluster post gains a link to the pillar...
+        let cluster = &state["articles"][1];
+        assert_eq!(cluster["links"][0]["targetSlug"], "pillar-guide");
+        assert_eq!(cluster["links"][0]["state"], "LOCAL");
+        // ...and the pillar points at the only sibling it has.
+        assert_eq!(state["articles"][0]["links"][0]["targetSlug"], "cluster-post");
+    }
+
+    #[test]
+    fn reweave_does_not_touch_unpublished_items_or_repeat_itself() {
+        let mut state = reweave_state(true);
+        reweave(&mut state, 0, 1_000);
+        assert_eq!(state["articles"][2]["links"], json!([]));
+        // A second pulse proposes nothing, so the caller writes nothing.
+        let before = state.clone();
+        assert_eq!(reweave(&mut state, 0, 2_000), 0);
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn reweave_off_is_a_no_op() {
+        let mut state = reweave_state(false);
+        assert_eq!(reweave(&mut state, 0, 1_000), 0);
+        assert_eq!(state["articles"][1]["links"], json!([]));
     }
 
     #[test]

@@ -1045,19 +1045,21 @@ async fn main() {
                             || summary.published > 0
                             || summary.held > 0
                             || summary.failed > 0
+                            || summary.reweaved > 0
                             || summary.skipped_no_site > 0 =>
                     {
                         tracing::info!(
-                            "calendar pulse: queued {}, published {}, held {}, failed {}, skipped {}",
+                            "calendar pulse: queued {}, published {}, held {}, failed {}, reweaved {}, skipped {}",
                             summary.queued,
                             summary.published,
                             summary.held,
                             summary.failed,
+                            summary.reweaved,
                             summary.skipped_no_site
                         )
                     }
                     Ok(_) => {}
-                    Err(e) => tracing::error!("calendar pulse: {e}"),
+                    Err(error) => tracing::warn!("calendar pulse failed: {error}"),
                 }
                 tokio::time::sleep(interval).await;
             }
