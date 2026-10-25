@@ -20,7 +20,7 @@ type FtpTarget = {
 };
 
 export async function testFtpLogin(input: {
-  data: FtpTarget;
+  data: FtpTarget & { workspace_id?: number; trust_cert?: boolean };
 }): Promise<
   | { ok: true; steps: FtpStep[]; via: "ftps" | "sftp"; user: string; banner: string }
   | { ok: false; error: string; steps: FtpStep[] }
@@ -38,8 +38,11 @@ export async function testFtpLogin(input: {
     port: d.port ?? 21,
     user: d.user ?? "",
     password: d.password ?? "",
-    path: d.path ?? "/",
+    path: d.path ?? "/public_html",
     via: d.via ?? "ftps",
+    // Tells the server which sealed password to use when the browser sends none.
+    workspace_id: d.workspace_id,
+    trust_cert: d.trust_cert,
   });
   if (!res.ok) return { ok: false, error: res.error, steps: [] };
   if (!res.data.ok) {

@@ -27,6 +27,7 @@ mod calendar;
 mod gate;
 mod deploy;
 mod ftp;
+mod ftp_creds;
 mod ghost;
 mod ghost_api;
 mod image;
@@ -433,7 +434,21 @@ async fn deploy_github(Json(req): Json<deploy::GithubRequest>) -> Json<serde_jso
     Json(deploy::deploy_github(&req).await)
 }
 
-async fn ftp_test(Json(req): Json<ftp::LoginRequest>) -> Json<serde_json::Value> {
+async fn ftp_test(
+    State(st): State<AppState>,
+    Json(mut req): Json<ftp::LoginRequest>,
+) -> Json<serde_json::Value> {
+    // A blank password means "use the one on file": the browser no longer stores it,
+    // so the form can submit the other fields without ever holding the secret.
+    if req.target.password.trim().is_empty() {
+        let workspace = req.workspace_id.unwrap_or(1);
+        match ftp_creds::target(&st.pool, workspace, Some(req.target.clone())).await {
+            Ok(resolved) => req.target = resolved,
+            Err(error) => {
+                return Json(serde_json::json!({ "ok": false, "error": error }));
+            }
+        }
+    }
     Json(ftp::test_login(&req).await)
 }
 
@@ -444,11 +459,56 @@ struct FtpUploadRequest {
     #[serde(default)]
     via: Option<String>,
     #[serde(default)]
+    workspace_id: Option<i64>,
+    #[serde(default)]
     files: Vec<ftp::UploadedFile>,
 }
 
-async fn ftp_upload(Json(req): Json<FtpUploadRequest>) -> Json<serde_json::Value> {
-    Json(ftp::upload_via(&req.target, req.via, &req.files).await)
+async fn ftp_upload(
+    State(st): State<AppState>,
+    Json(req): Json<FtpUploadRequest>,
+) -> Json<serde_json::Value> {
+    let target = match ftp_creds::target(&st.pool, req.workspace_id.unwrap_or(1), Some(req.target.clone())).await {
+        Ok(resolved) => resolved,
+        Err(error) => return Json(serde_json::json!({ "ok": false, "error": error })),
+    };
+    Json(ftp::upload_via(&target, req.via, &req.files).await)
+}
+
+async fn save_ftp_credentials(
+    State(st): State<AppState>,
+    Json(req): Json<ftp_creds::SaveRequest>,
+) -> Result<Json<ftp_creds::SavedFtp>, ApiError> {
+    ftp_creds::save(&st.pool, &req, NOW)
+        .await
+        .map(Json)
+        .map_err(ApiError::Invalid)
+}
+
+async fn load_ftp_credentials(
+    State(st): State<AppState>,
+    Query(params): Query<WorkspaceQuery>,
+) -> Result<Json<Option<ftp_creds::SavedFtp>>, ApiError> {
+    ftp_creds::load(&st.pool, params.workspace_id.unwrap_or(1))
+        .await
+        .map(Json)
+        .map_err(ApiError::Invalid)
+}
+
+async fn forget_ftp_credentials(
+    State(st): State<AppState>,
+    Query(params): Query<WorkspaceQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let removed = ftp_creds::forget(&st.pool, params.workspace_id.unwrap_or(1))
+        .await
+        .map_err(ApiError::Invalid)?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+#[derive(Deserialize)]
+struct WorkspaceQuery {
+    #[serde(default)]
+    workspace_id: Option<i64>,
 }
 
 async fn index_now(Json(req): Json<ftp::IndexNowRequest>) -> Json<serde_json::Value> {
@@ -681,6 +741,9 @@ async fn key_pool(
 
 enum ApiError {
     BadRequest(&'static str),
+    /// Like `BadRequest`, but the message is built at runtime (validation text from a
+    /// module that owns the rule).
+    Invalid(String),
     Db(sqlx::Error),
     /// A provider call failed. The message is already client-safe
     /// (`provider::safe_message`); the detail is logged where it happens.
@@ -691,6 +754,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message) = match self {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg.to_string()),
+            ApiError::Invalid(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg),
             ApiError::Upstream(msg) => (StatusCode::BAD_GATEWAY, "upstream", msg),
             ApiError::Db(e) => {
                 tracing::error!("db error: {e}");
@@ -751,6 +815,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/deploy/vercel", post(deploy_vercel))
         .route("/v1/deploy/github", post(deploy_github))
         .route("/v1/ftp/test", post(ftp_test))
+        .route("/v1/ftp/credentials", get(load_ftp_credentials).post(save_ftp_credentials).delete(forget_ftp_credentials))
         .route("/v1/ftp/upload", post(ftp_upload))
         .route("/v1/indexnow", post(index_now))
         .route("/v1/providers/test-model", post(test_model))

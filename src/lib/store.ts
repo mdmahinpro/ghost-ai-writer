@@ -758,10 +758,11 @@ export const useApp = create<AppState>()(
         set((s) => {
           const host = ftp.host.trim();
           const user = ftp.user.trim();
-          const current = s.sites.find((site) => site.id === s.activeSiteId)?.providers.find((provider) => provider.id === providerId)?.ftp;
-          const password = ftp.password || current?.password || "";
-          if (!host || !user || !password) {
-            return { ...s, notice: { tone: "danger" as const, text: "FTP needs a hostname, username, and password before it can be saved." } };
+          // The password is no longer the browser's business: it lives sealed on the
+          // server (`ftp_credentials`), so a local entry only needs an address.
+          const password = "";
+          if (!host || !user) {
+            return { ...s, notice: { tone: "danger" as const, text: "FTP needs a hostname and a username." } };
           }
           saved = true;
           const path = ftp.path.trim() || "/public_html";
@@ -777,7 +778,7 @@ export const useApp = create<AppState>()(
                     publicUrl: ftp.publicUrl?.trim() || site.publicUrl,
                     providers: site.providers.map((provider) =>
                       provider.id === providerId
-                        ? { ...provider, status: provider.status === "verified" ? "verified" : "configured", hint, ftp: { host, user, path, password, port: ftp.port || 21, publicUrl: ftp.publicUrl?.trim() || "", via: ftp.via || current?.via || "ftps", trust_cert: ftp.trust_cert ?? current?.trust_cert ?? true } }
+                        ? { ...provider, status: provider.status === "verified" ? "verified" : "configured", hint, ftp: { host, user, path, password, port: ftp.port || 21, publicUrl: ftp.publicUrl?.trim() || "", via: "ftps", trust_cert: ftp.trust_cert ?? true } }
                         : provider,
                     ),
                   },

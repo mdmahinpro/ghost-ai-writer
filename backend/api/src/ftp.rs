@@ -476,6 +476,9 @@ pub struct LoginRequest {
     #[serde(default)]
     #[allow(dead_code)]
     pub via: Option<String>,
+    /// Which workspace's sealed password to fall back to when the browser sends none.
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 fn step(name: &str, started: Instant, ok: bool, detail: String) -> Value {

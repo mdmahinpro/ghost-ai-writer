@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { maskKey, validateGhostUrl } from "@/lib/engine";
 import { syncGhostPosts, testGhostConnection } from "@/lib/ghost.functions";
 import { testFtpLogin, type FtpStep } from "@/lib/ops.functions";
+import { forgetFtpCredentials, loadFtpCredentials, saveFtpCredentials, WORKSPACE_ID } from "@/lib/ftp-credentials";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, Field, PageIntro, fieldClass, statusTone } from "@/components/ui";
 import { relTime } from "@/lib/utils";
@@ -29,6 +30,8 @@ export function ConnectionsPage() {
   const [ftpPort, setFtpPort] = useState("21");
   const [ftpPath, setFtpPath] = useState("/public_html");
   const [ftpTrustCert, setFtpTrustCert] = useState(true);
+  // The password lives on the server; this flag is all the browser knows about it.
+  const [ftpHasPassword, setFtpHasPassword] = useState(false);
   const [ftpPublic, setFtpPublic] = useState("");
   const [ftpNote, setFtpNote] = useState("");
   const [ftpTone, setFtpTone] = useState<"ok" | "danger">("danger");
@@ -44,6 +47,28 @@ export function ConnectionsPage() {
   const [applyWord, setApplyWord] = useState("");
   const ghost = site.ghost;
   const latest = audits[0];
+
+  // Pull the saved cPanel connection from the server. The password is not in the
+  // response — only whether one is on file — so the form can render without it.
+  useEffect(() => {
+    let live = true;
+    void loadFtpCredentials().then((saved) => {
+      if (!live || !saved) return;
+      setFtpHost(saved.host);
+      setFtpUser(saved.username);
+      setFtpPort(String(saved.port));
+      setFtpPath(saved.remote_dir);
+      setFtpPublic(saved.public_url);
+      setFtpTrustCert(saved.trust_cert);
+      setFtpHasPassword(saved.has_password);
+      if (saved.verified_at) {
+        verifyProvider("cpanel", `${saved.host} · ${saved.username} · ${saved.remote_dir}`);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [verifyProvider]);
 
   async function testLive() {
     const checked = validateGhostUrl(url);
@@ -254,6 +279,7 @@ export function ConnectionsPage() {
                 path={ftpPath}
                 trustCert={ftpTrustCert}
                 onTrustCert={setFtpTrustCert}
+                hasPassword={ftpHasPassword}
                 publicUrl={ftpPublic || site.publicUrl}
                 note={ftpNote}
                 tone={ftpTone}
@@ -270,21 +296,32 @@ export function ConnectionsPage() {
                 onPublic={setFtpPublic}
                 onToggleEdit={() => setEditingFtp((open) => !open)}
                 onToggleSteps={() => setShowFtpSteps((open) => !open)}
-                onSave={(fields) => {
-                  const ok = saveFtp("cpanel", fields);
-                  if (!ok) {
+                onSave={async (fields) => {
+                  const result = await saveFtpCredentials({
+                    host: fields.host,
+                    username: fields.user,
+                    password: fields.password,
+                    port: fields.port,
+                    remoteDir: fields.path,
+                    publicUrl: fields.publicUrl,
+                    trustCert: fields.trust_cert,
+                  });
+                  if (!result.ok) {
                     setFtpTone("danger");
-                    setFtpNote("Nothing was saved. Hostname, username, and password are all required.");
+                    setFtpNote(result.error || "The server refused the save.");
                     return;
                   }
+                  // The local entry carries the status and hint only — never the secret.
+                  saveFtp("cpanel", { ...fields, password: "" });
                   setFtpPass("");
+                  setFtpHasPassword(result.saved.has_password);
                   setFtpTone("ok");
-                  setFtpNote("Saved in this browser. Status is CONFIGURED, not verified, until Test connection succeeds.");
+                  setFtpNote("Saved on the server, encrypted at rest (AES-256-GCM). Status is CONFIGURED, not verified, until Test connection succeeds.");
                 }}
                 onTest={(fields) => {
-                  if (!fields.host || !fields.user || !fields.password) {
+                  if (!fields.host || !fields.user || (!fields.password && !ftpHasPassword)) {
                     setFtpTone("danger");
-                    setFtpNote("Nothing was tested. Enter the hostname, username, and password first. A blank password is only allowed after a successful save.");
+                    setFtpNote("Nothing was tested. Hostname and username are required, and a password either here or already saved on the server.");
                     return;
                   }
                   setFtpBusy(true);
@@ -300,7 +337,7 @@ export function ConnectionsPage() {
                     setFtpTone("danger");
                     setFtpNote("No final answer. The host did not finish explicit TLS within 25 seconds. Check the hostname, port 21, and password.");
                   }, 25000);
-                  void testFtpLogin({ data: fields })
+                  void testFtpLogin({ data: { ...fields, workspace_id: WORKSPACE_ID } })
                     .then((result) => {
                       if (settled) return;
                       setFtpSteps(result.steps ?? []);
@@ -331,10 +368,16 @@ export function ConnectionsPage() {
                     });
                 }}
                 onDisconnect={() => {
+                  // Clearing the card must clear the sealed secret as well, or the
+                  // connection survives the disconnect server-side.
+                  void forgetFtpCredentials().then((removed) => {
+                    setFtpHasPassword(removed ? false : false);
+                    setFtpPass("");
+                    setFtpNote("Disconnected. The saved login was removed from the server.");
+                  });
                   disconnectProvider(provider.id);
                   setFtpBanner("");
                   setFtpSteps([]);
-                  setFtpNote("");
                 }}
               />
             ) : (
@@ -365,6 +408,7 @@ function CpanelCard({
   port,
   path,
   trustCert,
+  hasPassword,
   publicUrl,
   note,
   tone,
@@ -393,6 +437,8 @@ function CpanelCard({
   port: string;
   path: string;
   trustCert: boolean;
+  /** A sealed password is on file server-side; the field may be left blank. */
+  hasPassword: boolean;
   publicUrl: string;
   note: string;
   tone: "ok" | "danger";
@@ -490,8 +536,8 @@ function CpanelCard({
           <Field label="FTP username" hint="Hostinger prints u605638561.lesgouters.com. The login that the server accepts is u605638561.lesgouters. The test removes a trailing .com if the longer name is rejected.">
             <input className={fieldClass} name="user" value={user} onChange={(event) => onUser(event.target.value)} placeholder={saved?.user || "username"} aria-label="FTP username" autoComplete="username" />
           </Field>
-          <Field label="FTP password" hint="Leave empty to keep the password already saved in this browser.">
-            <input className={fieldClass} name="password" type="password" value={password} onChange={(event) => onPassword(event.target.value)} placeholder={saved ? "Saved — leave blank to keep" : "Password"} aria-label="FTP password" autoComplete="current-password" />
+          <Field label="FTP password" hint="Stored on the server, encrypted at rest. Leave empty to keep the password already saved.">
+            <input className={fieldClass} name="password" type="password" value={password} onChange={(event) => onPassword(event.target.value)} placeholder={hasPassword ? "Saved on the server — leave blank to keep" : "Password"} aria-label="FTP password" autoComplete="current-password" />
           </Field>
           <Field label="FTP port" hint="21 for explicit TLS on most cPanel hosts.">
             <input className={fieldClass} name="port" value={port} onChange={(event) => onPort(event.target.value)} inputMode="numeric" aria-label="FTP port" />
