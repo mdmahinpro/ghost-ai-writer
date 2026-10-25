@@ -133,24 +133,86 @@ pub fn valid_admin_key(key: &str) -> bool {
     hex(id, 8, 64) && hex(secret, 16, 128)
 }
 
-/// Never let a key or a JWT reach a log or an API response. Port of the TS
-/// `safeMessage`: a message that smells like it echoes credentials is replaced
-/// with a fixed sentence, otherwise it is capped.
+/// Never let a key or a JWT reach a log or an API response.
+///
+/// This used to replace any message mentioning "authorization", "bearer" or
+/// "jwt" with the fixed sentence "Ghost refused the Admin API key." Ghost's own
+/// rejection bodies contain the word "Authorization", so *every* failure —
+/// a 404 for a wrong host, a refused post, an expired token — was reported as a
+/// bad key. That sent people to re-check a credential that was never at fault.
+///
+/// The filter now targets the credential itself, not the topic of the sentence:
+/// a message is only replaced when it looks like it actually carries a key
+/// (a long hex run, or a JWT's three dot-separated segments).
 pub fn safe_message(message: &str) -> String {
-    let lower = message.to_lowercase();
-    if lower.contains("secret")
-        || lower.contains("adminkey")
-        || lower.contains("jwt")
-        || lower.contains("authorization")
-        || lower.contains("bearer")
-    {
-        return "Ghost refused the Admin API key.".to_string();
+    if looks_like_a_credential(message) {
+        return "Ghost rejected the request; the credential was withheld from this message."
+            .to_string();
     }
     message.chars().take(180).collect()
 }
 
+/// True when the text appears to embed a key or a signed token.
+///
+/// Deliberately narrow: it matches a `id:secret` hex pair, a bare 32+ hex run,
+/// or a JWT (`xx.yy.zz` where each part is base64url). Ordinary prose like
+/// "Authorization header format is X" must survive, or the real error is lost.
+fn looks_like_a_credential(text: &str) -> bool {
+    // A JWT: three base64url segments separated by dots.
+    if text.split_whitespace().any(|word| {
+        let mut parts = word.split('.');
+        let (a, b, c) = (parts.next(), parts.next(), parts.next());
+        match (a, b, c, parts.next()) {
+            (Some(a), Some(b), Some(c), None) => {
+                a.len() >= 16
+                    && b.len() >= 16
+                    && c.len() >= 16
+                    && (a.len() + b.len() + c.len()) > 60
+                    && [a, b, c].iter().all(|p| {
+                        p.bytes()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'-' || ch == b'_')
+                    })
+            }
+            _ => false,
+        }
+    }) {
+        return true;
+    }
+    // A bare hex run long enough to be a Ghost secret (or an `id:secret` pair).
+    // Split on anything that is not a hex digit so `token=<hex>`, `key=<hex>`
+    // and a quoted "<hex>" are all caught rather than only whitespace-separated
+    // runs.
+    text.split(|c: char| !c.is_ascii_hexdigit())
+        .any(|run| run.len() >= 32)
+}
+
+/// The `Authorization` header value Ghost expects.
+///
+/// Ghost's Admin API uses the `Ghost` scheme, not `Bearer`:
+///   Authorization: Ghost <jwt>
+///
+/// With `Bearer` Ghost answers
+///   "Authorization header format is \"Authorization: Ghost ***\""
+/// and refuses the request before it ever looks at the key — so a perfectly
+/// valid key could never authenticate. Verified against Ghost 5.130.
+pub fn auth_header(token: &str) -> String {
+    format!("Ghost {token}")
+}
+
+/// The Admin API base for a request.
+///
+/// `GAW_GHOST_BASE` exists so tests can point at a mock. It used to be read
+/// unconditionally, which means a stale value in the environment silently
+/// redirected every real request to the wrong host — producing "the key was
+/// refused" for a key that was fine. Only the test build honours the override.
 fn base(ghost_url: &str) -> String {
-    let base = std::env::var("GAW_GHOST_BASE").unwrap_or_else(|_| ghost_url.trim_end_matches('/').to_string());
+    #[cfg(test)]
+    if let Ok(mock) = std::env::var("GAW_GHOST_BASE") {
+        if !mock.trim().is_empty() {
+            return format!("{}/ghost/api/admin", mock.trim_end_matches('/'));
+        }
+    }
+    let base = ghost_url.trim_end_matches('/');
     format!("{base}/ghost/api/admin")
 }
 
@@ -219,7 +281,7 @@ pub async fn push_post(
     }
     let resp = client()
         .post(format!("{}/posts", base(&url)))
-        .header("Authorization", format!("Bearer {key}"))
+        .header("Authorization", auth_header(key))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -379,6 +441,16 @@ mod tests {
     }
 
     #[test]
+    fn the_authorization_header_uses_the_ghost_scheme() {
+        // Ghost's Admin API rejects `Bearer` outright:
+        //   Authorization header format is "Authorization: Ghost ***"
+        // so a valid key could never authenticate. Pinned because the failure
+        // looks exactly like a bad key.
+        assert_eq!(auth_header("header.payload.sig"), "Ghost header.payload.sig");
+        assert!(!auth_header("t").starts_with("Bearer"));
+    }
+
+    #[test]
     fn an_admin_key_must_be_hex_id_colon_hex_secret() {
         assert!(valid_admin_key("0123456789abcdef0123456789abcdef:abcdef0123456789abcdef"));
         assert!(valid_admin_key("abcdef01:0123456789abcdef"));
@@ -393,18 +465,30 @@ mod tests {
 
     #[test]
     fn a_message_that_echoes_credentials_is_replaced() {
-        // Anything carrying these words is assumed to echo the request headers.
+        // Only messages that actually carry a key or a signed token are scrubbed.
+        let jwt = "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFiY2QiLCJ0eXAiOiJKV1QifQ.eyJpYXQiOjEsImV4cCI6Miwid\
+                   WQiOiIvYWRtaW4vIn0.c2lnbmF0dXJlLWhlcmUtMTIzNDU2Nzg5MA";
         for leaky in [
-            "the secret was sk_abc",
-            "adminKey rejected",
-            "invalid jwt",
-            "Authorization header",
-            "Bearer re_123",
+            // A full id:secret pair, and a bare 32+ hex secret.
+            "key 0123abcd0123abcd0123abcd:0123456789abcdef0123456789abcdef was used",
+            "token=0123456789abcdef0123456789abcdef",
+            &format!("sent {jwt}"),
         ] {
-            assert_eq!(safe_message(leaky), "Ghost refused the Admin API key.");
+            assert!(
+                safe_message(leaky).contains("withheld"),
+                "{leaky:?} carries a credential and must be scrubbed"
+            );
         }
-        // An ordinary message survives, capped.
+
+        // Ordinary provider prose must survive. Ghost's own 401 says
+        // "Authorization header format is ..." — replacing that is what made
+        // every failure look like a bad key.
+        assert_eq!(
+            safe_message("Authorization header format is \"Authorization: Ghost ***\""),
+            "Authorization header format is \"Authorization: Ghost ***\""
+        );
         assert_eq!(safe_message("Not Found"), "Not Found");
+        assert_eq!(safe_message("adminKey rejected"), "adminKey rejected");
         assert!(safe_message(&"x".repeat(400)).chars().count() <= 180);
     }
 }

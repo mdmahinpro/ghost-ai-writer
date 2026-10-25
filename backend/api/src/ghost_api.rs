@@ -88,7 +88,7 @@ fn client() -> &'static reqwest::Client {
 async fn admin_get(origin: &str, path: &str, token: &str) -> Result<(u16, String), String> {
     let resp = client()
         .get(format!("{origin}{path}"))
-        .header("Authorization", format!("Bearer {token}"))
+        .header("Authorization", ghost::auth_header(&token))
         .header("Accept", "application/json")
         .send()
         .await
@@ -99,6 +99,29 @@ async fn admin_get(origin: &str, path: &str, token: &str) -> Result<(u16, String
     }
     let body = resp.text().await.unwrap_or_default();
     Ok((status.as_u16(), body))
+}
+
+/// Ghost's own explanation for a rejection, if the body is its error shape.
+///
+/// Ghost answers with `{"errors":[{"message":"...","type":"..."}]}`. That
+/// message is the useful part: it distinguishes a malformed header from an
+/// unknown key from an integration that lacks a scope. Returns `None` when the
+/// body is not Ghost's JSON, so a proxy's HTML error page does not leak in.
+fn ghost_error_message(body: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(body).ok()?;
+    let message = parsed
+        .get("errors")?
+        .as_array()?
+        .first()?
+        .get("message")?
+        .as_str()?
+        .trim();
+    if message.is_empty() {
+        return None;
+    }
+    // Run it through the credential filter: a provider body must never echo a
+    // key or a signed token back to a browser.
+    Some(ghost::safe_message(message))
 }
 
 fn resolve(target: &GhostTarget) -> Result<(String, String), String> {
@@ -120,9 +143,28 @@ pub async fn test_connection(target: &GhostTarget) -> Value {
         Err(error) => return json!({ "ok": false, "error": error }),
     };
     match admin_get(&origin, "/ghost/api/admin/posts/?limit=1&fields=id", &token).await {
-        Ok((status, _)) => {
+        Ok((status, body)) => {
             if status == 401 || status == 403 {
-                return json!({ "ok": false, "error": "Ghost refused the Admin API key." });
+                // Say what Ghost actually objected to. The blanket "refused the
+                // Admin API key" was wrong often enough to be actively harmful:
+                // a wrong host, a refused origin, or an expired token all
+                // reported as a bad key.
+                let detail = ghost_error_message(&body);
+                return json!({
+                    "ok": false,
+                    "error": match detail {
+                        Some(reason) if reason.to_lowercase().contains("header format") => format!(
+                            "Ghost at {origin} did not accept the token ({reason}). The key must be \
+                             copied whole as id:secret — a truncated or re-typed key lands here."
+                        ),
+                        Some(reason) => format!(
+                            "Ghost at {origin} rejected the request: {reason}"
+                        ),
+                        None => format!(
+                            "Ghost at {origin} returned HTTP {status}. The key was not accepted."
+                        ),
+                    }
+                });
             }
             // A 404 on the Admin API path usually means there is no Ghost at this
             // address at all: the host is up, but nothing serves /ghost/. Saying
@@ -179,7 +221,8 @@ pub async fn sync_posts(target: &GhostTarget) -> Value {
             Err(error) => return json!({ "ok": false, "error": error }),
         };
         if status == 401 || status == 403 {
-            return json!({ "ok": false, "error": "Ghost refused the Admin API key." });
+            let reason = ghost_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
+            return json!({ "ok": false, "error": format!("Ghost rejected the request: {reason}") });
         }
         if !(200..300).contains(&status) {
             return json!({ "ok": false, "error": format!("Ghost returned HTTP {status}.") });
@@ -462,7 +505,7 @@ async fn admin_json(
         "PUT" => client().put(format!("{origin}{path}")),
         _ => client().post(format!("{origin}{path}")),
     }
-    .header("Authorization", format!("Bearer {token}"))
+    .header("Authorization", ghost::auth_header(&token))
     .header("Accept", "application/json");
     if let Some(body) = body {
         request = request
@@ -496,7 +539,7 @@ async fn upload_image(
     let form = reqwest::multipart::Form::new().part("file", part);
     let resp = client()
         .post(format!("{origin}/ghost/api/admin/images/upload/"))
-        .header("Authorization", format!("Bearer {token}"))
+        .header("Authorization", ghost::auth_header(&token))
         .multipart(form)
         .send()
         .await
@@ -744,7 +787,12 @@ pub async fn publish(req: &PublishRequest) -> Value {
                 return json!({ "ok": false, "error": "Ghost rejected the post. The slug may already exist, and it was not created again." });
             }
             if status == 401 || status == 403 {
-                return json!({ "ok": false, "error": "Ghost refused the Admin API key." });
+                let reason = ghost_error_message(&response)
+                    .unwrap_or_else(|| format!("HTTP {status}"));
+                return json!({
+                    "ok": false,
+                    "error": format!("Ghost rejected the push: {reason}")
+                });
             }
             if !(200..300).contains(&status) {
                 return json!({ "ok": false, "error": format!("Ghost returned HTTP {status}.") });
@@ -832,7 +880,8 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
         Err(error) => return fail("ERROR", &error),
     };
     if status == 401 || status == 403 {
-        return fail("FORBIDDEN", "Ghost refused the Admin API key.");
+        let reason = ghost_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
+        return fail("FORBIDDEN", &format!("Ghost rejected the request: {reason}"));
     }
     if status == 404 {
         return fail("NOT_FOUND", "That post is not on Ghost. Re-weave skipped.");
@@ -875,7 +924,8 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
         Err(error) => return fail("ERROR", &error),
     };
     if status == 401 || status == 403 {
-        return fail("FORBIDDEN", "Ghost refused the Admin API key.");
+        let reason = ghost_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
+        return fail("FORBIDDEN", &format!("Ghost rejected the request: {reason}"));
     }
     if status == 422 {
         return fail(
