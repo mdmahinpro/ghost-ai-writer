@@ -6,7 +6,7 @@
  * decides which key serves it. That is what lets the store stop holding
  * secrets at all.
  */
-import { post, patch } from "./api-client.ts";
+import { post, patch, get } from "./api-client.ts";
 import type { ApiResponse } from "./api-client.ts";
 
 /** The numeric `ai_keys.id` a browser key was saved as. */
@@ -56,6 +56,54 @@ export async function addProvider(input: {
   });
   if (!res.ok) return res;
   return { ok: true, data: { id: res.data.id } };
+}
+
+/** One saved key as GET /api/v1/providers reports it (never a secret). */
+export type ListedProvider = {
+  id: number;
+  provider: string;
+  label: string;
+  kind: string;
+  baseUrl: string | null;
+  modelId: string | null;
+  keyHint: string | null;
+  role: string;
+  status: string;
+};
+
+/**
+ * List the workspace's saved keys. This is the adopt path for a repeat save:
+ * the server creates a fresh row on every POST (no uniqueness constraint), so
+ * the caller de-duplicates by matching provider/label/model and re-binding to
+ * the existing id instead of stacking another copy of the same key.
+ */
+export async function listProviders(workspaceId: number): Promise<ApiResponse<ListedProvider[]>> {
+  const res = await get<{ items: Array<{
+    id: number;
+    provider: string;
+    label: string;
+    kind: string;
+    base_url: string | null;
+    model_id: string | null;
+    key_hint: string | null;
+    role: string;
+    status: string;
+  }> }>(`/api/v1/providers?workspace_id=${encodeURIComponent(String(workspaceId))}`);
+  if (!res.ok) return res;
+  return {
+    ok: true,
+    data: res.data.items.map((p) => ({
+      id: p.id,
+      provider: p.provider,
+      label: p.label,
+      kind: p.kind,
+      baseUrl: p.base_url,
+      modelId: p.model_id,
+      keyHint: p.key_hint,
+      role: p.role,
+      status: p.status,
+    })),
+  };
 }
 
 

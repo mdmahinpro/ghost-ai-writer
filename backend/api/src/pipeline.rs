@@ -72,11 +72,29 @@ pub struct RunSummary {
     pub failed: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StageSummary {
+    /// The parent job id, so the client can group rows without a JOIN.
+    pub job_id: i64,
+    pub idx: i64,
+    /// blueprint | draft | revision | metadata | enrichment | validation
+    pub key: String,
+    pub status: String,
+    pub tokens_in: i64,
+    pub tokens_out: i64,
+    pub duration_ms: i64,
+    pub cost_usd: f64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineState {
     pub jobs: Vec<JobProgress>,
     pub articles: Vec<ArticleSummary>,
     pub runs: Vec<RunSummary>,
+    /// Per-stage progress rows for the jobs in this snapshot, from
+    /// `article_stages`. This is what lets the UI show real per-stage token
+    /// counts instead of hard-coded zeros.
+    pub stages: Vec<StageSummary>,
     /// True while any job is queued or running, so the client can stop polling
     /// instead of hammering an idle workspace forever.
     pub active: bool,
@@ -181,6 +199,33 @@ pub async fn pipeline_state(
     .await
     .map_err(ApiError::Db)?;
 
+    // Per-stage rows for the jobs above: the raw counts behind the UI's stage
+    // tiles (tokens, duration, status). Grouped by (article, idx) — the
+    // pipeline writes at most one row per (article_id, idx).
+    let stages: Vec<StageSummary> = sqlx::query_as(
+        "SELECT a.job_id AS job_id,
+                s.idx        AS idx,
+                s.key        AS key,
+                s.status     AS status,
+                s.tokens_in  AS tokens_in,
+                s.tokens_out AS tokens_out,
+                s.duration_ms AS duration_ms,
+                s.cost_usd   AS cost_usd
+           FROM article_stages s
+           JOIN articles a ON a.id = s.article_id
+          WHERE a.job_id IN (
+                SELECT j.id FROM jobs j
+                 WHERE j.workspace_id = ?1
+                   AND (?2 IS NULL OR j.site_id = ?2)
+              )
+          ORDER BY a.job_id DESC, s.idx",
+    )
+    .bind(workspace_id)
+    .bind(site_id)
+    .fetch_all(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+
     let active = jobs.iter().any(|j| {
         let s = j.status.to_ascii_uppercase();
         s == "QUEUED" || s == "RUNNING" || s == "CLAIMED"
@@ -190,8 +235,76 @@ pub async fn pipeline_state(
         jobs,
         articles,
         runs,
+        stages,
         active,
     }))
+}
+
+/// POST /api/v1/pipeline/requeue  `{"workspace_id": 1, "job_id": 12}`
+///
+/// Failed server jobs cannot be restarted from the browser: the local
+/// `restartJob` only re-queues client-side rows, and the worker's claim SQL
+/// takes QUEUED / pending / RETRY only, so FAILED stays dead forever.
+/// This is the flip: FAILED → QUEUED, attempts reset, last_error cleared.
+///
+/// Scoping matches the rest of this module (workspace in the request, not
+/// the path) and re-reads the status before the UPDATE so a stale-UI retry
+/// of a COMPLETED job fails loudly instead of silently re-running it.
+#[derive(Deserialize)]
+pub struct RequeueRequest {
+    workspace_id: i64,
+    job_id: i64,
+}
+
+pub async fn requeue_job(
+    State(st): State<crate::AppState>,
+    Json(req): Json<RequeueRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM jobs WHERE id = ? AND workspace_id = ?",
+    )
+    .bind(req.job_id)
+    .bind(req.workspace_id)
+    .fetch_optional(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+
+    let status = status.ok_or_else(|| {
+        ApiError::Invalid(format!(
+            "job {} not found in workspace {}",
+            req.job_id, req.workspace_id
+        ))
+    })?;
+
+    if !status.eq_ignore_ascii_case("FAILED") {
+        return Err(ApiError::Invalid(format!(
+            "job {} is {} — only FAILED jobs can be requeued",
+            req.job_id, status
+        )));
+    }
+
+    let result = sqlx::query(
+        "UPDATE jobs SET status = 'QUEUED', attempts = 1, stage_index = 0, last_error = NULL, \
+         not_before = NULL, locked_by = NULL, lease_until = NULL \
+         WHERE id = ? AND workspace_id = ?",
+    )
+    .bind(req.job_id)
+    .bind(req.workspace_id)
+    .execute(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+
+    // The status re-read and the UPDATE run back-to-back with no other writer
+    // in between (single-process worker); if the row slips away anyway the
+    // row-count check turns it into an error instead of a silent 200.
+    if result.rows_affected() == 0 {
+        return Err(ApiError::Invalid(format!(
+            "job {} changed status before requeue",
+            req.job_id
+        )));
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true, "job_id": req.job_id })))
 }
 
 #[cfg(test)]
@@ -199,7 +312,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use axum::routing::get;
+    use axum::routing::{get, post};
     use axum::Router;
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
@@ -239,6 +352,12 @@ mod tests {
                  website_id INTEGER, article_id INTEGER, stage TEXT, provider TEXT, model_id TEXT,
                  tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0,
                  cost_usd REAL NOT NULL DEFAULT 0, at TEXT)",
+            "CREATE TABLE article_stages (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 article_id INTEGER NOT NULL, idx INTEGER NOT NULL, key TEXT NOT NULL,
+                 status TEXT NOT NULL DEFAULT 'PENDING', tokens_in INTEGER NOT NULL DEFAULT 0,
+                 tokens_out INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0,
+                 cost_usd REAL NOT NULL DEFAULT 0, error TEXT, payload_json TEXT,
+                 started_at TEXT, finished_at TEXT, UNIQUE (article_id, idx))",
         ] {
             sqlx::query(sql).execute(&pool).await.unwrap();
         }
@@ -308,6 +427,15 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+        // Real per-stage rows for job 1: draft carries tokens, validation none.
+        sqlx::query(
+            "INSERT INTO article_stages (article_id, idx, key, status, tokens_in, tokens_out, duration_ms, cost_usd)
+             VALUES (1, 1, 'blueprint', 'COMPLETED', 100, 50, 1200, 0.01),
+                    (1, 2, 'draft', 'COMPLETED', 300, 900, 4300, 0.09)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
         for (stage, tin, tout, cost) in [
             ("blueprint", 100, 50, 0.01),
             ("draft", 300, 900, 0.09),
@@ -329,6 +457,7 @@ mod tests {
     fn app(pool: SqlitePool) -> Router {
         Router::new()
             .route("/api/v1/pipeline/state", get(pipeline_state))
+            .route("/api/v1/pipeline/requeue", post(requeue_job))
             .with_state(crate::AppState { pool })
     }
 
@@ -342,6 +471,31 @@ mod tests {
             .await
             .unwrap();
         serde_json::from_slice(&body).unwrap()
+    }
+
+    /// POST a JSON body to the requeue route on the shared router; returns
+    /// (status, body). Kept separate from `get_state` because requeue is a
+    /// write and the error shapes are the thing under test.
+    async fn post_requeue(
+        pool: &SqlitePool,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/pipeline/requeue")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app(pool.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap();
+        (status, json)
     }
 
     #[tokio::test]
@@ -382,6 +536,18 @@ mod tests {
         assert_eq!(done.tokens_in, 400, "100 + 300");
         assert_eq!(done.tokens_out, 950, "50 + 900");
         assert!((done.cost_usd - 0.10).abs() < 1e-9, "0.01 + 0.09");
+
+        // The snapshot now also carries real per-stage rows, so the UI can
+        // show tokens per stage instead of hard-coded zeros.
+        let draft = state
+            .stages
+            .iter()
+            .find(|s| s.job_id == 1 && s.key == "draft")
+            .expect("draft stage row");
+        assert_eq!(draft.tokens_in, 300);
+        assert_eq!(draft.tokens_out, 900);
+        assert_eq!(draft.duration_ms, 4300);
+        assert!(state.stages.iter().all(|s| s.job_id == 1), "workspace scoping");
     }
 
     #[tokio::test]
@@ -479,5 +645,155 @@ mod tests {
         assert_eq!(run.total, 2);
         assert_eq!(run.completed, 1);
         assert_eq!(run.failed, 0);
+    }
+
+    // ---------------------------------------------------------------- requeue
+
+    #[tokio::test]
+    async fn requeue_flips_a_failed_job_back_to_queued() {
+        let pool = pool().await;
+        seed(&pool).await;
+        sqlx::query(
+            "INSERT INTO jobs (id, workspace_id, site_id, keyword, stage, status, stage_index, attempts, last_error)
+             VALUES (5, 1, 1, 'flat white', 'draft', 'FAILED', 3, 2, 'provider 500')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (status, body) = post_requeue(
+            &pool,
+            serde_json::json!({ "workspace_id": 1, "job_id": 5 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["job_id"], 5);
+
+        let row: (String, i64, i64, Option<String>) = sqlx::query_as(
+            "SELECT status, stage_index, attempts, last_error FROM jobs WHERE id = 5",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, "QUEUED", "worker claim takes QUEUED rows");
+        assert_eq!(row.1, 0, "stage progress reset");
+        assert_eq!(row.2, 1, "attempt counter reset");
+        assert_eq!(row.3, None, "stale last_error cleared");
+    }
+
+    #[tokio::test]
+    async fn requeue_refuses_non_failed_jobs_loudly() {
+        let pool = pool().await;
+        seed(&pool).await;
+
+        // Job 1 is COMPLETED — a stale-UI retry must not re-run it.
+        let (status, body) = post_requeue(
+            &pool,
+            serde_json::json!({ "workspace_id": 1, "job_id": 1 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("COMPLETED"),
+            "actual status in the message: {body}"
+        );
+
+        let still: String =
+            sqlx::query_scalar("SELECT status FROM jobs WHERE id = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(still, "COMPLETED", "completed job untouched");
+
+        // Unknown id.
+        let (status, _) = post_requeue(
+            &pool,
+            serde_json::json!({ "workspace_id": 1, "job_id": 999 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn requeue_is_scoped_to_the_requested_workspace() {
+        let pool = pool().await;
+        seed(&pool).await;
+        // Job 3 lives in workspace 2 (see seed). Workspace 1 asking for it
+        // gets not-found, not a silent cross-workspace write.
+        let (status, body) = post_requeue(
+            &pool,
+            serde_json::json!({ "workspace_id": 1, "job_id": 3 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("not found"),
+            "cross-workspace id must not read like success: {body}"
+        );
+
+        // The right workspace still sees its own failed job… seed has no
+        // FAILED jobs in workspace 2, so fail one and requeue from there.
+        sqlx::query("UPDATE jobs SET status = 'FAILED' WHERE id = 3")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = post_requeue(
+            &pool,
+            serde_json::json!({ "workspace_id": 2, "job_id": 3 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_requeued_job_is_viable_for_the_worker_again() {
+        // End-to-end claim check: the worker's claim SQL is the only thing
+        // that can rescue a job, so the requeue result must satisfy it —
+        // QUEUED with a reset lease, nothing else.
+        let pool = pool().await;
+        seed(&pool).await;
+        sqlx::query(
+            "UPDATE jobs SET status = 'FAILED', locked_by = 'worker-a',
+                  lease_until = '2999-01-01T00:00:00Z', attempts = 9 WHERE id = 2",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (status, _) = post_requeue(
+            &pool,
+            serde_json::json!({ "workspace_id": 1, "job_id": 2 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Mirror of the exact claim predicate in worker.rs (`claim`): the
+        // candidate query plus the guarded-UPDATE lease check. A requeued
+        // row must satisfy both, or the rescue is a no-op.
+        let now = sqlx::query_scalar::<_, String>(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let claimable: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM jobs WHERE id = 2 AND (
+                 (status IN ('QUEUED', 'pending', 'RETRY') AND not_before IS NULL)
+                 OR (status = 'RUNNING' AND lease_until IS NOT NULL AND lease_until <= ?)
+               ) AND (lease_until IS NULL OR lease_until <= ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(claimable, 1, "requeue must leave a claimable row");
     }
 }

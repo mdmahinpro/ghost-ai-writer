@@ -1058,9 +1058,13 @@ mod tests {
         let content = content.expect("stage 6 must store the final markdown");
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let markdown = parsed["markdown"].as_str().expect("markdown key");
+        // The quality contract: draft prompt targets 2000 words (2400 aim) and
+        // the one-shot expansion pass fires under the floor. The stored final
+        // article must clear the floor, not the old trivial-length regression.
         assert!(
-            markdown.split_whitespace().count() > 100,
-            "stored article prose is empty/trivial: {markdown:.80}"
+            markdown.split_whitespace().count() >= 2000,
+            "final article is under the 2000-word floor: {} words",
+            markdown.split_whitespace().count()
         );
         // Both numbers are real measurements, not defaults.
         assert!(uniqueness.is_some(), "uniqueness was not measured");

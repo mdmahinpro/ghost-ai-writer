@@ -30,6 +30,7 @@ import type {
   ServerArticle,
   ServerJob,
   ServerRun,
+  ServerStage,
 } from "./pipeline-api.ts";
 
 /** Prefix that marks an id as server-originated. */
@@ -84,32 +85,40 @@ function articleStatus(raw: string): "draft" | "published" {
 }
 
 /**
- * Rebuild per-stage records from `stageIndex`.
+ * Rebuild per-stage records from the snapshot's real `article_stages` rows.
  *
- * The poll does not carry per-stage token counts, so these are progress-only:
- * stages below the index are done, the one at it is running while the job is
- * running, the rest pending. Job-level tokens and cost are real and come from
- * the ledger.
+ * Server keys map onto the UI's stage vocabulary (blueprint→intent,
+ * validation→publish). A missing row (stage not yet reached, or a pre-fix
+ * snapshot) renders as progress-only zeros, exactly as before, so old
+ * snapshots and partial rows degrade gracefully.
  */
-function stagesFor(job: ServerJob): StageRecord[] {
+function stagesFor(job: ServerJob, stages: ServerStage[]): StageRecord[] {
   const running = job.status.toUpperCase() === "RUNNING";
   const failed = jobStatus(job.status) === "failed";
+  const mine = new Map(stages.filter((s) => s.jobId === job.id).map((s) => [s.key, s]));
   return STAGES.map((stage, i) => {
+    // Server key for this UI stage. `intent` is the server's `blueprint`,
+    // `publish` its `validation`; the middle four share names.
+    const serverKey =
+      stage.key === "intent" ? "blueprint" : stage.key === "publish" ? "validation" : stage.key;
+    const row = mine.get(serverKey);
     let status: StageRecord["status"] = "pending";
-    if (i < job.stageIndex) status = "done";
+    if (row?.status.toUpperCase() === "COMPLETED") status = "done";
+    else if (row && failed && row.status.toUpperCase() === "FAILED") status = "failed";
+    else if (i < job.stageIndex) status = "done";
     else if (i === job.stageIndex && failed) status = "failed";
     else if (i === job.stageIndex && running) status = "running";
     return {
       key: stage.key,
       label: stage.label,
       status,
-      tokens: 0,
-      durationMs: 0,
+      tokens: row ? row.tokensIn + row.tokensOut : 0,
+      durationMs: row?.durationMs ?? 0,
     };
   });
 }
 
-export function toUiJob(job: ServerJob, siteUid: string): Job {
+export function toUiJob(job: ServerJob, siteUid: string, stages: ServerStage[] = []): Job {
   return {
     id: serverJobId(job.id),
     runId: job.runId === null ? "" : serverRunId(job.runId),
@@ -124,7 +133,7 @@ export function toUiJob(job: ServerJob, siteUid: string): Job {
     status: jobStatus(job.status),
     failReason: job.lastError ?? undefined,
     stageIndex: job.stageIndex,
-    stages: stagesFor(job),
+    stages: stagesFor(job, stages),
     articleId: job.articleId === null ? undefined : serverArticleId(job.articleId),
     shots: 0,
     tokens: job.tokensIn + job.tokensOut,
@@ -252,7 +261,7 @@ export function mergeSnapshot(
   );
 
   return {
-    jobs: [...snapshot.jobs.map((j) => toUiJob(j, siteUid)), ...keepLocalJobs],
+    jobs: [...snapshot.jobs.map((j) => toUiJob(j, siteUid, snapshot.stages ?? [])), ...keepLocalJobs],
     articles: [
       ...snapshot.articles.map((a) => toUiArticle(a, siteUid)),
       ...keepLocalArticles,

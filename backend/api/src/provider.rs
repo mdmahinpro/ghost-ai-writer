@@ -346,14 +346,21 @@ impl MockEngine {
             "draft" => {
                 let filler =
                     "Funding gaps usually get solved by asking early and asking in writing. ";
-                let long = filler.repeat(12); // > 200 chars, well under 9000
+                // First answer lands under the 2,000-word floor on purpose so
+                // `run_draft`'s one-shot expansion pass fires; the expansion
+                // prompt is recognisable by its marker line and gets the full
+                // ~2,160-word body back. Deterministic: exactly two draft calls
+                // per job, the second one adopted.
+                let expanding = req.user.contains("expanded to at least");
+                let body_filler = filler.repeat(if expanding { 180 } else { 3 });
+                let intro_filler = filler.repeat(if expanding { 12 } else { 2 });
                 serde_json::json!({
                     "intro": format!(
                         "A stipend that stops without warning is a logistics problem before it is an \
                          academic one. You need to know who approves money, how long each route takes, \
-                         and what to say. This guide walks through the order that works. {long}"
+                         and what to say. This guide walks through the order that works. {intro_filler}"
                     ),
-                    "body": long,
+                    "body": body_filler,
                     "faq": [
                         {"question": "Can a stipend be restored mid-term?", "answer": "Sometimes. Ask the graduate school in writing and cite the funding commitment letter."},
                         {"question": "Is a bridge loan worth it?", "answer": "Only against a dated promise of future funding."}
@@ -368,7 +375,12 @@ impl MockEngine {
             "revision" => {
                 // Deliberately covers every mustCover item from the mock
                 // blueprint, so the coverage gate has something real to check.
-                let body = "## What should you do in the first few hours?\n\
+                // A real revision of a 2,000-word draft stays 2,000+ words —
+                // the prompt forbids shrinking — so the fixture is padded to
+                // clear the same floor and the e2e can pin the full contract.
+                let body = format!(
+                    "{}{}",
+                    "## What should you do in the first few hours?\n\
                     Start with the person who signs off on money, and put the request in \
                     writing the same day. The first hours matter because funding queues are \
                     real queues.\n\n\
@@ -383,7 +395,9 @@ impl MockEngine {
                     posted slot and tell the department you can start next term.\n\n\
                     ## What is the timeline of decisions?\n\
                     Expect a written answer in about ten working days. Keep a timeline of every \
-                    request so escalation has dates attached.\n";
+                    request so escalation has dates attached.\n\n",
+                    "Funding gaps usually get solved by asking early and asking in writing. ".repeat(190)
+                );
                 serde_json::json!({
                     "intro": "A stipend that stops without warning is a logistics problem first. \
                         You need to know who approves money, which route answers fastest, and what \

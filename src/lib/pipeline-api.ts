@@ -72,10 +72,25 @@ export type ServerRun = {
   failed: number;
 };
 
+/** One stage row as the server reports it (per-job, from `article_stages`). */
+export type ServerStage = {
+  jobId: number;
+  idx: number;
+  /** Server key: blueprint | draft | revision | metadata | enrichment | validation */
+  key: string;
+  status: string;
+  tokensIn: number;
+  tokensOut: number;
+  durationMs: number;
+  costUsd: number;
+};
+
 export type PipelineSnapshot = {
   jobs: ServerJob[];
   articles: ServerArticle[];
   runs: ServerRun[];
+  /** Real per-stage spend for these jobs; empty until stages have committed. */
+  stages: ServerStage[];
   /**
    * True while any job is queued or running. The caller should stop polling
    * once this is false rather than hammering an idle workspace.
@@ -113,6 +128,18 @@ type RawJob = {
   cost_usd: number;
 };
 
+/** One `article_stages` row: real per-stage spend, surfaced by the snapshot. */
+type RawStage = {
+  job_id: number;
+  idx: number;
+  key: string;
+  status: string;
+  tokens_in: number;
+  tokens_out: number;
+  duration_ms: number;
+  cost_usd: number;
+};
+
 type RawArticle = {
   id: number;
   job_id: number | null;
@@ -146,6 +173,7 @@ type RawSnapshot = {
   jobs: RawJob[];
   articles: RawArticle[];
   runs: RawRun[];
+  stages?: RawStage[];
   active: boolean;
 };
 
@@ -280,6 +308,18 @@ export async function pipelineSnapshot(input: {
           failed: r.failed,
         }),
       ),
+      stages: (raw.stages ?? []).map(
+        (s): ServerStage => ({
+          jobId: s.job_id,
+          idx: s.idx,
+          key: s.key,
+          status: s.status,
+          tokensIn: s.tokens_in,
+          tokensOut: s.tokens_out,
+          durationMs: s.duration_ms,
+          costUsd: s.cost_usd,
+        }),
+      ),
       active: Boolean(raw.active),
     },
   };
@@ -290,4 +330,22 @@ export function pipelineStatePath(workspaceId: number, siteId?: number): string 
   const qs = new URLSearchParams({ workspace_id: String(workspaceId) });
   if (siteId !== undefined) qs.set("site_id", String(siteId));
   return `${PIPELINE_BASE}/state?${qs.toString()}`;
+}
+
+/**
+ * Flip a FAILED server job back to QUEUED on the worker.
+ *
+ * The UI's local `retryJob` only re-queues browser rows; server jobs are the
+ * worker's to re-dispatch. The server refuses anything that is not FAILED, so
+ * the caller can surface the reason (e.g. the job already completed).
+ */
+export async function requeueServerJob(input: {
+  workspaceId: number;
+  serverJobId: number;
+}): Promise<ApiResponse<{ ok: boolean; job_id: number }>> {
+  const res = await post<{ ok: boolean; job_id: number }>(`${PIPELINE_BASE}/requeue`, {
+    workspace_id: input.workspaceId,
+    job_id: input.serverJobId,
+  });
+  return res;
 }

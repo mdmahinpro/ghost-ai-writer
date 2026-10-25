@@ -153,6 +153,7 @@ test("merging replaces stale server rows and keeps local ones", () => {
     jobs: [job()],
     articles: [],
     runs: [],
+    stages: [],
   };
 
   const merged = mergeSnapshot(SITE, snapshot, {
@@ -183,7 +184,7 @@ test("merging leaves a different site's server rows alone", () => {
 
   const merged = mergeSnapshot(
     SITE,
-    { active: false, jobs: [job()], articles: [], runs: [] } as PipelineSnapshot,
+    { active: false, jobs: [job()], articles: [], runs: [], stages: [] } as PipelineSnapshot,
     { jobs: [otherSiteServerJob], articles: [], runs: [] },
   );
 

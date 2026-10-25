@@ -820,6 +820,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/state", get(state::load_state).post(state::save_state))
         .route("/v1/state/reset", post(state::reset_state))
         .route("/v1/pipeline/state", get(pipeline::pipeline_state))
+        .route("/v1/pipeline/requeue", post(pipeline::requeue_job))
         .route("/v1/sites/ensure", post(sites::ensure_site))
         .route("/v1/email/verification", post(send_email_verification))
         .route("/v1/email/digest", post(send_email_digest))

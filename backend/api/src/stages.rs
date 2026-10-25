@@ -2,7 +2,8 @@
 //! their shipped bundles:
 //!
 //! * Blueprint  — `mustCover` 3–10 items, `sections` 1–12.
-//! * Draft      — `intro` 100–4000 chars, `body` 200–9000 chars, `faq` ≤ 8,
+//! * Draft      — `intro` 100–4000 chars, `body` ≥ 80 chars (length is the
+//!                prompt's 2,000-word target plus the expansion pass), `faq` ≤ 8,
 //!                `claims[]` each `SUPPORTED | UNSUPPORTED | OPINION`.
 //!
 //! A stage that returns text outside those bounds is **rejected**, not clamped:
@@ -121,9 +122,14 @@ pub fn validate_draft(v: &Value) -> Result<Draft, Vec<String>> {
     if !(100..=4000).contains(&intro) {
         errs.push(format!("intro must be 100-4000 chars (got {intro})"));
     }
+    // TS only guards `markdown: z.string().min(80)`: the schema is an
+    // empty-answer tripwire, not a quality gate. Length is the prompt's job
+    // plus the one-shot expansion pass in `run_draft`. The old 9,000-char cap
+    // here rejected genuinely long (2,000+ word) drafts — the direct cause of
+    // the "generated content is totally 0 qualityful" regression.
     let body = d.body.chars().count();
-    if !(200..=9000).contains(&body) {
-        errs.push(format!("body must be 200-9000 chars (got {body})"));
+    if body < 80 {
+        errs.push(format!("body must be at least 80 chars (got {body})"));
     }
     if d.faq.len() > 8 {
         errs.push(format!("faq allows at most 8 items (got {})", d.faq.len()));
@@ -341,10 +347,24 @@ pub fn blueprint_prompt(keyword: &str, site: &str) -> (String, String) {
     (system, user)
 }
 
+/// Long-form floor the pipeline targets on every generated article, in words.
+/// These match the client's `stage-contracts.ts` targets so a server job and a
+/// browser job produce the same size of article.
+pub const MIN_ARTICLE_WORDS: usize = 2000;
+pub const TARGET_ARTICLE_WORDS: usize = 2400;
+
 /// Stage-2 prompt: blueprint in, prose out, humanizer rules folded in so the
 /// draft is close to publishable before the linter (S9) sees it.
 pub fn draft_prompt(keyword: &str, bp: &Blueprint) -> (String, String) {
-    let system = "You write the article body. You return only JSON.\n\
+    draft_prompt_kw(keyword, bp, false)
+}
+
+/// `expanded = true` is the one-shot expansion pass: keep everything that was
+/// already there, grow to the word floor. Mirrors the client's draft stage,
+/// which makes at most one tolerant expansion call when the first draft lands
+/// under the floor (a failed call never fails the job).
+pub fn draft_prompt_kw(keyword: &str, bp: &Blueprint, expanded: bool) -> (String, String) {
+    let mut system = "You write the article body. You return only JSON.\n\
         Rules that are enforced afterwards by a linter, so follow them:\n\
         - Vary sentence length. Cut filler openings ('In today's world', 'It is important to note').\n\
         - No 'not only X but Y', no 'it's not just X, it's Y'. Say the thing plainly.\n\
@@ -353,6 +373,23 @@ pub fn draft_prompt(keyword: &str, bp: &Blueprint) -> (String, String) {
           you do not have, mark it OPINION or leave it out.\n\
         - Do not start every paragraph the same way."
         .to_string();
+    let len_rule = format!(
+        "- Length: the body must be at least {min} words, aim for {target}. Give every section \
+         several developed paragraphs of concrete, specific detail. Never pad with filler — \
+         settle each section with real substance.",
+        min = MIN_ARTICLE_WORDS,
+        target = TARGET_ARTICLE_WORDS
+    );
+    if expanded {
+        system.push_str(&format!(
+            "\n- Your previous answer was under the length floor. Return the full article \
+             expanded to at least {min} words, keeping every heading and covering every mustCover \
+             item with more concrete detail.",
+            min = MIN_ARTICLE_WORDS
+        ));
+    } else {
+        system.push_str(&len_rule);
+    }
     let covers = bp
         .must_cover
         .iter()
@@ -369,11 +406,15 @@ pub fn draft_prompt(keyword: &str, bp: &Blueprint) -> (String, String) {
         "Keyword: {keyword}\nTitle: {}\nAngle: {}\n\nMust cover:\n{covers}\n\nSections to write:\n{headings}\n\n\
          Return JSON with these keys:\n\
          - intro: 100-4000 characters, opens with the reader's actual situation\n\
-         - body: 200-9000 characters of markdown, one '## ' heading per section above, covers every mustCover item\n\
+         - body: at least {min} words of markdown (aim {target}), one '## ' heading per section \
+           above, covers every mustCover item\n\
          - faq: at most 8 objects {{\"question\", \"answer\"}}\n\
          - claims: array of {{\"text\", \"status\"}} where status is SUPPORTED, UNSUPPORTED or OPINION\n\
          - answerBlock: 80-600 characters, two sentences that answer the query directly and can be quoted",
-        bp.title_hint, bp.angle.clone().unwrap_or_default()
+        bp.title_hint,
+        bp.angle.clone().unwrap_or_default(),
+        min = MIN_ARTICLE_WORDS,
+        target = TARGET_ARTICLE_WORDS
     );
     (system, user)
 }
@@ -404,7 +445,7 @@ pub fn revision_prompt(
          Current draft:\n{draft_json}\n\n\
          Return JSON with these keys:\n\
          - intro: 100-4000 characters\n\
-         - body: 200-9000 characters of markdown, one '## ' heading per section, \
+         - body: at least 2000 words of markdown (aim 2400), one '## ' heading per section, \
            every mustCover item genuinely covered\n\
          - faq: at most 8 objects {{\"question\", \"answer\"}}\n\
          - claims: array of {{\"text\", \"status\"}} where status is SUPPORTED, UNSUPPORTED or OPINION\n\
@@ -772,13 +813,37 @@ pub async fn run_draft(
         })?;
 
     let (system, user) = draft_prompt(keyword, &bp);
-    let (draft, spend, attempts) =
+    let (mut draft, mut spend, attempts) =
         call_validated(pool, engine, "draft", &system, &user, validate_draft).await?;
+    let mut repairs = attempts.saturating_sub(1);
+
+    // The one-shot expansion pass, mirroring the client's draft stage: a first
+    // answer under the word floor gets exactly one more call asking for the
+    // full-length article. A failed or still-short expansion never fails the
+    // job — the lenient draft proceeds (the validator enforces shape, the
+    // prompt enforces length).
+    let draft_words =
+        |d: &Draft| word_count(&format!("{} {}", d.intro, d.body));
+    if draft_words(&draft) < MIN_ARTICLE_WORDS as i64 {
+        let (ex_system, ex_user) = draft_prompt_kw(keyword, &bp, true);
+        if let Ok((expanded, ex_spend, _)) =
+            call_validated(pool, engine, "draft", &ex_system, &ex_user, validate_draft).await
+        {
+            if draft_words(&expanded) > draft_words(&draft) {
+                draft = expanded;
+            }
+            spend.tokens_in += ex_spend.tokens_in;
+            spend.tokens_out += ex_spend.tokens_out;
+            spend.cost_usd += ex_spend.cost_usd;
+            repairs += 1;
+        }
+    }
+
     let outcome = StageOutcome {
         tokens_in: spend.tokens_in,
         tokens_out: spend.tokens_out,
         cost_usd: spend.cost_usd,
-        repairs: attempts.saturating_sub(1),
+        repairs,
     };
 
     // The writing gate runs on the prose now, so the score is attached to the
@@ -1244,8 +1309,7 @@ pub fn uniqueness_against(
 }
 
 /// TS `measureArticle`: mustCover coverage + keyword-in-title/opening intent.
-/// `MIN_ARTICLE_WORDS` is theirs: 2000.
-const MIN_ARTICLE_WORDS: i64 = 2000;
+/// `MIN_ARTICLE_WORDS` (declared with the draft prompts) is theirs: 2000.
 
 fn measure_article(
     title: &str,
@@ -1275,7 +1339,7 @@ fn measure_article(
         .count();
     let coverage = if !items.is_empty() {
         (hit as f64) / (items.len() as f64)
-    } else if words >= MIN_ARTICLE_WORDS {
+    } else if words >= MIN_ARTICLE_WORDS as i64 {
         1.0
     } else {
         (words as f64 / MIN_ARTICLE_WORDS as f64).min(1.0)
@@ -1305,8 +1369,10 @@ fn measure_article(
 }
 
 /// Render the final markdown the way their pipeline does for model prose:
-/// `answerBlock` (if the compiler reported one) leads, then intro, body in
-/// the order the model wrote them, then the FAQ.
+/// `answerBlock` (if the compiler reported one) leads, then the intro, then
+/// the body the model wrote, then the FAQ as plain questions and answers —
+/// the same flat `### question / answer` structure the site's old build used,
+/// so readers see the whole FAQ instead of collapsed rows.
 fn render_final_markdown(title: &str, question: &str, content: &Value) -> String {
     let mut md = String::new();
     if let Some(block) = content.get("answer_block").or_else(|| content.get("answerBlock")).and_then(Value::as_str) {
@@ -1314,15 +1380,17 @@ fn render_final_markdown(title: &str, question: &str, content: &Value) -> String
             md.push_str(&format!("**{title}** {question}\n\n{block}\n\n"));
         }
     }
-    if let Some(body) = content.get("body").and_then(Value::as_str) {
-        if !body.trim().is_empty() {
-            md.push_str(body.trim_end());
-            md.push_str("\n\n");
-        }
-    }
+    // Intro first: the lede the reader sees under the H1, before the body's
+    // `##` sections start.
     if let Some(intro) = content.get("intro").and_then(Value::as_str) {
         if !intro.trim().is_empty() {
             md.push_str(intro.trim_end());
+            md.push_str("\n\n");
+        }
+    }
+    if let Some(body) = content.get("body").and_then(Value::as_str) {
+        if !body.trim().is_empty() {
+            md.push_str(body.trim_end());
             md.push_str("\n\n");
         }
     }
@@ -1333,7 +1401,12 @@ fn render_final_markdown(title: &str, question: &str, content: &Value) -> String
                 if let (Some(question), Some(answer)) =
                     (q.get("question").and_then(Value::as_str), q.get("answer").and_then(Value::as_str))
                 {
-                    md.push_str(&format!("**{question}** {answer}\n"));
+                    let question = question.trim();
+                    let answer = answer.trim();
+                    if question.is_empty() || answer.is_empty() {
+                        continue;
+                    }
+                    md.push_str(&format!("### {question}\n\n{answer}\n"));
                 }
             }
         }
@@ -1839,8 +1912,9 @@ mod tests {
 
     #[test]
     fn draft_bounds_are_rejected_not_clamped() {
+        // The 9,000-char cap is gone: a 2,000+ word body is the target now.
         assert!(validate_draft(&draft(100, 200, 0)).is_ok());
-        assert!(validate_draft(&draft(4000, 9000, 8)).is_ok());
+        assert!(validate_draft(&draft(4000, 20000, 8)).is_ok());
         assert!(
             validate_draft(&draft(99, 500, 0)).is_err(),
             "intro too short"
@@ -1850,12 +1924,8 @@ mod tests {
             "intro too long"
         );
         assert!(
-            validate_draft(&draft(500, 199, 0)).is_err(),
+            validate_draft(&draft(500, 79, 0)).is_err(),
             "body too short"
-        );
-        assert!(
-            validate_draft(&draft(500, 9001, 0)).is_err(),
-            "body too long"
         );
         assert!(validate_draft(&draft(500, 500, 9)).is_err(), "faq > 8");
     }
@@ -2053,7 +2123,7 @@ mod tests {
             model_id: "mock-1".into(),
         });
         let err = call_validated(&pool, &engine, "draft", "s", "u", |_v| {
-            Err::<(), _>(vec!["body must be 200-9000 chars (got 42)".into()])
+            Err::<(), _>(vec!["body must be at least 80 chars (got 42)".into()])
         })
         .await
         .unwrap_err();

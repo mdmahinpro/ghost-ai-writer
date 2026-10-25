@@ -114,8 +114,9 @@ export function RunDetail({ id }: { id: string }) {
   if (!hydrated) return <SkeletonRows rows={5} />;
   if (!run) return <Empty title="Run missing" body="That run is not in this studio." />;
   const site = sites.find((item) => item.id === run.siteId);
-  const key = keys.find((item) => item.id === run.modelKeyId);
-  const callsModel = keyCallsModel(key);
+  const isServerRun = run.modelKeyId === "server";
+  const key = isServerRun ? undefined : keys.find((item) => item.id === run.modelKeyId);
+  const callsModel = isServerRun ? true : keyCallsModel(key);
   const recorded = jobs.some((job) => job.modelUsage?.draft || job.modelUsage?.revision);
   const sample = { prompt: 640, completion: 812, total: 1452 };
   const metrics = runMetrics(jobs);
@@ -134,29 +135,39 @@ export function RunDetail({ id }: { id: string }) {
       <Card className="mb-4 grid gap-3 p-4 md:grid-cols-2">
         <div>
           <div className="font-mono text-xs uppercase tracking-widest text-faint">This run’s key</div>
-          <p className="mt-2 text-sm leading-6 text-muted">
-            {recorded
-              ? "Draft and revision on this run settled provider usage. The token count is the provider total, and the cost is that total times the key price per million. The article body is the model text, not the template."
-              : callsModel
-              ? `${key?.label} has a secret and a base URL. Draft and revision call the model and replace the template. The ledger uses the provider’s usage total.`
-              : `${key?.label ?? "This key"} has no secret and base URL. The article stays the template. Every stage records 0 tokens, $0, and “estimated — no model called”.`}
-          </p>
-          {key?.lastError ? (
-            <p className="mt-2 rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5 font-mono text-xs break-words text-danger">
-              {key.lastError}
-              {key.cooldownUntil ? <span className="block text-faint">Cooldown for another {Math.max(0, Math.round((key.cooldownUntil - Date.now()) / 1000))}s</span> : null}
+          {isServerRun ? (
+            <p className="mt-2 text-sm leading-6 text-muted">
+              No local key is used for this run. Draft and revision are written by the server worker using the provider sealed on the server — token counts and cost are the provider totals reported by the ledger, not estimates.
             </p>
-          ) : null}
-          {key?.cooldownUntil || key?.lastError ? (
-            <Button className="mt-2" variant="ghost" onClick={() => clearCooldowns()}>
-              Clear cooldown & retry all pending jobs
-            </Button>
-          ) : null}
+          ) : (
+            <>
+              <p className="mt-2 text-sm leading-6 text-muted">
+                {recorded
+                  ? "Draft and revision on this run settled provider usage. The token count is the provider total, and the cost is that total times the key price per million. The article body is the model text, not the template."
+                  : callsModel
+                  ? `${key?.label} has a secret and a base URL. Draft and revision call the model and replace the template. The ledger uses the provider’s usage total.`
+                  : `${key?.label ?? "This key"} has no secret and base URL. The article stays the template. Every stage records 0 tokens, $0, and “estimated — no model called”.`}
+              </p>
+              {key?.lastError ? (
+                <p className="mt-2 rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5 font-mono text-xs break-words text-danger">
+                  {key.lastError}
+                  {key.cooldownUntil ? <span className="block text-faint">Cooldown for another {Math.max(0, Math.round((key.cooldownUntil - Date.now()) / 1000))}s</span> : null}
+                </p>
+              ) : null}
+              {key?.cooldownUntil || key?.lastError ? (
+                <Button className="mt-2" variant="ghost" onClick={() => clearCooldowns()}>
+                  Clear cooldown & retry all pending jobs
+                </Button>
+              ) : null}
+            </>
+          )}
         </div>
         <div>
           <div className="font-mono text-xs uppercase tracking-widest text-faint">How a real usage object is billed</div>
           <p className="mt-2 text-sm leading-6 text-muted">
-            A provider usage of {sample.prompt} prompt + {sample.completion} completion settles {sample.total} tokens · {money(usdFor(sample.total, key?.pricePerM ?? 6))} at this key’s price. Revision is a second call. Intent, metadata, enrichment, and publish stay at 0.
+            {isServerRun
+              ? "The server worker reports the provider’s real usage per call — a provider total of prompt + completion tokens settles cost at the server provider’s rate. Revision is a second call. Intent, metadata, enrichment, and publish stay at 0."
+              : `A provider usage of ${sample.prompt} prompt + ${sample.completion} completion settles ${sample.total} tokens · ${money(usdFor(sample.total, key?.pricePerM ?? 6))} at this key’s price. Revision is a second call. Intent, metadata, enrichment, and publish stay at 0.`}
           </p>
         </div>
       </Card>

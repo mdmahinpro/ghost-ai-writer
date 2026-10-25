@@ -23,6 +23,10 @@ function css(): string {
     .card { display: flex; flex-direction: column; gap: 8px; text-decoration: none; color: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
     .card:hover { transform: translateY(-3px); border-color: #d8cbae; box-shadow: 0 20px 40px -28px rgba(34, 24, 6, 0.6); }
     .card img { aspect-ratio: 16/9; object-fit: cover; margin-bottom: 2px; }
+    /* The featured shot opens every post: wide 16:9 crop under the byline,
+       matching the og:image that ships in the same page's head. */
+    article.post figure.article-hero { margin: 6px 0 26px; border-radius: 16px; overflow: hidden; box-shadow: 0 16px 36px -26px rgba(34, 24, 6, 0.55); background: #eee4cf; }
+    article.post figure.article-hero img { aspect-ratio: 16/9; object-fit: cover; width: 100%; height: auto; }
     .card strong { font-weight: 600; line-height: 1.3; }
     .meta { font-family: "Outfit", "Avenir Next", sans-serif; font-size: 13px; letter-spacing: 0.04em; color: var(--muted); }
     main > h1 + p { color: var(--muted); max-width: 60ch; }
@@ -336,6 +340,7 @@ ${slot("site_top")}
   <p class="meta">${esc(article.keyword)}</p>
   <h1>${esc(article.title)}</h1>
   ${authorBylineHtml(author, origin)}
+  ${heroSrc ? `<figure class="article-hero"><img src="${esc(heroSrc)}" alt="${esc(hero?.alt || article.title)}" width="1200" height="675" loading="eager" decoding="async" referrerpolicy="no-referrer"></figure>` : ""}
   ${withInline}
   ${slot("article_bottom")}
 </article>

@@ -32,11 +32,12 @@ import {
   decideReview,
 } from "./engine";
 import { get, post } from "./api-client";
-import { addProvider, generate as serverGenerate, updateProvider } from "./server-generate";
+import { addProvider, generate as serverGenerate, listProviders, updateProvider } from "./server-generate";
 import {
   enqueueKeywords,
   ensureSite,
   pipelineSnapshot,
+  requeueServerJob,
 } from "./pipeline-api";
 import { mergeSnapshot } from "./server-pipeline-merge";
 import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow, publishSlots, queueCalendarItem, withSummaries } from "./operator";
@@ -409,9 +410,17 @@ function failStalledJobs(state: AppState): Persisted | null {
   const next = structuredClone(snap(state));
   for (const job of next.jobs) {
     if (job.status !== "running") continue;
+    // Server-owned jobs are watched by the server's own worker lease; the
+    // browser has no business failing them (and the local fail is a no-op
+    // the server ignores — the next poll re-merges the job as running and
+    // the loop repeats).
+    if (job.origin === "server") continue;
     const stage = job.stages[job.stageIndex];
     if (!stage || stage.status !== "running") continue;
-    if (stage.startedAt && now - stage.startedAt < STALL_TIMEOUT_MS) continue;
+    // No startedAt means the stall clock never started — unable to measure a
+    // stall here, so there is nothing to do on this tick.
+    if (!stage.startedAt) continue;
+    if (now - stage.startedAt < STALL_TIMEOUT_MS) continue;
     stage.status = "failed";
     stage.error = "Watchdog: stage stalled over 20 min. Job failed — retry from the run or article page.";
     stage.finishedAt = now;
@@ -721,12 +730,45 @@ export const useApp = create<AppState>()(
         return result.runId;
       },
       stopRun: (runId) => set((s) => ({ ...s, ...cancelRun(snap(s), runId, Date.now()) })),
-      retryJob: (jobId, fromScratch = false) =>
+      retryJob: (jobId, fromScratch = false) => {
+        const s0 = get();
+        const job0 = s0.jobs.find((item) => item.id === jobId);
+        if (job0?.origin === "server") {
+          // Server jobs are the worker's to re-dispatch: the local restartJob
+          // would only rewrite the browser's mirror, and the worker would keep
+          // seeing status FAILED. POST the flip, then reflect it locally.
+          const rawId = Number(job0.id.replace(/^srv_job_/, ""));
+          set((s) => ({ ...s, notice: { tone: "info" as const, text: "Re-enqueuing failed job on the server…" } }));
+          void requeueServerJob({ workspaceId: WORKSPACE_ID, serverJobId: rawId }).then((res) => {
+            if (!res.ok) {
+              set((s) => ({ ...s, notice: { tone: "danger", text: `Retry failed: ${res.error}` } }));
+              return;
+            }
+            set((s) => ({
+              ...s,
+              notice: { tone: "ok", text: "Job re-enqueued — the server worker will pick it up." },
+              jobs: s.jobs.map((item) =>
+                item.id !== jobId
+                  ? item
+                  : {
+                      ...item,
+                      status: "queued" as const,
+                      failReason: undefined,
+                      attempt: item.attempt ?? 1,
+                      stages: item.stages.map((stage) => ({ ...stage, startedAt: undefined, finishedAt: undefined, tokens: 0, durationMs: 0, status: "pending" as const, note: undefined })),
+                    },
+              ),
+            }));
+            void pollServerPipeline();
+          });
+          return;
+        }
         set((s) => {
           const result = restartJob(snap(s), jobId, Date.now(), fromScratch);
           if (result.error) return { ...s, notice: { tone: "danger", text: result.error } };
           return { ...s, ...result.data };
-        }),
+        });
+      },
       variantJob: (jobId) =>
         set((s) => {
           const job = s.jobs.find((item) => item.id === jobId);
@@ -1010,8 +1052,34 @@ auditNow: () => {
             priority: input.priority,
             role: "text",
           });
-          if (saved.ok) serverKeyId = saved.data.id;
-          else saveError = saved.error;
+          if (saved.ok) {
+            serverKeyId = saved.data.id;
+          } else {
+            // The POST failed — most often transiently or a duplicate row the
+            // server created earlier (it has no uniqueness constraint, so a
+            // stale UI retry stacks rows). Before surfacing an error, look for
+            // the same key already on file and adopt its id: the browser then
+            // binds to the working row instead of stacking another one.
+            const list = await listProviders(WORKSPACE_ID);
+            if (list.ok) {
+              const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+              const match = list.data.find(
+                (p) =>
+                  p.role === "text" &&
+                  norm(p.label) === norm(label) &&
+                  norm(p.modelId) === norm(model) &&
+                  norm(p.baseUrl) === norm(baseUrl),
+              );
+              if (match) {
+                serverKeyId = match.id;
+                saveError = undefined;
+              } else {
+                saveError = saved.error;
+              }
+            } else {
+              saveError = saved.error;
+            }
+          }
         }
 
         const nextKey: AiKey = {
