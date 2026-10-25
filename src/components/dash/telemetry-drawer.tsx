@@ -1,31 +1,65 @@
 /**
  * Right-hand telemetry drawer.
  *
- * IMPORTANT — what this shows and why it is not CPU/Memory/Network:
- * the brief asks for host CPU, memory and network egress. This API does not
- * collect them: there is no metrics endpoint, and the worker heartbeat carries
- * only liveness and an active-job count. Drawing a CPU curve from nothing would
- * be a fabricated chart, so the three sparklines show series we genuinely have
- * per bucket — jobs completed, words written, tokens settled — and the panel
- * says so. Adding real CPU/memory means adding a metrics endpoint to the Rust
- * service; that is a separate job, not a styling one.
+ * Two kinds of number, deliberately separated:
+ *
+ *  - **Measured** (`GET /v1/metrics`): process RSS, OS threads, CPU seconds, uptime,
+ *    database size, and real queue depth from the jobs table. These come from the
+ *    running Rust service, so they are facts. A null rendered as "unavailable" means
+ *    this host does not expose the value — never a stand-in curve.
+ *  - **Derived per bucket**: completions, words and tokens settled, which is what
+ *    the overview has always charted.
  *
  * The log stream underneath is the real activity feed: timestamped, monospace,
  * newest first, exactly what the server and the browser actually recorded.
  */
+import { useEffect, useState } from "react";
 import { Sparkline } from "./sparkline";
+import { fetchProcessMetrics, formatBytes, formatDuration, type ProcessMetrics } from "../../lib/process-metrics.ts";
 
 export type TelemetrySeries = { label: string; hint: string; values: number[]; color: string };
 export type LogLine = { id: string; at: number; tone: string; message: string };
 
+const POLL_MS = 15000;
+
 export function TelemetryDrawer({ series, logs }: { series: TelemetrySeries[]; logs: LogLine[] }) {
+  const [process, setProcess] = useState<ProcessMetrics | null>(null);
+  const [asked, setAsked] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    async function tick() {
+      const next = await fetchProcessMetrics();
+      if (!live) return;
+      setAsked(true);
+      if (next) setProcess(next);
+    }
+    void tick();
+    const timer = window.setInterval(() => void tick(), POLL_MS);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   return (
     <section data-surface="card" className="flex h-full flex-col rounded-lg border border-line bg-elev p-5">
       <div className="mb-3">
         <h2 className="text-[15px] font-semibold tracking-[-0.01em]">Telemetry</h2>
         <p className="mt-0.5 text-[13px] leading-5 text-faint">
-          Throughput per bucket. Host CPU, memory and network are not collected by this API yet.
+          Measured process and queue figures, refreshed every {POLL_MS / 1000}s, plus throughput per bucket.
         </p>
+      </div>
+
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        <Cell label="Memory" value={formatBytes(process?.rss_bytes)} />
+        <Cell label="Threads" value={process?.threads == null ? "unavailable" : String(process.threads)} />
+        <Cell label="Uptime" value={process ? formatDuration(process.uptime_secs) : asked ? "unavailable" : "…"} />
+        <Cell label="Database" value={formatBytes(process?.db_bytes)} />
+        <Cell label="Queued" value={process ? String(process.jobs_queued) : "…"} />
+        <Cell label="Running" value={process ? String(process.jobs_running) : "…"} />
+        <Cell label="Failed" value={process ? String(process.jobs_failed) : "…"} />
+        <Cell label="Shipped 1h" value={process ? String(process.completed_last_hour) : "…"} />
       </div>
 
       <div className="space-y-3">
@@ -65,6 +99,15 @@ export function TelemetryDrawer({ series, logs }: { series: TelemetrySeries[]; l
         </div>
       </div>
     </section>
+  );
+}
+
+function Cell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-line bg-surface-2/40 px-2.5 py-1.5">
+      <div className="text-[10px] font-medium uppercase tracking-[0.1em] text-faint">{label}</div>
+      <div className="font-mono text-[13px] tabular-nums text-fg">{value}</div>
+    </div>
   );
 }
 

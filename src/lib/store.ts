@@ -261,7 +261,7 @@ export type AppState = Persisted & {
   decideJob: (jobId: string, approve: boolean) => void;
   releaseJob: (jobId: string) => void;
   saveProvider: (providerId: DeployProvider["id"], hint: string) => void;
-  saveFtp: (providerId: "cpanel", ftp: { host: string; user: string; path: string; password: string; port?: number; publicUrl?: string; via?: "ftps" | "sftp" }) => boolean;
+  saveFtp: (providerId: "cpanel", ftp: { host: string; user: string; path: string; password: string; port?: number; publicUrl?: string; via?: "ftps" | "sftp"; trust_cert?: boolean }) => boolean;
   createWorkspace: (name: string) => void;
   deleteWorkspace: (id: string) => void;
   deleteArticles: (ids: string[]) => void;
@@ -753,7 +753,7 @@ export const useApp = create<AppState>()(
           if (result.error) return { ...s, notice: { tone: "danger", text: result.error } };
           return { ...s, ...result.data };
         }),
-      saveFtp: (providerId: "cpanel", ftp: { host: string; user: string; path: string; password: string; port?: number; publicUrl?: string; via?: "ftps" | "sftp" }) => {
+      saveFtp: (providerId: "cpanel", ftp: { host: string; user: string; path: string; password: string; port?: number; publicUrl?: string; via?: "ftps" | "sftp"; trust_cert?: boolean }) => {
         let saved = false;
         set((s) => {
           const host = ftp.host.trim();
@@ -764,7 +764,7 @@ export const useApp = create<AppState>()(
             return { ...s, notice: { tone: "danger" as const, text: "FTP needs a hostname, username, and password before it can be saved." } };
           }
           saved = true;
-          const path = ftp.path.trim() || "/";
+          const path = ftp.path.trim() || "/public_html";
           const hint = `${host} · ${user} · ${path}`;
           return {
             ...s,
@@ -777,7 +777,7 @@ export const useApp = create<AppState>()(
                     publicUrl: ftp.publicUrl?.trim() || site.publicUrl,
                     providers: site.providers.map((provider) =>
                       provider.id === providerId
-                        ? { ...provider, status: provider.status === "verified" ? "verified" : "configured", hint, ftp: { host, user, path, password, port: ftp.port || 21, publicUrl: ftp.publicUrl?.trim() || "", via: ftp.via || current?.via || "ftps" } }
+                        ? { ...provider, status: provider.status === "verified" ? "verified" : "configured", hint, ftp: { host, user, path, password, port: ftp.port || 21, publicUrl: ftp.publicUrl?.trim() || "", via: ftp.via || current?.via || "ftps", trust_cert: ftp.trust_cert ?? current?.trust_cert ?? true } }
                         : provider,
                     ),
                   },

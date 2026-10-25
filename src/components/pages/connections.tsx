@@ -27,7 +27,8 @@ export function ConnectionsPage() {
   const [ftpUser, setFtpUser] = useState("");
   const [ftpPass, setFtpPass] = useState("");
   const [ftpPort, setFtpPort] = useState("21");
-  const [ftpPath, setFtpPath] = useState("/");
+  const [ftpPath, setFtpPath] = useState("/public_html");
+  const [ftpTrustCert, setFtpTrustCert] = useState(true);
   const [ftpPublic, setFtpPublic] = useState("");
   const [ftpNote, setFtpNote] = useState("");
   const [ftpTone, setFtpTone] = useState<"ok" | "danger">("danger");
@@ -251,6 +252,8 @@ export function ConnectionsPage() {
                 password={ftpPass}
                 port={ftpPort}
                 path={ftpPath}
+                trustCert={ftpTrustCert}
+                onTrustCert={setFtpTrustCert}
                 publicUrl={ftpPublic || site.publicUrl}
                 note={ftpNote}
                 tone={ftpTone}
@@ -361,6 +364,7 @@ function CpanelCard({
   password,
   port,
   path,
+  trustCert,
   publicUrl,
   note,
   tone,
@@ -374,6 +378,7 @@ function CpanelCard({
   onPassword,
   onPort,
   onPath,
+  onTrustCert,
   onPublic,
   onToggleEdit,
   onToggleSteps,
@@ -387,6 +392,7 @@ function CpanelCard({
   password: string;
   port: string;
   path: string;
+  trustCert: boolean;
   publicUrl: string;
   note: string;
   tone: "ok" | "danger";
@@ -400,11 +406,12 @@ function CpanelCard({
   onPassword: (value: string) => void;
   onPort: (value: string) => void;
   onPath: (value: string) => void;
+  onTrustCert: (value: boolean) => void;
   onPublic: (value: string) => void;
   onToggleEdit: () => void;
   onToggleSteps: () => void;
-  onSave: (fields: { host: string; user: string; password: string; path: string; port: number; publicUrl: string }) => void;
-  onTest: (fields: { host: string; user: string; password: string; path: string; port: number; publicUrl: string }) => void;
+  onSave: (fields: { host: string; user: string; password: string; path: string; port: number; publicUrl: string; trust_cert: boolean }) => void;
+  onTest: (fields: { host: string; user: string; password: string; path: string; port: number; publicUrl: string; trust_cert: boolean }) => void;
   onDisconnect: () => void;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -416,9 +423,12 @@ function CpanelCard({
       host: String(data.get("host") ?? host).trim() || saved?.host || "",
       user: String(data.get("user") ?? user).trim() || saved?.user || "",
       password: typedPassword || saved?.password || "",
-      path: String(data.get("path") ?? path).trim() || saved?.path || "/",
+      path: String(data.get("path") ?? path).trim() || saved?.path || "/public_html",
       port: Number(data.get("port") ?? port) || saved?.port || 21,
       publicUrl: String(data.get("publicUrl") ?? publicUrl).trim(),
+      // The protocol needs to know whether to verify the host's certificate, and a
+      // checkbox inside a form only reports itself when ticked — so pass the state.
+      trust_cert: trustCert,
     };
   }
   const shownHost = host || saved?.host || "";
@@ -486,12 +496,27 @@ function CpanelCard({
           <Field label="FTP port" hint="21 for explicit TLS on most cPanel hosts.">
             <input className={fieldClass} name="port" value={port} onChange={(event) => onPort(event.target.value)} inputMode="numeric" aria-label="FTP port" />
           </Field>
-          <Field label="Remote directory" hint="Use /. This FTP account is already inside public_html, so public_html is not a folder you can open.">
+          <Field label="Remote directory" hint="Use /public_html when the FTP account is chrooted to it, or / when the server shows public_html as a folder. The test falls back to the other if this one does not open.">
             <input className={fieldClass} name="path" value={path} onChange={(event) => onPath(event.target.value)} aria-label="Remote directory" />
           </Field>
           <Field label="Public site URL" hint="The site this directory serves. Used later to confirm the upload.">
             <input className={fieldClass} name="publicUrl" value={publicUrl} onChange={(event) => onPublic(event.target.value)} placeholder="https://example.com" aria-label="Public site URL" />
           </Field>
+          <div className="sm:col-span-2">
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line p-3">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={trustCert}
+                onChange={(event) => onTrustCert(event.target.checked)}
+                aria-label="Trust this server's certificate"
+              />
+              <span className="text-xs text-muted">
+                <span className="block text-sm text-ink">Trust this server's certificate</span>
+                Allow a mismatched name or a self-signed certificate. Shared cPanel hosts normally present the provider's own certificate, which is why this is on by default. Clear it to verify the chain and the name against the public roots.
+              </span>
+            </label>
+          </div>
           <div className="sm:col-span-2">
             <Button type="submit">Save changes</Button>
             <p className="mt-2 text-xs text-faint">Saving stores the login in this browser and switches the badge to CONFIGURED. It does not mark the host verified — run Test connection after saving.</p>

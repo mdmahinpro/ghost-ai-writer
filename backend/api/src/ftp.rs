@@ -72,14 +72,27 @@ impl ServerCertVerifier for AcceptAnyCertificate {
     }
 }
 
-fn tls_config() -> Arc<ClientConfig> {
+fn tls_config(trust_cert: bool) -> Arc<ClientConfig> {
     let provider = Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
-    let mut config = ClientConfig::builder_with_provider(provider.clone())
+    let builder = ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&tokio_rustls::rustls::version::TLS12])
-        .expect("TLS 1.2 is compiled in")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyCertificate { provider }))
-        .with_no_client_auth();
+        .expect("TLS 1.2 is compiled in");
+    // Shared cPanel hosts routinely present a certificate for the provider's own
+    // hostname, so trusting it is the default and the UI says so. Clearing the box
+    // is a real request to verify the chain and the name against the public roots.
+    let mut config = if trust_cert {
+        builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAnyCertificate { provider }))
+            .with_no_client_auth()
+    } else {
+        let mut roots = tokio_rustls::rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let verifier = tokio_rustls::rustls::client::WebPkiServerVerifier::builder(Arc::new(roots))
+            .build()
+            .expect("a verifier over the public roots always builds");
+        builder.with_webpki_verifier(verifier).with_no_client_auth()
+    };
     // The ticket cache lives in the config, so every data connection built from
     // it presents the control connection's session — what cPanel requires.
     config.resumption = tokio_rustls::rustls::client::Resumption::in_memory_sessions(32);
@@ -151,9 +164,20 @@ pub struct FtpTarget {
     pub port: Option<u16>,
     #[serde(default)]
     pub path: Option<String>,
+    /// Accept the host's certificate even when the name does not match or it is
+    /// self-signed. cPanel hosts on shared platforms normally need this, so it
+    /// defaults to true; false means verify against the public roots.
+    #[serde(default)]
+    pub trust_cert: Option<bool>,
 }
 
 impl FtpTarget {
+    /// Trusting is the default: shared cPanel hosts present their provider's own
+    /// certificate, and rejecting it would break the connection that works today.
+    fn trusts_certificate(&self) -> bool {
+        self.trust_cert.unwrap_or(true)
+    }
+
     fn port(&self) -> u16 {
         self.port.filter(|p| *p > 0).unwrap_or(21)
     }
@@ -196,7 +220,7 @@ async fn open(target: &FtpTarget) -> Result<(Stream, Arc<ClientConfig>), String>
 
     // One config per request: its ticket cache is what makes the data connection
     // resume the control connection's session.
-    let config = tls_config();
+    let config = tls_config(target.trusts_certificate());
     let connector = TlsConnector::from(config.clone());
     let name = server_name(&target.host).ok_or_else(|| "That host is not a valid name.".to_string())?;
     let mut plain = tcp;
@@ -346,7 +370,7 @@ pub async fn upload(target: &FtpTarget, files: &[UploadedFile]) -> Value {
     };
     let result = async {
         attach_protected(&mut control).await?;
-        enter(&mut control, &target.path()).await?;
+        enter_first(&mut control, &target.path()).await?;
         let mut made: Vec<String> = Vec::new();
         for file in files {
             if file.name.is_empty() || file.name.contains("..") {
@@ -416,6 +440,32 @@ async fn enter(control: &mut Stream, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Candidates for the remote directory, in order: what was configured, then the two
+/// ways cPanel accounts present the same folder. An FTP account created for a
+/// domain is usually chrooted, so `/public_html` and `/` are often the same place —
+/// guessing wrong must not fail an otherwise-good login.
+fn path_candidates(configured: &str) -> Vec<String> {
+    let mut out = vec![configured.to_string()];
+    for candidate in ["/public_html", "/"] {
+        if !out.iter().any(|seen| seen == candidate) {
+            out.push(candidate.to_string());
+        }
+    }
+    out
+}
+
+/// Open the first candidate directory that the server accepts, and say which.
+async fn enter_first(control: &mut Stream, configured: &str) -> Result<String, String> {
+    let mut last = "Could not open the remote directory.".to_string();
+    for candidate in path_candidates(configured) {
+        match enter(control, &candidate).await {
+            Ok(()) => return Ok(candidate),
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     #[serde(flatten)]
@@ -469,8 +519,8 @@ pub async fn test_login(req: &LoginRequest) -> Value {
     }
     let path = target.path();
     let cwd_started = Instant::now();
-    match enter(&mut control, &path).await {
-        Ok(()) => steps.push(step("CWD", cwd_started, true, format!("Opened {path}"))),
+    match enter_first(&mut control, &path).await {
+        Ok(opened) => steps.push(step("CWD", cwd_started, true, format!("Opened {opened}"))),
         Err(error) => {
             steps.push(step("CWD", cwd_started, false, error.clone()));
             let _ = send(&mut control, "QUIT").await;
@@ -535,6 +585,38 @@ pub async fn test_login(req: &LoginRequest) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_configured_remote_directory_is_tried_first_with_safe_fallbacks() {
+        // cPanel accounts are either chrooted (`/public_html` and `/` are the same
+        // place) or not, so a wrong guess must not fail an otherwise-good login.
+        assert_eq!(
+            path_candidates("/public_html"),
+            vec!["/public_html".to_string(), "/".to_string()]
+        );
+        assert_eq!(
+            path_candidates("/"),
+            vec!["/".to_string(), "/public_html".to_string()]
+        );
+        let custom = path_candidates("/domains/x.com/public_html");
+        assert_eq!(custom.first().map(String::as_str), Some("/domains/x.com/public_html"));
+        assert_eq!(custom.len(), 3);
+    }
+
+    #[test]
+    fn verifying_the_certificate_is_opt_out_not_opt_in() {
+        let mut target = FtpTarget {
+            host: "ftp.example.com".into(),
+            user: "u".into(),
+            password: "p".into(),
+            port: None,
+            path: None,
+            trust_cert: None,
+        };
+        assert!(target.trusts_certificate(), "shared cPanel hosts need this by default");
+        target.trust_cert = Some(false);
+        assert!(!target.trusts_certificate());
+    }
 
     #[test]
     fn a_passive_reply_is_parsed_into_host_and_port() {

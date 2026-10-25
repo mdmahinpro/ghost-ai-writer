@@ -377,7 +377,7 @@ export type DeployProvider = {
   capability: string;
   status: "not_connected" | "configured" | "verified";
   hint: string;
-  ftp?: { host: string; user: string; path: string; password: string; port?: number; publicUrl?: string; via?: "ftps" | "sftp" };
+  ftp?: { host: string; user: string; path: string; password: string; port?: number; publicUrl?: string; via?: "ftps" | "sftp"; trust_cert?: boolean };
   /** Rule 6: API credential slot for Cloudflare Pages / Vercel / GitHub Pages. Secrets stay in this browser and are never logged. */
   api?: {
     accountId?: string;
