@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_LIMITS, type AiKey, type Article, type Persisted, type Site } from "./types.ts";
+import { DEFAULT_LIMITS, type AiKey, type Article, type Job, type Persisted, type Site } from "./types.ts";
 import { AD_CODE_LIMIT, defaultAdSlots } from "./types.ts";
 import { buildCalendar, migrateCalendar, publishSlots } from "./operator.ts";
-import { packageDeploy, resolveRouteDiff, routeDiffFor } from "./engine.ts";
+import { manualBuild, packageDeploy, resolveRouteDiff, routeDiffFor } from "./engine.ts";
 import { adCodeWithinLimit, adSlotHtml, adsConfigHash, injectInlineAd, inlineAdTargetOk, staticFiles } from "./static-site.ts";
 import { reweaveDecision, reweavePutBody, withEdgeState } from "./reweave.ts";
 
@@ -338,4 +338,39 @@ test("Rule 6: Ghost PUT re-weave — optimistic lock payload + LinkEdge transiti
   assert.equal(confirmed[0]!.state, "GHOST_CONFIRMED");
   assert.equal(confirmed[1]!.state, "LOCAL", "other edges untouched");
   assert.equal(withEdgeState(links, "post-b", "FAILED")[1]!.state, "FAILED");
+});
+
+test("a published article nothing links to is still built, never dropped as an orphan", () => {
+  // Two published articles with no internal links between them: every page is an
+  // orphan. Excluding orphans used to leave nothing, fail the build, and take the
+  // whole site down over what is only a linking warning.
+  const data = fixture({ articles: [article("alpha"), article("beta")] });
+  const build = manualBuild(data, "s1", 1000).builds[0]!;
+  assert.equal(build.status, "succeeded");
+  assert.equal(build.pages, 2, "both orphaned articles are published");
+  assert.equal(build.includedIds.length, 2);
+  assert.equal(build.excluded.some((row) => row.reason === "orphan"), false, "orphan is not an exclusion reason");
+  const files = build.artifact.map((file) => file.name);
+  assert.ok(files.some((name) => name.includes("alpha")), `expected a page for alpha: ${files.join(", ")}`);
+  assert.ok(files.some((name) => name.includes("beta")), `expected a page for beta: ${files.join(", ")}`);
+});
+
+test("a build with nothing publishable still fails, and the reason names the scope checks", () => {
+  const data = fixture({ articles: [article("alpha", { status: "draft" }), article("beta", { status: "draft" })] });
+  const build = manualBuild(data, "s1", 1000).builds[0]!;
+  assert.equal(build.status, "failed");
+  assert.match(build.detail ?? "", /nothing is publishable/);
+  assert.match(build.detail ?? "", /2 still draft/, "the operator is told what actually blocked it");
+  assert.equal(build.excluded.every((row) => row.reason === "draft"), true);
+  assert.equal(build.artifact.length, 0, "a failed build ships no files");
+});
+
+test("a build blocked by a failed gate says so instead of blaming orphans", () => {
+  // Only id and status are read off the source job here.
+  const job = { id: "j1", status: "failed" } as unknown as Job;
+  const data = fixture({ articles: [article("alpha")], jobs: [job] });
+  const build = manualBuild(data, "s1", 1000).builds[0]!;
+  assert.equal(build.status, "failed");
+  assert.match(build.detail ?? "", /held by a failed gate/);
+  assert.equal(build.excluded[0]?.reason, "failed gate");
 });

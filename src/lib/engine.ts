@@ -23,7 +23,7 @@ import { esc, hashStr, uid } from "./utils.ts";
 import { adsConfigHash, buildRoutes, hashArtifact, staticFiles } from "./static-site.ts";
 import { markAuthorPublished, matchOrCreateAuthorForTopic, authorVoiceBlock } from "./authors.ts";
 import type { BladerChat } from "./humanizer.ts";
-import { anchorPhrase, alreadyLinked, inboundCount, insertAnchor, linkEdge, linkSentence, orphansOf, postHref, retargetAnchor, unwrapAnchor } from "./link-graph.ts";
+import { anchorPhrase, alreadyLinked, inboundCount, insertAnchor, linkEdge, linkSentence, postHref, retargetAnchor, unwrapAnchor } from "./link-graph.ts";
 import { cosine, embed, embedAllForL3, embedForL3, type L3EmbedSource } from "./l3-embed.ts";
 import { applyFetchedImages } from "./media-html.ts";
 import {
@@ -2486,22 +2486,32 @@ function createBuild(data: Persisted, site: Site, now: number, auto: boolean): S
   }
   const candidates = data.articles.filter((article) => article.siteId === site.id);
   const excluded: { id: string; reason: string }[] = [];
-  const indexable = candidates.filter((article) => {
+  const included = candidates.filter((article) => {
     if (article.status !== "published") { excluded.push({ id: article.id, reason: "draft" }); return false; }
     const sourceJob = data.jobs.find((job) => job.id === article.jobId);
     if (sourceJob?.status === "failed" || sourceJob?.status === "refused") { excluded.push({ id: article.id, reason: "failed gate" }); return false; }
     if (!validatePublicUrl(site.publicUrl).ok) { excluded.push({ id: article.id, reason: "missing public URL" }); return false; }
     return true;
   });
-  const orphans = orphansOf(indexable);
-  const included = indexable.filter((article) => {
-    if (orphans.some((orphan) => orphan.id === article.id)) {
-      excluded.push({ id: article.id, reason: "orphan" });
-      return false;
-    }
-    return true;
-  });
-  if (!included.length) return { id: uid("bld"), siteId: site.id, status: "failed", pages: 0, bytes: 0, ms: 180, at: now, auto, template: site.template, detail: "Build failed: no indexable articles remain after scope and orphan checks.", includedIds: [], excluded, artifact: [] };
+  // An article nothing links to is still published. Being an orphan is an SEO
+  // warning — it is called out on Analytics — and never a reason to drop a page:
+  // the newest article is an orphan until a sibling links to it, so excluding
+  // orphans empties the site and, once nothing is left, fails the whole build
+  // and takes every other page down with it.
+  if (!included.length) {
+    // The operator has to be able to tell *why* nothing is publishable, so the
+    // message names the actual exclusions instead of a blanket refusal.
+    const drafts = excluded.filter((row) => row.reason === "draft").length;
+    const gated = excluded.filter((row) => row.reason === "failed gate").length;
+    const reasons = [
+      drafts ? `${drafts} still draft` : "",
+      gated ? `${gated} held by a failed gate` : "",
+    ].filter(Boolean);
+    const detail = candidates.length
+      ? `Build failed: nothing is publishable — ${reasons.join(" · ")}. Publish an article, or clear the failed gate, and build again.`
+      : "Build failed: this site has no articles yet. Write one and build again.";
+    return { id: uid("bld"), siteId: site.id, status: "failed", pages: 0, bytes: 0, ms: 180, at: now, auto, template: site.template, detail, includedIds: [], excluded, artifact: [] };
+  }
   const artifact = staticFiles(site, included, true, data.authors.filter((author) => author.siteId === site.id)).map((file) => ({ ...file, hash: hashArtifact(file.text) }));
   const pages = included.length;
   const bytes = artifact.reduce((sum, file) => sum + new TextEncoder().encode(file.text).length, 0);
