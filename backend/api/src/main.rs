@@ -1040,10 +1040,19 @@ async fn main() {
                     .map(|d| d.as_millis() as i64)
                     .unwrap_or(0);
                 match calendar::pulse_all(&pool_cal, now_ms).await {
-                    Ok(summary) if summary.queued > 0 || summary.skipped_no_site > 0 => {
+                    Ok(summary)
+                        if summary.queued > 0
+                            || summary.published > 0
+                            || summary.held > 0
+                            || summary.failed > 0
+                            || summary.skipped_no_site > 0 =>
+                    {
                         tracing::info!(
-                            "calendar pulse queued {} item(s), skipped {} without a server site id",
+                            "calendar pulse: queued {}, published {}, held {}, failed {}, skipped {}",
                             summary.queued,
+                            summary.published,
+                            summary.held,
+                            summary.failed,
                             summary.skipped_no_site
                         )
                     }

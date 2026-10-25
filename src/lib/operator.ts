@@ -334,17 +334,11 @@ export async function pulseCalendars(data: Persisted, now: number): Promise<Pers
   // article starts writing whether or not a tab is open. Doing it in both
   // places would queue the same item twice while the client's copy still reads
   // SCHEDULED.
+  //
+  // `autoPublish` moved with it, for the same reason: the server releases the
+  // item and pushes it to Ghost itself now. Publishing from both sides would
+  // create the post twice.
   syncCalendarItems(next);
-  for (const calendar of [...next.calendars]) {
-    if (!calendar.autoPublish) continue;
-    for (const item of calendar.items) {
-      if (item.status !== "READY" || !item.jobId || item.publishAt > now) continue;
-      const result = publishCalendarItemNow(next, calendar.id, item.id, now);
-      if (result.error) continue;
-      next = result.data;
-      changed = true;
-    }
-  }
   for (const calendar of [...next.calendars]) {
     if (!calendar.autoReweave) continue;
     if (reweaveCalendar(next, calendar, now)) changed = true;
