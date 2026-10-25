@@ -1,0 +1,22 @@
+-- 0010_max_tokens_floor.sql — raise the output-token budget for drafts.
+--
+-- 0004 defaulted `max_tokens` to 4096. That is fine for a title or a brief, but
+-- the draft stage asks for 2,000+ words of prose wrapped in JSON: roughly 3,000
+-- words of output once keys, escapes and quotes are counted, which needs about
+-- 6,000 tokens. At 4096 the provider stops mid-string and the reply arrives as
+-- truncated JSON, surfacing to the user as
+--   "draft rejected: response was not valid JSON: EOF while parsing a string"
+-- — a budget problem reported as a format problem.
+--
+-- SQLite cannot `ALTER COLUMN ... SET DEFAULT` (there is no such statement), and
+-- the column already carries DEFAULT 4096 from 0004 while Python-free SQLite has
+-- no way to drop it. So this migration only fixes the *data*: every existing row
+-- below the new floor is lifted.
+--
+-- The future default is handled in code instead: provider.rs `insert_provider`
+-- writes 8192 when the request omits max_tokens, so every new row gets a usable
+-- budget regardless of what the column default says.
+
+-- Lift every row that cannot produce a valid draft. A deliberately larger value
+-- is left alone; anything at or below the old 4096 default is raised.
+UPDATE ai_keys SET max_tokens = 8192 WHERE max_tokens < 8192;

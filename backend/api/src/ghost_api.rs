@@ -124,6 +124,21 @@ pub async fn test_connection(target: &GhostTarget) -> Value {
             if status == 401 || status == 403 {
                 return json!({ "ok": false, "error": "Ghost refused the Admin API key." });
             }
+            // A 404 on the Admin API path usually means there is no Ghost at this
+            // address at all: the host is up, but nothing serves /ghost/. Saying
+            // just "HTTP 404" sends people hunting for a key problem that is
+            // really a wrong-URL problem, so name the likely cause.
+            if status == 404 {
+                return json!({
+                    "ok": false,
+                    "error": format!(
+                        "No Ghost Admin API at {origin}. The host answered 404, which means it is \
+                         reachable but is not serving Ghost at this address. Check that the URL is \
+                         the site's Ghost origin (for example https://example.com) and not a \
+                         subdomain or path that points somewhere else."
+                    )
+                });
+            }
             if !(200..300).contains(&status) {
                 return json!({ "ok": false, "error": format!("Ghost returned HTTP {status}.") });
             }

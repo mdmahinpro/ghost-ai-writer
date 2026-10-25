@@ -10,7 +10,7 @@
 import type { AuthorProfile, AuthorVoice, Persisted, Site } from "./types.ts";
 import { DEFAULT_AUTHOR_CAP } from "./types.ts";
 import { hashStr, uid } from "./utils.ts";
-import { avatarSourceUrl, isOurAvatarUrl } from "./avatar.ts";
+import { avatarSourceUrl, avatarToken, isOurAvatarUrl } from "./avatar.ts";
 
 const FIRST = [
   "Elena", "Marcus", "Priya", "Jordan", "Caleb", "Naomi", "Andre", "Hannah", "Luis", "Claire",
@@ -350,15 +350,16 @@ export function voiceFor(siteId: string, stem: string, pov?: AuthorVoice["pov"])
 }
 
 /**
- * External avatar URL string only. Each author gets a unique token so a fresh,
- * distinct portrait resolves per person. Nothing is ever fetched or written to
- * disk — the static build stores this short string, not an image file. The URL
- * points straight at thispersondoesnotexist.com, which renders a brand-new face
- * on every request, so the byline portrait keeps changing over time.
+ * External avatar URL string only. Each author gets a unique `r=` token so the
+ * portrait URL is distinct per person and never duplicated across authors.
+ * Nothing is ever fetched or written to disk — the static build stores this
+ * short string, not an image file, so speed and page weight are unaffected.
+ *
+ * The upstream host renders a brand-new face per request. That means the token
+ * is not what selects the face; it guarantees a unique, stable URL per author.
  */
 export function avatarUrlFor(seed: string): string {
-  const token = hashStr(`avatar:${seed}`).toString(36) + hashStr(`avatar2:${seed}`).toString(36);
-  return avatarSourceUrl(token.slice(0, 20));
+  return avatarSourceUrl(avatarToken(seed));
 }
 
 export function generateAuthorForTopic(topic: string, siteId: string, options: { niche?: string } = {}): AuthorProfile {

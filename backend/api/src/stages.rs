@@ -579,7 +579,7 @@ where
                 return Err(StageError::Engine(e));
             }
         };
-        let value: Value = match serde_json::from_str(completion.text.trim()) {
+        let value: Value = match parse_json_response(&completion.text) {
             Ok(v) => v,
             Err(e) => {
                 let errs = vec![format!("response was not valid JSON: {e}")];
@@ -601,6 +601,86 @@ where
             }
         }
     }
+}
+
+/// Pull a JSON object out of a model reply.
+///
+/// Models wrap structured output in ```json fences, prepend "Here is the
+/// article:", or append a trailing sentence. Parsing the raw text made every
+/// one of those a hard stage failure ("response was not valid JSON: expected
+/// value at line 1 column 1"), which is a parsing problem, not a content
+/// problem. This tries the text as-is, then the fenced/braced candidate.
+fn parse_json_response(text: &str) -> Result<Value, serde_json::Error> {
+    let trimmed = text.trim();
+
+    // 1. The happy path: the model returned bare JSON.
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        return Ok(v);
+    }
+
+    // 2. Strip a ```json ... ``` (or bare ```) fence if present, then retry.
+    if let Some(inner) = strip_code_fence(trimmed) {
+        if let Ok(v) = serde_json::from_str::<Value>(inner.trim()) {
+            return Ok(v);
+        }
+    }
+
+    // 3. Last resort: take the widest brace-balanced slice and try that, which
+    //    handles prose on either side of an otherwise valid object.
+    if let Some(slice) = balanced_object_slice(trimmed) {
+        if let Ok(v) = serde_json::from_str::<Value>(slice) {
+            return Ok(v);
+        }
+    }
+
+    // Nothing worked: report the error from the original text so the message
+    // still points at the real reply.
+    serde_json::from_str::<Value>(trimmed)
+}
+
+/// The contents of the first fenced block, if the text contains one.
+fn strip_code_fence(text: &str) -> Option<&str> {
+    let start = text.find("```")?;
+    let after = &text[start + 3..];
+    // Skip an optional language tag ("json", "JSON", "").
+    let body_start = after.find('\n').map(|i| i + 1).unwrap_or(0);
+    let body = &after[body_start..];
+    let end = body.find("```")?;
+    Some(&body[..end])
+}
+
+/// The slice from the first `{` to its matching `}`, ignoring braces inside
+/// strings. Returns `None` when there is no balanced object.
+fn balanced_object_slice(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -1794,11 +1874,19 @@ pub async fn run_validation(
         .await?;
     }
 
+    // Assign the byline at finalize. The Bing checklist gates on a named author
+    // with a city and beat; without this the server-backed row had no byline and
+    // the gate could never pass. Deterministic per (site, keyword) so the same
+    // article always gets the same writer across reruns.
+    let (author_name, author_slug, author_beat, author_city) =
+        crate::byline::for_article(site_id, &keyword);
+
     // Finalize the article row.
     sqlx::query(
         "UPDATE articles SET status = ?, slug = ?, content_json = ?, content_format = 'markdown', \
          uniqueness_score = ?, coverage_score = ?, intent_match = ?, ghost_post_id = ?, \
-         published_at = COALESCE(?, published_at) WHERE id = ?",
+         published_at = COALESCE(?, published_at), \
+         author_name = ?, author_slug = ?, author_beat = ?, author_city = ? WHERE id = ?",
     )
     .bind(&article_status)
     .bind(&slug)
@@ -1808,6 +1896,10 @@ pub async fn run_validation(
     .bind(intent)
     .bind(ghost_post_id.as_deref())
     .bind(if ghost_post_id.is_some() { Some(now.to_string()) } else { None })
+    .bind(&author_name)
+    .bind(&author_slug)
+    .bind(&author_beat)
+    .bind(&author_city)
     .bind(article_id)
     .execute(pool)
     .await?;
@@ -1852,6 +1944,51 @@ pub async fn run_validation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Models wrap JSON in fences or add prose around it. Parsing the raw text
+    /// turned those replies into hard stage failures even though the JSON was
+    /// perfectly good, so each shape here must parse.
+    #[test]
+    fn json_is_extracted_from_fences_and_surrounding_prose() {
+        let cases = [
+            // Bare JSON, the happy path.
+            r#"{"a":1}"#,
+            // Fenced with a language tag.
+            "```json\n{\"a\":1}\n```",
+            // Fenced with no language tag and leading prose.
+            "Here is the article:\n```\n{\"a\":1}\n```\nHope that helps!",
+            // Prose on both sides, no fence.
+            "Sure! {\"a\":1} Let me know if you need changes.",
+            // Newlines and indentation inside the object.
+            "{\n  \"a\": 1\n}",
+        ];
+        for case in cases {
+            let parsed = parse_json_response(case)
+                .unwrap_or_else(|e| panic!("failed to parse {case:?}: {e}"));
+            assert_eq!(parsed["a"], 1, "wrong value for {case:?}");
+        }
+    }
+
+    /// A brace inside a string must not be treated as the closing brace: the
+    /// scan has to track string state, or an object like {"a":"}"} would be cut
+    /// short at the brace in the value and fail to parse.
+    #[test]
+    fn braces_inside_strings_do_not_close_the_object() {
+        let parsed = parse_json_response(r#"prose {"a":"}","b":2} trailing"#)
+            .expect("brace inside a string must not truncate the object");
+        assert_eq!(parsed["a"], "}");
+        assert_eq!(parsed["b"], 2);
+    }
+
+    /// Genuinely broken JSON must still be rejected, and the error must come
+    /// from the original text so the message points at what the model sent.
+    #[test]
+    fn invalid_json_is_still_rejected() {
+        assert!(parse_json_response("not json at all").is_err());
+        // A truncated body is the signature of hitting max_tokens; it must not
+        // be silently repaired into something that looks valid.
+        assert!(parse_json_response(r#"{"body": "cut off mid"#).is_err());
+    }
 
     /// A migrated in-memory DB. The mock engine carries no key, so the pool is
     /// only here to satisfy `call_validated`'s signature — but it must be real,

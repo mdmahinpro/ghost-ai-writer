@@ -60,6 +60,21 @@ export type ServerArticle = {
   /** JSON string: sections, faq, html. Parse before rendering. */
   contentJson: string | null;
   metaJson: string | null;
+  /** Byline for the "Named author" checklist gate. Null until regenerated. */
+  authorName: string | null;
+  authorSlug: string | null;
+  authorBeat: string | null;
+  authorCity: string | null;
+};
+
+/** One internal link, as the server reports it from `article_links`. */
+export type ServerLink = {
+  articleId: number;
+  direction: string;
+  targetSlug: string | null;
+  targetTitle: string | null;
+  anchor: string;
+  status: string;
 };
 
 export type ServerRun = {
@@ -91,6 +106,8 @@ export type PipelineSnapshot = {
   runs: ServerRun[];
   /** Real per-stage spend for these jobs; empty until stages have committed. */
   stages: ServerStage[];
+  /** Internal links for these articles, for the Bing checklist counts. */
+  links: ServerLink[];
   /**
    * True while any job is queued or running. The caller should stop polling
    * once this is false rather than hammering an idle workspace.
@@ -157,6 +174,20 @@ type RawArticle = {
   featured_alt: string | null;
   content_json: string | null;
   meta_json: string | null;
+  author_name: string | null;
+  author_slug: string | null;
+  author_beat: string | null;
+  author_city: string | null;
+};
+
+/** One internal link row as it arrives over the wire. */
+type RawLink = {
+  article_id: number;
+  direction: string;
+  target_slug: string | null;
+  target_title: string | null;
+  anchor: string;
+  status: string;
 };
 
 type RawRun = {
@@ -174,6 +205,7 @@ type RawSnapshot = {
   articles: RawArticle[];
   runs: RawRun[];
   stages?: RawStage[];
+  links?: RawLink[];
   active: boolean;
 };
 
@@ -295,6 +327,10 @@ export async function pipelineSnapshot(input: {
           featuredAlt: a.featured_alt,
           contentJson: a.content_json,
           metaJson: a.meta_json,
+          authorName: a.author_name,
+          authorSlug: a.author_slug,
+          authorBeat: a.author_beat,
+          authorCity: a.author_city,
         }),
       ),
       runs: (raw.runs ?? []).map(
@@ -318,6 +354,16 @@ export async function pipelineSnapshot(input: {
           tokensOut: s.tokens_out,
           durationMs: s.duration_ms,
           costUsd: s.cost_usd,
+        }),
+      ),
+      links: (raw.links ?? []).map(
+        (l): ServerLink => ({
+          articleId: l.article_id,
+          direction: l.direction,
+          targetSlug: l.target_slug,
+          targetTitle: l.target_title,
+          anchor: l.anchor,
+          status: l.status,
         }),
       ),
       active: Boolean(raw.active),

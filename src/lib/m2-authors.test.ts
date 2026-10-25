@@ -16,7 +16,7 @@ import {
 } from "./authors.ts";
 import { articleJsonLd, staticFiles } from "./static-site.ts";
 
-const AVATAR_HOST = "https://thispersondoesnotexist.com/image?seed=";
+const AVATAR_HOST = "https://thispersondoesnotexist.com/random-person.jpeg?r=";
 
 function site(id = "s1", niche = "research craft"): Site {
   return {
@@ -99,7 +99,7 @@ test("Rule 2: generated personas are US-based with realistic names and unique ze
     assert.ok(author.city.length > 1);
     assert.ok(author.region.length > 1, "US state present");
     assert.match(author.name, /^[A-Z][a-z]+ [A-Z][a-z]+$/);
-    assert.match(author.avatarUrl, /^https:\/\/thispersondoesnotexist\.com\/image\?seed=[a-z0-9]+$/);
+    assert.match(author.avatarUrl, /^https:\/\/thispersondoesnotexist\.com\/random-person\.jpeg\?r=[a-z0-9]+$/);
     assert.ok(!seen.has(author.avatarUrl), "avatar seed must be unique per author");
     seen.add(author.avatarUrl);
     assert.equal(author.articleCount, 0);
@@ -158,7 +158,7 @@ test("Rule 2: 251st article in a capped niche rotates to a brand-new US expert",
   assert.notEqual(result.author.id, "a1");
   assert.equal(result.author.articleCount, 0);
   assert.equal(result.author.country, "US");
-  assert.match(result.author.avatarUrl, /^https:\/\/thispersondoesnotexist\.com\/image\?seed=/);
+  assert.match(result.author.avatarUrl, /^https:\/\/thispersondoesnotexist\.com\/random-person\.jpeg\?r=/);
 });
 
 test("Rule 2: voices are distinct across niches and feed readable blocks", () => {

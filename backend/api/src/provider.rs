@@ -168,6 +168,11 @@ pub enum EngineError {
     Transport(String),
     /// Body was not the shape we need.
     Malformed(String),
+    /// The provider hit `max_tokens` and cut the answer off. Distinct from
+    /// `Malformed` because the cause is a budget, not a bad provider: the fix
+    /// is a larger `max_tokens`, and the message needs to say so instead of
+    /// surfacing as a JSON parse error.
+    Truncated { tokens_out: i64 },
 }
 
 impl std::fmt::Display for EngineError {
@@ -176,6 +181,12 @@ impl std::fmt::Display for EngineError {
             EngineError::Http(code, body) => write!(f, "provider http {code}: {body}"),
             EngineError::Transport(e) => write!(f, "provider transport: {e}"),
             EngineError::Malformed(e) => write!(f, "provider malformed response: {e}"),
+            EngineError::Truncated { tokens_out } => write!(
+                f,
+                "the model stopped at its output limit after ~{tokens_out} tokens, so the answer \
+                 was cut off mid-JSON. Raise this provider's max_tokens (a 2,000-word draft needs \
+                 about 6,000) and run the job again."
+            ),
         }
     }
 }
@@ -190,6 +201,12 @@ impl EngineError {
             _ => false,
         }
     }
+}
+
+/// Rough output-token count when the provider omits `usage` — used only for the
+/// truncation message, never for billing.
+fn tout_estimate(text: &str) -> i64 {
+    (text.len() / 4) as i64
 }
 
 pub enum Engine {
@@ -474,6 +491,11 @@ struct ChatResponse {
 #[derive(Deserialize)]
 struct Choice {
     message: ChoiceMessage,
+    /// `length` means the provider cut the answer off at `max_tokens`. A
+    /// truncated JSON body is the direct cause of the "EOF while parsing a
+    /// string" rejections, so this has to be visible to the caller.
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -555,6 +577,22 @@ impl HttpEngine {
             .first()
             .and_then(|c| c.message.content.clone())
             .ok_or_else(|| EngineError::Malformed("empty choices[0].message.content".into()))?;
+
+        // A `length` finish means the answer was cut off at max_tokens. For a
+        // JSON stage that yields a truncated body, which surfaces downstream as
+        // "EOF while parsing a string" — a confusing error for what is really a
+        // budget problem. Report it as the truncation it is, and mark it
+        // retryable so the stage can ask for a shorter or continued answer.
+        if parsed
+            .choices
+            .first()
+            .and_then(|c| c.finish_reason.as_deref())
+            .is_some_and(|r| r.eq_ignore_ascii_case("length"))
+        {
+            return Err(EngineError::Truncated {
+                tokens_out: tout_estimate(&text),
+            });
+        }
 
         let (tin, tout) = parsed
             .usage
@@ -727,6 +765,14 @@ pub fn safe_message(e: &EngineError) -> String {
         EngineError::Http(code, _) => format!("provider returned http {code}"),
         EngineError::Transport(_) => "provider unreachable".to_string(),
         EngineError::Malformed(_) => "provider returned an unexpected response".to_string(),
+        // Not sensitive: it contains no provider body and naming the real cause
+        // is the whole point, since "invalid JSON" sent people looking for a
+        // format bug when the answer had simply been cut off at the budget.
+        EngineError::Truncated { tokens_out } => format!(
+            "the model stopped at its output limit after about {tokens_out} tokens and the answer \
+             was cut off. Raise this provider's max_tokens (a 2,000-word draft needs about 6,000) \
+             and run the job again."
+        ),
     }
 }
 
@@ -973,7 +1019,7 @@ pub async fn insert_provider(
     .bind(&new.model_id)
     .bind(new.price_in_per_mtok)
     .bind(new.price_out_per_mtok)
-    .bind(new.max_tokens.unwrap_or(4096))
+    .bind(new.max_tokens.unwrap_or(8192))
     .bind(new.temperature.unwrap_or(0.7))
     .bind(if new.is_default { 1i64 } else { 0i64 })
     .bind(&role)

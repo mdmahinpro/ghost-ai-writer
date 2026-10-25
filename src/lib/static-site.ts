@@ -1,6 +1,7 @@
 import { mediaRefs, rewriteMedia } from "./media-html.ts";
 import { articleImageSrc } from "./image-urls.ts";
 import { portraitDataUri, avatarSeed } from "./avatar.ts";
+import { avatarUrlFor } from "./authors.ts";
 import { AD_CODE_LIMIT, AD_SLOT_IDS, defaultAdSlots, type AdSlotConfig, type AdSlotId, type Article, type AuthorProfile, type Site } from "./types.ts";
 import { esc } from "./utils.ts";
 
@@ -236,6 +237,38 @@ export function authorBylineHtml(author: AuthorProfile | undefined, origin: stri
 </div>`;
 }
 
+/**
+ * A byline for an article that has a name but no full author record.
+ *
+ * Server-generated articles carry `authorName`/`authorBeat`/`authorCity` on the
+ * row itself and no matching `AuthorProfile` in the client store. Rendering
+ * nothing for those left every generated page without a byline, which is the
+ * exact condition the "Named author" checklist gate fails on. The avatar still
+ * resolves, because it is derived from the name.
+ */
+export function authorNameBylineHtml(
+  name: string,
+  origin: string,
+  beat?: string,
+  city?: string,
+): string {
+  const label = name.trim();
+  if (!label) return "";
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const meta = [beat, city].map((part) => part?.trim()).filter(Boolean).join(" · ");
+  const avatar = avatarImgHtml({
+    name: label,
+    avatarUrl: avatarUrlFor(`${slug}:${label}`),
+  } as AuthorProfile);
+  return `<div class="byline">
+  ${avatar}
+  <div>
+    <a class="meta" href="${esc(origin)}/author/${esc(slug)}/">${esc(label)}</a>
+    ${meta ? `<div class="meta">${esc(meta)}</div>` : ""}
+  </div>
+</div>`;
+}
+
 export function staticFiles(
   site: Site,
   articles: Article[],
@@ -246,7 +279,13 @@ export function staticFiles(
   const preview = Boolean(options.adsPreview);
   const origin = site.publicUrl.replace(/\/$/, "");
   const pages = articles.filter((a) => a.siteId === site.id);
-  const authorOf = (article: Article): AuthorProfile | undefined => authors.find((author) => author.id === article.authorId);
+  // Resolve the byline by id first, then by name. Server-backed articles carry
+  // the byline name straight from the article row and have no author record in
+  // the client store, so matching on id alone rendered an empty byline for every
+  // generated page — and the "Named author" checklist gate could never pass.
+  const authorOf = (article: Article): AuthorProfile | undefined =>
+    authors.find((author) => author.id === article.authorId) ??
+    authors.find((author) => author.name === article.authorName);
   const headExtra = withSnippets ? `\n${site.headHtml}\n` : "";
   const bodyEnd = withSnippets ? `\n${site.bodyEnd}\n${site.analyticsSnippet}\n` : "";
   // Preview mode never loads live ad integrations.
@@ -339,7 +378,13 @@ ${slot("site_top")}
   ${slot("article_top")}
   <p class="meta">${esc(article.keyword)}</p>
   <h1>${esc(article.title)}</h1>
-  ${authorBylineHtml(author, origin)}
+  ${authorBylineHtml(author, origin) ||
+    authorNameBylineHtml(
+      article.authorName ?? "",
+      origin,
+      article.authorBeat,
+      article.authorCity,
+    )}
   ${heroSrc ? `<figure class="article-hero"><img src="${esc(heroSrc)}" alt="${esc(hero?.alt || article.title)}" width="1200" height="675" loading="eager" decoding="async" referrerpolicy="no-referrer"></figure>` : ""}
   ${withInline}
   ${slot("article_bottom")}

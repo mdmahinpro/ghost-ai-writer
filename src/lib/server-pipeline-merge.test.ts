@@ -59,9 +59,67 @@ function serverArticle(over: Record<string, unknown> = {}) {
       metaDescription: "A practical guide.",
       tags: ["espresso", "maintenance"],
     }),
+    authorName: null,
+    authorSlug: null,
+    authorBeat: null,
+    authorCity: null,
     ...over,
   } as never;
 }
+
+test("a server article keeps its byline and its own outbound links", () => {
+  const article = serverArticle({
+    id: 4,
+    authorName: "Elena Whitfield",
+    authorSlug: "elena-whitfield-espresso",
+    authorBeat: "espresso maintenance",
+    authorCity: "Austin, Texas",
+  });
+
+  const ui = toUiArticle(article, SITE, [
+    {
+      articleId: 4,
+      direction: "OUTGOING",
+      targetSlug: "clean-a-grinder",
+      targetTitle: "Clean a grinder",
+      anchor: "grinder cleaning",
+      status: "VERIFIED",
+    },
+    {
+      articleId: 4,
+      direction: "INCOMING",
+      targetSlug: "buy-a-machine",
+      targetTitle: "Buy a machine",
+      anchor: "another page links here",
+      status: "LOCAL_INSERTED",
+    },
+    {
+      articleId: 999,
+      direction: "OUTGOING",
+      targetSlug: "someone-elses-link",
+      targetTitle: "Not mine",
+      anchor: "should be ignored",
+      status: "LOCAL_INSERTED",
+    },
+  ]);
+
+  // The Bing checklist gates on a named author; the server now supplies one.
+  assert.equal(ui.authorName, "Elena Whitfield");
+
+  // Only this article's OUTGOING rows count as its links. Counting the INCOMING
+  // row would overstate outbound; counting the other article's row would give
+  // this page links it does not have, and the "at least two siblings" gate would
+  // pass for the wrong reason.
+  assert.equal(ui.links.length, 1, "only this article's outbound links belong here");
+  assert.equal(ui.links[0]!.targetSlug, "clean-a-grinder");
+  assert.equal(ui.links[0]!.state, "STATIC_CONFIRMED");
+});
+
+test("an article with no byline yet does not invent one", () => {
+  const ui = toUiArticle(serverArticle({ authorName: null }), SITE);
+  assert.equal(ui.authorName, undefined);
+  assert.deepEqual(ui.links, []);
+});
 
 test("a server job is marked read-only for the browser engine", () => {
   const ui = toUiJob(job(), SITE);
@@ -154,6 +212,7 @@ test("merging replaces stale server rows and keeps local ones", () => {
     articles: [],
     runs: [],
     stages: [],
+    links: [],
   };
 
   const merged = mergeSnapshot(SITE, snapshot, {
@@ -184,7 +243,7 @@ test("merging leaves a different site's server rows alone", () => {
 
   const merged = mergeSnapshot(
     SITE,
-    { active: false, jobs: [job()], articles: [], runs: [], stages: [] } as PipelineSnapshot,
+    { active: false, jobs: [job()], articles: [], runs: [], stages: [], links: [] } as PipelineSnapshot,
     { jobs: [otherSiteServerJob], articles: [], runs: [] },
   );
 

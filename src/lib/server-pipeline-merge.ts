@@ -21,6 +21,7 @@ import type {
   Article,
   Job,
   JobStatus,
+  LinkState,
   Run,
   RunStatus,
   StageRecord,
@@ -29,6 +30,7 @@ import type {
   PipelineSnapshot,
   ServerArticle,
   ServerJob,
+  ServerLink,
   ServerRun,
   ServerStage,
 } from "./pipeline-api.ts";
@@ -162,7 +164,30 @@ function parseJson<T>(raw: string | null): T | undefined {
   }
 }
 
-export function toUiArticle(article: ServerArticle, siteUid: string): Article {
+/**
+ * Map a server link status onto the UI's `LinkState`.
+ *
+ * The server stores `LOCAL_INSERTED | VERIFIED | BROKEN | REMOVED`; the UI
+ * understands `PLANNED | LOCAL | GHOST_PENDING | GHOST_CONFIRMED |
+ * STATIC_CONFIRMED | FAILED | BROKEN`. VERIFIED means the link is live on the
+ * published page.
+ */
+function linkState(status: string): LinkState {
+  switch (status.toUpperCase()) {
+    case "VERIFIED":
+      return "STATIC_CONFIRMED";
+    case "BROKEN":
+      return "BROKEN";
+    case "REMOVED":
+      return "FAILED";
+    case "LOCAL_INSERTED":
+      return "LOCAL";
+    default:
+      return "LOCAL";
+  }
+}
+
+export function toUiArticle(article: ServerArticle, siteUid: string, links: ServerLink[] = []): Article {
   const content = parseJson<ParsedContent>(article.contentJson);
   const meta = parseJson<ParsedMeta>(article.metaJson);
   const markdown = typeof content?.markdown === "string" ? content.markdown : "";
@@ -177,6 +202,11 @@ export function toUiArticle(article: ServerArticle, siteUid: string): Article {
     title: article.title,
     slug: article.slug,
     keyword: article.keyword,
+    // The byline the "Named author" checklist gate reads. Null on rows created
+    // before the column existed, which the gate must treat as unknown.
+    authorName: article.authorName ?? undefined,
+    authorBeat: article.authorBeat ?? undefined,
+    authorCity: article.authorCity ?? undefined,
     html: markdownToHtml(markdown),
     markdown,
     excerpt: meta?.excerpt ?? "",
@@ -205,7 +235,20 @@ export function toUiArticle(article: ServerArticle, siteUid: string): Article {
           },
         ]
       : [],
-    links: [],
+    links: links
+      // Two filters, both needed:
+      //  - only OUTGOING rows are this article's own link graph entries; an
+      //    INCOMING row describes a link on some other page pointing here, so
+      //    counting it as outbound would overstate this page's links;
+      //  - only rows addressed to this article. The caller usually pre-groups,
+      //    but this is public and must not hand an article another page's links
+      //    (which would let the "two siblings" gate pass for the wrong reason).
+      .filter((l) => l.articleId === article.id && l.direction.toUpperCase() === "OUTGOING")
+      .map((l) => ({
+        anchor: l.anchor,
+        targetSlug: l.targetSlug ?? "",
+        state: linkState(l.status),
+      })),
     stageTokens: [],
     verifyFlags: [],
     ledger: {
@@ -260,10 +303,20 @@ export function mergeSnapshot(
     (r) => r.siteId !== siteUid || !r.id.startsWith(`${ID}_`),
   );
 
+  // Index the link rows once instead of scanning them per article.
+  const linksByArticle = new Map<number, ServerLink[]>();
+  for (const link of snapshot.links ?? []) {
+    const bucket = linksByArticle.get(link.articleId);
+    if (bucket) bucket.push(link);
+    else linksByArticle.set(link.articleId, [link]);
+  }
+
   return {
     jobs: [...snapshot.jobs.map((j) => toUiJob(j, siteUid, snapshot.stages ?? [])), ...keepLocalJobs],
     articles: [
-      ...snapshot.articles.map((a) => toUiArticle(a, siteUid)),
+      ...snapshot.articles.map((a) =>
+        toUiArticle(a, siteUid, linksByArticle.get(a.id) ?? []),
+      ),
       ...keepLocalArticles,
     ],
     runs: [

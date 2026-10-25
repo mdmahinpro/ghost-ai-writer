@@ -111,14 +111,27 @@ export async function generateDraft(input: {
   | { ok: false; status: number; error: string }
 > {
   const d = input?.data ?? {};
-  const system = (d.system ?? "").slice(0, 4000);
-  const user = (d.user ?? "").slice(0, 14000);
+  // The prompt is what steers the draft. These caps used to be 4,000/14,000,
+  // which silently amputated the blueprint and the research notes on a long
+  // article — the model then answered with a stub, and the caller reported
+  // "The model returned an empty draft." for what was really a truncated
+  // prompt. The server enforces its own limits; this is only a sanity bound.
+  const system = (d.system ?? "").slice(0, 12_000);
+  const user = (d.user ?? "").slice(0, 48_000);
   if (!system || !user) return { ok: false, status: 0, error: "Prompt is empty." };
   const result = await serverCompletion({ system, user, preferredKeyId: d.preferredKeyId });
   if (!result.ok) return result;
-  // Same floor the direct call enforced: a stub is a failure, not a draft.
-  if (result.text.length < 80) {
-    return { ok: false, status: 200, error: "The model returned an empty draft." };
+  // A real draft is long. A stub is a failure, not a draft — but say which it
+  // was, so the next person does not go looking for a provider outage.
+  if (result.text.trim().length < 80) {
+    return {
+      ok: false,
+      status: 200,
+      error:
+        "The model returned no usable draft (fewer than 80 characters). This usually means the " +
+        "answer was cut off by the provider's output limit — raise max_tokens — or the model " +
+        "refused the prompt.",
+    };
   }
   return result;
 }

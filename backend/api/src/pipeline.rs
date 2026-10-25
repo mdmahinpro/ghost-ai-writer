@@ -59,6 +59,24 @@ pub struct ArticleSummary {
     /// Full article payload (sections, faq, html). The UI renders from this.
     pub content_json: Option<String>,
     pub meta_json: Option<String>,
+    /// Byline for the "Named author" checklist gate. Null until the article is
+    /// regenerated, so the UI must treat absence as "unknown", not "failed".
+    pub author_name: Option<String>,
+    pub author_slug: Option<String>,
+    pub author_beat: Option<String>,
+    pub author_city: Option<String>,
+}
+
+/// One internal link row, as the checklist needs it: which article it belongs
+/// to and which direction it points.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LinkSummary {
+    pub article_id: i64,
+    pub direction: String,
+    pub target_slug: Option<String>,
+    pub target_title: Option<String>,
+    pub anchor: String,
+    pub status: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -95,6 +113,9 @@ pub struct PipelineState {
     /// `article_stages`. This is what lets the UI show real per-stage token
     /// counts instead of hard-coded zeros.
     pub stages: Vec<StageSummary>,
+    /// Internal links belonging to the articles above. Without these the Bing
+    /// checklist always reported "0 out · 0 in" for server-backed articles.
+    pub links: Vec<LinkSummary>,
     /// True while any job is queued or running, so the client can stop polling
     /// instead of hammering an idle workspace forever.
     pub active: bool,
@@ -160,12 +181,34 @@ pub async fn pipeline_state(
     let articles: Vec<ArticleSummary> = sqlx::query_as(
         "SELECT id, job_id, site_id, title, slug, keyword, status, created_at,
                 engine, uniqueness_score, intent_match, coverage_score,
-                featured_image_url, featured_alt, content_json, meta_json
+                featured_image_url, featured_alt, content_json, meta_json,
+                author_name, author_slug, author_beat, author_city
            FROM articles
           WHERE site_id IN (SELECT id FROM sites WHERE workspace_id = ?1)
             AND (?2 IS NULL OR site_id = ?2)
           ORDER BY id DESC
           LIMIT ?3",
+    )
+    .bind(workspace_id)
+    .bind(site_id)
+    .bind(limit)
+    .fetch_all(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+
+    // Internal links for those articles, so the Bing checklist can count
+    // outbound/inbound instead of always reporting "0 out · 0 in". Scoped to
+    // the same article ids as the page above: an unbounded query here would
+    // grow with the whole workspace as history accumulates.
+    let links: Vec<LinkSummary> = sqlx::query_as(
+        "SELECT l.article_id, l.direction, l.target_slug, l.target_title, l.anchor, l.status
+           FROM article_links l
+          WHERE l.article_id IN (
+                SELECT id FROM articles
+                 WHERE site_id IN (SELECT id FROM sites WHERE workspace_id = ?1)
+                   AND (?2 IS NULL OR site_id = ?2)
+                 ORDER BY id DESC
+                 LIMIT ?3)",
     )
     .bind(workspace_id)
     .bind(site_id)
@@ -236,6 +279,7 @@ pub async fn pipeline_state(
         articles,
         runs,
         stages,
+        links,
         active,
     }))
 }
@@ -347,7 +391,14 @@ mod tests {
                  status TEXT NOT NULL, created_at TEXT, website_id INTEGER, keyword TEXT,
                  engine TEXT, ghost_post_id TEXT, published_at TEXT, uniqueness_score REAL,
                  intent_match REAL, coverage_score REAL, featured_image_url TEXT,
-                 featured_alt TEXT, content_json TEXT, meta_json TEXT, content_format TEXT)",
+                 featured_alt TEXT, content_json TEXT, meta_json TEXT, content_format TEXT,
+                 author_name TEXT, author_slug TEXT, author_beat TEXT, author_city TEXT)",
+            "CREATE TABLE article_links (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 article_id INTEGER NOT NULL, direction TEXT NOT NULL DEFAULT 'INCOMING',
+                 target_article_id INTEGER, target_slug TEXT, target_title TEXT,
+                 anchor TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'LOCAL_INSERTED',
+                 health TEXT NOT NULL DEFAULT 'pending', reason TEXT, verified_at TEXT,
+                 created_at TEXT NOT NULL)",
             "CREATE TABLE usage_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, ai_key_id INTEGER,
                  website_id INTEGER, article_id INTEGER, stage TEXT, provider TEXT, model_id TEXT,
                  tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0,

@@ -217,6 +217,12 @@ export type Article = {
   promptVersions?: Partial<Record<StageKey, string>>;
   authorId?: string;
   authorName?: string;
+  /**
+   * The author's beat and city, carried on server-generated rows so a byline can
+   * render without a matching `AuthorProfile` in the client store.
+   */
+  authorBeat?: string;
+  authorCity?: string;
   /** Rule 2 idempotency: set once when the author's articleCount was incremented for this article. */
   authorCounted?: boolean;
   humanized?: boolean;

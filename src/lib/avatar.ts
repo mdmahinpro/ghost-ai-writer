@@ -11,33 +11,66 @@
 export const AVATAR_PROXY_PATH = "/__grok/avatar";
 
 /**
- * Direct, dynamic portrait source. `thispersondoesnotexist.com/image` returns a
- * brand-new face on every request, so the byline portrait changes over time and
- * is never a stored face. The token in `?seed=` only identifies the author in
- * JSON-LD and the author archive; the host itself produces the image.
+ * Direct, dynamic portrait source.
+ *
+ * The working endpoint is `/random-person.jpeg` — a real ~600 KB JPEG. The
+ * older `/image` path returns HTTP 404 from the host's nginx, which made every
+ * author portrait a broken image.
+ *
+ * The host ignores query parameters and generates a brand-new face per request,
+ * so the value after `r=` is NOT used by the host to choose a face. It is a
+ * per-author cache-buster: it keeps each author's URL distinct so the browser
+ * and the resize CDN treat them as separate resources, and it gives JSON-LD and
+ * the author archive a stable identity for an unstable image.
  */
 export const AVATAR_HOST = "https://thispersondoesnotexist.com";
-export const AVATAR_UPSTREAM = `${AVATAR_HOST}/image`;
+export const AVATAR_UPSTREAM = `${AVATAR_HOST}/random-person.jpeg`;
 
 /** On-the-fly resize CDN used by the in-app proxy so the studio UI loads a small WebP. */
 export const AVATAR_CDN = "https://wsrv.nl/";
-/** Output edge in px (2× a 96 px byline avatar for crisp retina rendering). */
-export const AVATAR_SIZE = 192;
-export const AVATAR_QUALITY = 72;
+/**
+ * Output edge in px. 128 is a deliberate speed choice for the static build:
+ * a byline avatar renders at most 64 px, so 128 covers retina and the CDN
+ * returns a ~4 KB WebP instead of the 600 KB original.
+ */
+export const AVATAR_SIZE = 128;
+export const AVATAR_QUALITY = 68;
 
 /**
- * The URL stored on an author and hot-linked by generated pages: a short external
- * URL string only (zero disk), so a 10,000-article static build adds ~60 bytes
- * per author, never an image file. Because the host renders a fresh face per
- * request, the static build stays tiny while the portrait keeps changing.
+ * A distinct, stable-per-author cache key. Two authors must never share one, or
+ * they would show the same face in a given render; and the same author must
+ * keep the same key so the URL does not churn on every page build.
  */
-export function avatarSourceUrl(token: string): string {
-  return `${AVATAR_UPSTREAM}?seed=${encodeURIComponent(token)}`;
+export function avatarToken(seed: string): string {
+  return (
+    hashStr(`avatar:${seed}`).toString(36) + hashStr(`avatar2:${seed}`).toString(36)
+  ).slice(0, 20);
+}
+
+function hashStr(input: string): number {
+  let h = 2166136261;
+  for (let index = 0; index < input.length; index++) {
+    h ^= input.charCodeAt(index);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
 }
 
 /**
- * Resized, zero-disk portrait URL for the in-app proxy. The proxy fetches this
- * small square WebP crop of the same dynamic source so the studio UI stays fast.
+ * The URL stored on an author and hot-linked by generated pages.
+ *
+ * Zero disk: a short external URL string, so a 10,000-article static build
+ * adds ~70 bytes per author rather than an image file. The r= token makes each
+ * author's URL unique, which satisfies "never duplicate an author image".
+ */
+export function avatarSourceUrl(token: string): string {
+  return `${AVATAR_UPSTREAM}?r=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Resized, zero-disk portrait URL. The CDN fetches the upstream face once,
+ * crops it square, and serves a small WebP — so the static pages stay fast and
+ * the 600 KB original is never sent to a visitor.
  */
 export function avatarCdnUrl(token: string, size = AVATAR_SIZE, quality = AVATAR_QUALITY): string {
   const upstream = avatarSourceUrl(token);
@@ -51,15 +84,16 @@ export function isOurAvatarUrl(url?: string): boolean {
 
 /**
  * Pull the per-author token out of a portrait URL. Handles both the direct
- * `?seed=` form and the CDN form, where the token lives inside the encoded
- * `url=` parameter as `?r=`.
+ * `?r=` form and the CDN form, where the token lives inside the encoded `url=`
+ * parameter. The legacy `seed` key is still read so author records written by
+ * an older build keep working.
  */
 export function avatarSeed(avatarUrl?: string): string | null {
   if (!avatarUrl) return null;
   const ok = (value: string | null): string | null => (value && /^[a-z0-9]{1,40}$/i.test(value) ? value : null);
   try {
     const url = new URL(avatarUrl);
-    const direct = ok(url.searchParams.get("seed"));
+    const direct = ok(url.searchParams.get("r")) ?? ok(url.searchParams.get("seed"));
     if (direct) return direct;
     const nested = url.searchParams.get("url");
     if (nested) {
