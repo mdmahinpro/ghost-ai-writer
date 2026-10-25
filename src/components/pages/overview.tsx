@@ -1,15 +1,24 @@
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { useApp } from "@/lib/store";
 import { goldenSteps } from "@/lib/engine";
 import { SetupGuide } from "@/components/setup-guide";
 import { useBeat } from "@/components/shell";
 import { Badge, Card, statusTone } from "@/components/ui";
 import { compact, nextUtcResetLabel, relTime, utcDay } from "@/lib/utils";
+import { BENTO_BUTTER, BENTO_CORAL, BENTO_PINK, BENTO_SKY, KpiBento, type BentoCard } from "@/components/dash/kpi-bento";
+import { VelocityChart } from "@/components/dash/velocity-chart";
+import { PostLedger, type LedgerRow } from "@/components/dash/post-ledger";
+import { TelemetryDrawer } from "@/components/dash/telemetry-drawer";
+import { CommandBar } from "@/components/dash/command-bar";
+import { bucketEvents, weekOverWeek, type Timeframe, type VelocityEvent } from "@/lib/velocity-buckets";
 
 export function OverviewPage() {
   const data = useApp();
   // Rule 7 hooks rule: every hook runs before any early return so the order is stable.
   const beat = useBeat((s) => s.at);
+  // Rule 7 hooks rule: hook order is stable across renders, so this sits with the others.
+  const [timeframe, setTimeframe] = useState<Timeframe>("1W");
   const site = data.sites.find((item) => item.id === data.activeSiteId) ?? data.sites[0];
   if (!site) {
     return (
@@ -26,27 +35,101 @@ export function OverviewPage() {
   const runs = data.runs.filter((run) => run.siteId === site.id);
   const jobs = data.jobs.filter((job) => job.siteId === site.id);
   const day = utcDay(Date.now());
-  const tokensToday = data.events
-    .filter((event) => event.state === "SETTLED" && utcDay(event.at) === day)
-    .reduce((sum, event) => sum + event.tokens, 0);
   const links = articles.reduce((sum, article) => sum + article.links.length, 0);
-  const verified = articles.reduce(
-    (sum, article) => sum + article.links.filter((link) => link.state === "GHOST_CONFIRMED" || link.state === "STATIC_CONFIRMED").length,
-    0,
-  );
-  const localLinks = Math.max(0, links - verified);
-  const published = articles.filter((article) => article.status === "published" || article.ledger.confirmed).length;
   const build = data.builds.find((item) => item.siteId === site.id);
   const steps = goldenSteps(data, site);
   const done = steps.filter((step) => step.done).length;
   const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
-  const running = jobs.filter((job) => job.status === "running" || job.status === "queued").length;
   const completed = jobs.filter((job) => job.status === "completed").length;
   const failed = jobs.filter((job) => job.status === "failed").length;
   const ghostLive = site.ghost.mode === "live";
   const edges = articles
     .flatMap((article) => article.links.slice(0, 2).map((link) => ({ from: article.title, anchor: link.anchor, slug: link.targetSlug })))
     .slice(0, 8);
+
+  // ---- Phase 2 dashboard data: everything below is measured, nothing invented ----
+  const now = Date.now();
+  const velocityEvents: VelocityEvent[] = [
+    ...articles.map((article) => ({
+      at: article.publishedAt || article.ledger.confirmedAt || 0,
+      kind: "published" as const,
+      amount: article.words,
+    })),
+    ...jobs.map((job) => ({ at: job.createdAt || 0, kind: "generated" as const, amount: job.tokens })),
+  ].filter((event) => event.at > 0);
+  const buckets = bucketEvents(velocityEvents, now, timeframe);
+
+  const scheduledCalendar = data.calendars
+    .filter((calendar) => calendar.siteId === site.id)
+    .reduce((sum, calendar) => sum + calendar.items.filter((item) => item.status === "SCHEDULED").length, 0);
+  const queued = jobs.filter((job) => job.status === "queued").length + scheduledCalendar;
+  const drafting = jobs.filter((job) => job.status === "running").length;
+  const week = weekOverWeek(
+    articles.filter((article) => article.status === "published").map((article) => article.publishedAt),
+    now,
+  );
+  const stageMs = jobs.flatMap((job) => job.stages.filter((stage) => stage.status === "done").map((stage) => stage.durationMs)).filter((ms) => ms > 0);
+  const avgStageMs = stageMs.length ? Math.round(stageMs.reduce((sum, ms) => sum + ms, 0) / stageMs.length) : null;
+
+  const bento: BentoCard[] = [
+    {
+      label: "Queued topics",
+      value: String(queued),
+      hint: scheduledCalendar ? `${scheduledCalendar} scheduled on the calendar` : "nothing scheduled",
+      accent: BENTO_CORAL,
+    },
+    {
+      label: "Drafting / in motion",
+      value: String(drafting),
+      hint: `${data.worker.activeJobs ?? 0} held by the worker`,
+      accent: BENTO_BUTTER,
+    },
+    {
+      label: "Published to Ghost (7d)",
+      value: String(week.thisWeek),
+      hint: `${week.lastWeek} in the week before`,
+      accent: BENTO_PINK,
+      delta:
+        week.deltaPct === null
+          ? undefined
+          : { text: `${week.deltaPct > 0 ? "+" : ""}${week.deltaPct}%`, positive: week.deltaPct >= 0 },
+    },
+    {
+      label: "Worker & API health",
+      value: data.workerPaused ? "Paused" : data.worker.online ? "Online" : "Idle",
+      hint: avgStageMs === null ? "no stage timings yet" : `avg stage ${avgStageMs} ms`,
+      accent: BENTO_SKY,
+    },
+  ];
+
+  const ledger: LedgerRow[] = [...articles]
+    .sort((left, right) => right.publishedAt - left.publishedAt)
+    .slice(0, 8)
+    .map((article) => {
+      const job = jobs.find((item) => item.id === article.jobId);
+      const confirmed = article.ledger.confirmed && article.ledger.confirmedAt && article.ledger.dispatchedAt;
+      return {
+        id: article.id,
+        title: article.title,
+        slug: article.slug,
+        status: article.status,
+        keyword: article.keyword,
+        publishedAt: article.publishedAt,
+        words: article.words,
+        costUsd: typeof job?.costUsd === "number" ? job.costUsd : null,
+        syncMs: confirmed ? article.ledger.confirmedAt - article.ledger.dispatchedAt : null,
+      };
+    });
+
+  const telemetry = [
+    { label: "Jobs generated", hint: "per bucket", values: buckets.map((bucket) => bucket.generated), color: "var(--color-brass)" },
+    { label: "Words written", hint: "published copy", values: buckets.map((bucket) => bucket.words), color: "var(--color-ok)" },
+    { label: "Tokens settled", hint: "model usage", values: buckets.map((bucket) => bucket.tokens), color: "#ff1e56" },
+  ];
+  const logs = data.activity
+    .filter((entry) => entry.siteId === site.id)
+    .slice(0, 40)
+    .map((entry) => ({ id: entry.id, at: entry.at, tone: entry.tone, message: entry.message }));
 
   return (
     <div>
@@ -74,11 +157,18 @@ export function OverviewPage() {
 
       <SetupGuide />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <Stat label="Articles" value={String(articles.length)} hint={`${published} published`} />
-        <Stat label="Active runs" value={String(runs.filter((run) => run.status === "running" || run.status === "queued").length)} hint={`${running} jobs queued`} />
-        <Stat label="Link graph" value={String(links)} hint={`${verified} verified · ${localLinks} local`} />
-        <Stat label="Tokens today" value={compact(tokensToday)} hint={tokensToday ? "settled today" : "no usage today"} />
+      <KpiBento cards={bento} />
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-4">
+          <VelocityChart
+            points={buckets.map((bucket) => ({ label: bucket.label, published: bucket.published, generated: bucket.generated }))}
+            timeframe={timeframe}
+            onTimeframe={setTimeframe}
+          />
+          <PostLedger rows={ledger} />
+        </div>
+        <TelemetryDrawer series={telemetry} logs={logs} />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-5">
@@ -218,6 +308,8 @@ export function OverviewPage() {
           {!edges.length ? <li className="py-4 text-sm text-muted">Links appear after a second article is published.</li> : null}
         </ul>
       </Card>
+
+      <CommandBar />
     </div>
   );
 }
@@ -232,16 +324,6 @@ function keyRows(data: { keys: { id: string; label: string; allowanceUsd: number
       allowanceUsd: key.allowanceUsd,
       tokens: data.events.filter((event) => event.keyId === key.id && event.state === "SETTLED" && utcDay(event.at) === day).reduce((sum, event) => sum + event.tokens, 0),
     }));
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return (
-    <Card className="px-4 py-4 sm:px-5 sm:py-5">
-      <div className="text-[10px] font-medium uppercase leading-4 tracking-[0.14em] text-faint sm:text-xs sm:tracking-[0.16em]">{label}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight tabular-nums sm:mt-3 sm:text-4xl">{value}</div>
-      <div className="mt-1.5 text-xs text-muted sm:mt-2 sm:text-sm">{hint}</div>
-    </Card>
-  );
 }
 
 function Row({ k, v }: { k: string; v: string }) {
