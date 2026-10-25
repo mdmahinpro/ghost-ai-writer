@@ -33,21 +33,28 @@ services:
       mountPath: /data
       sizeGB: 1
 
+  # The SPA is a static bundle, not a Node server. `vite.config.ts` runs
+  # tanstackStart({ spa: { enabled: true } }), because the Rust API is the only
+  # backend — so the build emits `dist/client/` (prerendered index.html plus
+  # hashed assets) and never writes `.output/server/index.mjs`. Starting `node
+  # .output/server/index.mjs` therefore died with MODULE_NOT_FOUND. Serve the
+  # directory instead; Render's CDN handles the SPA fallback for client routes.
   - type: web
     name: ghost-ai-writer-web
-    runtime: node
+    runtime: static
     plan: free
     region: oregon
     buildCommand: >-
       npm ci --no-audit --no-fund &&
-      NITRO_PRESET=node-server node scripts/with-app-env.mjs
+      node scripts/with-app-env.mjs
       node ./node_modules/vite/bin/vite.js build
-    startCommand: node .output/server/index.mjs
-    healthCheckPath: /
+    staticPublishPath: ./dist/client
     envVars:
-      - key: NITRO_PRESET
-        value: node-server
       - key: NODE_VERSION
         value: "22"
       - key: NODE_ENV
         value: production
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
