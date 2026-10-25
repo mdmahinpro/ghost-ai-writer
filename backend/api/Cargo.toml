@@ -20,13 +20,7 @@ base64 = "0.22"
 tokio-rustls.workspace = true
 rustls-pki-types.workspace = true
 webpki-roots.workspace = true
-russh-sftp = "3.0.1"
-russh = "0.63.3"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-# Key material for the in-process SFTP server in the tests (russh's examples
-# use the same versions).
-rand = "0.10"
-ssh-key = "0.7.0-rc.11"
