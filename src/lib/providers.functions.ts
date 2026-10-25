@@ -40,7 +40,7 @@ async function serverCompletion(input: {
   };
 }
 
-type ModelInput = { baseUrl?: string; apiKey?: string; model?: string; prompt?: string };
+type ModelInput = { baseUrl?: string; apiKey?: string; model?: string; prompt?: string; keyId?: number };
 
 /** One tiny completion: proves the key, the endpoint and the model id agree. */
 export async function testCustomModel(input: { data: ModelInput }): Promise<
@@ -84,6 +84,9 @@ export async function getEmbedding(input: {
   const d = input?.data ?? {};
   const text = (d.input ?? "").trim().slice(0, 8000);
   if (!text) return { ok: false, error: "Nothing to embed." };
+  // A key saved on the server has no local secret, so name it and let Rust use the
+  // sealed credential. `model` still comes from the browser, which knows which
+  // embedding model this key was configured with.
   const res = await post<{ ok: boolean; vector?: number[]; tokens?: number; error?: string }>(
     "/api/v1/embeddings",
     {
@@ -91,6 +94,7 @@ export async function getEmbedding(input: {
       api_key: d.apiKey?.trim() ?? "",
       model: d.model?.trim() ?? "",
       input: text,
+      key_id: d.keyId,
     },
   );
   if (!res.ok) return { ok: false, error: res.error };

@@ -279,10 +279,27 @@ pub struct EmbeddingRequest {
     pub model: String,
     #[serde(default)]
     pub input: String,
+    /// Use a key already saved on this server instead of credentials from the
+    /// browser. Browser state never holds a secret for a saved key, so this is the
+    /// only way semantic recall works for one.
+    #[serde(default)]
+    pub key_id: Option<i64>,
 }
 
-pub async fn embedding(req: &EmbeddingRequest) -> Value {
-    let endpoint = embeddings_endpoint(&req.base_url);
+/// Resolve base URL and credential, preferring a server-saved key.
+async fn embedding_credentials(pool: &sqlx::SqlitePool, req: &EmbeddingRequest) -> Result<(String, String), String> {
+    if let Some(id) = req.key_id {
+        return crate::provider::credentials(pool, id).await;
+    }
+    Ok((req.base_url.clone(), req.api_key.clone()))
+}
+
+pub async fn embedding(pool: &sqlx::SqlitePool, req: &EmbeddingRequest) -> Value {
+    let (base_url, api_key) = match embedding_credentials(pool, req).await {
+        Ok(pair) => pair,
+        Err(error) => return failure(error),
+    };
+    let endpoint = embeddings_endpoint(&base_url);
     if let Err(error) = require_public_https(&endpoint) {
         return failure(error);
     }
@@ -293,7 +310,7 @@ pub async fn embedding(req: &EmbeddingRequest) -> Value {
     let body = json!({ "model": req.model, "input": text });
     let response = client(20)
         .post(&endpoint)
-        .header("Authorization", format!("Bearer {}", req.api_key.trim()))
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .header("Content-Type", "application/json")
         .body(body.to_string())
         .send()

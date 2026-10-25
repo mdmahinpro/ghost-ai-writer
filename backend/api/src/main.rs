@@ -33,6 +33,7 @@ mod image;
 mod images;
 mod lease;
 mod lint;
+mod metrics;
 mod pipeline;
 mod providers;
 mod provider;
@@ -304,6 +305,10 @@ async fn lint_text(Json(req): Json<LintRequest>) -> Json<lint::Report> {
 
 /// Heartbeat view: mirrors their `worker.alive` / `worker.lastTickAt` contract so
 /// the UI can prove the pipeline is running without polling a run.
+async fn process_metrics(State(st): State<AppState>) -> Json<metrics::Metrics> {
+    Json(metrics::collect(&st.pool).await)
+}
+
 async fn worker_status(State(st): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     let workers = worker::status(&st.pool).await.map_err(ApiError::Db)?;
     let fresh = workers
@@ -458,8 +463,11 @@ async fn list_custom_models(Json(req): Json<providers::BaseKeyRequest>) -> Json<
     Json(providers::list_models(&req).await)
 }
 
-async fn get_embedding(Json(req): Json<providers::EmbeddingRequest>) -> Json<serde_json::Value> {
-    Json(providers::embedding(&req).await)
+async fn get_embedding(
+    State(st): State<AppState>,
+    Json(req): Json<providers::EmbeddingRequest>,
+) -> Json<serde_json::Value> {
+    Json(providers::embedding(&st.pool, &req).await)
 }
 
 async fn scrape_page(Json(req): Json<providers::ScrapeRequest>) -> Json<serde_json::Value> {
@@ -719,6 +727,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/keywords", post(intake_keywords))
         .route("/v1/lint", post(lint_text))
         .route("/v1/worker", get(worker_status))
+        .route("/v1/metrics", get(process_metrics))
         .route("/v1/worker/run-once", post(worker_run_once))
         .route("/v1/image/pick", post(pick_image))
         .route("/v1/images/place", post(place_images))
@@ -873,13 +882,35 @@ async fn connect(url: &str) -> Result<SqlitePool, sqlx::Error> {
         .run(&pool)
         .await
         .map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+    // The browser is pinned to workspace 1 (`WORKSPACE_ID` in the store), and
+    // providers, sites, jobs and app_state all carry a foreign key to
+    // `workspaces`. A real deployment has no rows — `seed()` is dev-only — so
+    // every write died on "unknown workspace_id" and API keys were never saved.
+    ensure_default_workspace(&pool).await?;
     Ok(pool)
+}
+
+/// Create the default workspace if it is missing. Idempotent.
+async fn ensure_default_workspace(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE id = 1")
+        .fetch_one(pool)
+        .await?;
+    if exists == 0 {
+        sqlx::query("INSERT INTO workspaces (id, name, created_at) VALUES (1, ?, ?)")
+            .bind("Default workspace")
+            .bind(NOW)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Dev seeding: 10 workspaces + 10 websites, plus `jobs` queued rows.
 /// `SEED=1` alone seeds structure only; `SEED_JOBS=N` adds N queued jobs.
 async fn seed(pool: &SqlitePool, jobs: i64) -> Result<(), sqlx::Error> {
-    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
+    // The bootstrap always creates workspace 1, so an empty table is no longer the
+    // signal that nothing has been seeded. Seed when the default row is all there is.
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE id > 1")
         .fetch_one(pool)
         .await?;
     if existing > 0 {
@@ -887,7 +918,7 @@ async fn seed(pool: &SqlitePool, jobs: i64) -> Result<(), sqlx::Error> {
     }
     let mut tx = pool.begin().await?;
     for id in 1..=10i64 {
-        sqlx::query("INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)")
+        sqlx::query("INSERT OR IGNORE INTO workspaces (id, name, created_at) VALUES (?, ?, ?)")
             .bind(id)
             .bind(format!("Site {id:05}"))
             .bind(NOW)
@@ -1081,6 +1112,59 @@ mod tests {
 
     async fn memory_pool() -> SqlitePool {
         connect("sqlite::memory:").await.expect("memory db")
+    }
+
+    /// The browser is pinned to workspace 1 and every write carries a foreign key to
+    /// `workspaces`. A deployment has no rows (`seed()` is dev-only), so saving a
+    /// provider answered "unknown workspace_id" and no API key ever persisted.
+    #[tokio::test]
+    async fn the_default_workspace_exists_so_writes_can_reference_it() {
+        let pool = memory_pool().await;
+        let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        // `connect` bootstraps, so the row is there before any request arrives.
+        assert_eq!(before, 1, "the default workspace must exist after migration");
+        let name: String = sqlx::query_scalar("SELECT name FROM workspaces WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .expect("workspace 1");
+        assert!(!name.is_empty());
+        // Idempotent: running it again must not fail or duplicate.
+        ensure_default_workspace(&pool).await.expect("idempotent");
+        let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(after, 1);
+    }
+
+    #[tokio::test]
+    async fn a_provider_can_be_saved_because_the_workspace_exists() {
+        let pool = memory_pool().await;
+        let row = crate::provider::insert_provider(
+            &pool,
+            NOW,
+            &crate::provider::NewProvider {
+                workspace_id: 1,
+                provider: "custom".into(),
+                label: "My key".into(),
+                api_key: "sk-test-1234567890".into(),
+                kind: Some("custom".into()),
+                base_url: Some("https://api.example.com/v1".into()),
+                model_id: "some-model".into(),
+                price_in_per_mtok: 0.0,
+                price_out_per_mtok: 0.0,
+                max_tokens: None,
+                temperature: None,
+                role: None,
+                is_default: true,
+            },
+        )
+        .await
+        .expect("a key must save against the bootstrapped workspace");
+        assert!(row >= 1);
     }
 
     #[tokio::test]

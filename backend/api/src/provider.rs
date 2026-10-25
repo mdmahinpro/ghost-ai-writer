@@ -41,6 +41,27 @@ pub struct ProviderRow {
     pub cooldown_until: Option<String>,
 }
 
+/// Base URL and the decrypted credential for one saved provider.
+///
+/// Used when the server must call a provider on the workspace's behalf with no
+/// browser involved (embeddings): the browser holds only `serverKeyId`, never the
+/// secret.
+pub async fn credentials(pool: &SqlitePool, id: i64) -> Result<(String, String), String> {
+    let row: Option<(Option<String>, String)> =
+        sqlx::query_as("SELECT base_url, key_enc FROM ai_keys WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    let (base_url, key_enc) = row.ok_or_else(|| format!("No saved key with id {id}."))?;
+    let base_url = base_url.unwrap_or_default();
+    if base_url.trim().is_empty() {
+        return Err("That key has no base URL, so it cannot serve embeddings.".into());
+    }
+    let api_key = crate::secrets::open_secret(&key_enc).unwrap_or(key_enc);
+    Ok((base_url, api_key))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct NewProvider {
     pub workspace_id: i64,
