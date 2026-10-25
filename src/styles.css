@@ -82,8 +82,8 @@ html[data-theme="midnight"] {
   --color-paper: #f4f7fb;
   --color-paper-ink: #0d1524;
   --color-paper-muted: #52627a;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.24);
-  --shadow-sm: 0 2px 6px rgb(0 0 0 / 0.28), 0 1px 2px rgb(0 0 0 / 0.24);
+  --shadow-xs: 0 1px 3px rgb(0 0 0 / 0.45);
+  --shadow-sm: 0 6px 20px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.45);
   color-scheme: dark;
 }
 
@@ -109,8 +109,8 @@ html[data-theme="paper"] {
   --color-paper: #ffffff;
   --color-paper-ink: #0d1524;
   --color-paper-muted: #52627a;
-  --shadow-xs: 0 1px 2px rgb(23 22 19 / 0.06);
-  --shadow-sm: 0 2px 6px rgb(23 22 19 / 0.08), 0 1px 2px rgb(23 22 19 / 0.06);
+  --shadow-xs: 0 1px 3px rgb(23 22 19 / 0.10);
+  --shadow-sm: 0 6px 20px rgb(23 22 19 / 0.14), 0 2px 6px rgb(23 22 19 / 0.10);
   color-scheme: light;
 }
 
@@ -136,8 +136,8 @@ html[data-theme="forest"] {
   --color-paper: #f3faf5;
   --color-paper-ink: #122117;
   --color-paper-muted: #3f5c4c;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.26);
-  --shadow-sm: 0 2px 6px rgb(0 0 0 / 0.3), 0 1px 2px rgb(0 0 0 / 0.26);
+  --shadow-xs: 0 1px 3px rgb(0 0 0 / 0.45);
+  --shadow-sm: 0 6px 20px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.45);
   color-scheme: dark;
 }
 
@@ -163,8 +163,8 @@ html[data-theme="rose"] {
   --color-paper: #fff8fa;
   --color-paper-ink: #2a1219;
   --color-paper-muted: #6d4554;
-  --shadow-xs: 0 1px 2px rgb(35 20 23 / 0.06);
-  --shadow-sm: 0 2px 6px rgb(35 20 23 / 0.08), 0 1px 2px rgb(35 20 23 / 0.06);
+  --shadow-xs: 0 1px 3px rgb(35 20 23 / 0.10);
+  --shadow-sm: 0 6px 20px rgb(35 20 23 / 0.14), 0 2px 6px rgb(35 20 23 / 0.10);
   color-scheme: light;
 }
 
@@ -190,8 +190,8 @@ html[data-theme="sepia"] {
   --color-paper: #fbf6ee;
   --color-paper-ink: #2a2118;
   --color-paper-muted: #5e4e3c;
-  --shadow-xs: 0 1px 2px rgb(37 30 21 / 0.07);
-  --shadow-sm: 0 2px 6px rgb(37 30 21 / 0.09), 0 1px 2px rgb(37 30 21 / 0.07);
+  --shadow-xs: 0 1px 3px rgb(37 30 21 / 0.10);
+  --shadow-sm: 0 6px 20px rgb(37 30 21 / 0.14), 0 2px 6px rgb(37 30 21 / 0.10);
   color-scheme: light;
 }
 
@@ -217,8 +217,8 @@ html[data-theme="ocean"] {
   --color-paper: #f3f9fc;
   --color-paper-ink: #0c1c28;
   --color-paper-muted: #3e5a6c;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.26);
-  --shadow-sm: 0 2px 6px rgb(0 0 0 / 0.3), 0 1px 2px rgb(0 0 0 / 0.26);
+  --shadow-xs: 0 1px 3px rgb(0 0 0 / 0.45);
+  --shadow-sm: 0 6px 20px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.45);
   color-scheme: dark;
 }
 
@@ -244,8 +244,8 @@ html[data-theme="editorial"] {
   --color-accent-hover: #a55c33;
   --color-on-accent: #faf8f5;
   --color-warn: #b45309;
-  --shadow-xs: 0 1px 2px rgb(28 27 25 / 0.06);
-  --shadow-sm: 0 2px 6px rgb(28 27 25 / 0.08), 0 1px 2px rgb(28 27 25 / 0.06);
+  --shadow-xs: 0 1px 3px rgb(28 27 25 / 0.10);
+  --shadow-sm: 0 6px 20px rgb(28 27 25 / 0.14), 0 2px 6px rgb(28 27 25 / 0.10);
   color-scheme: light;
 }
 
@@ -271,9 +271,82 @@ html[data-theme="telemetry"] {
   --color-accent-hover: #6ee7b7;
   --color-on-accent: #06110c;
   --color-warn: #fbbf24;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.5);
-  --shadow-sm: 0 2px 8px rgb(0 0 0 / 0.55), 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-xs: 0 1px 3px rgb(0 0 0 / 0.45);
+  --shadow-sm: 0 6px 20px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.45);
   color-scheme: dark;
+}
+
+html[data-theme="crimson"] {
+  --color-bg: #0b0709;
+  --color-elev: #14090e;
+  --color-surface: #1a0d13;
+  --color-surface-2: #220f17;
+  --color-line: #331722;
+  --color-line-strong: #4a2130;
+  --color-fg: #f9eff2;
+  --color-muted: #cbb0b8;
+  --color-faint: #9d828b;
+  --color-brass: #ff1e56;
+  --color-brass-2: #ff6f93;
+  --color-ink: #12050a;
+  --color-ok: #4ade80;
+  --color-danger: #f87171;
+  --color-paper: #f9eff2;
+  --color-paper-ink: #14090e;
+  --color-paper-muted: #6b5a60;
+  --color-accent: #ff1e56;
+  --color-accent-hover: #ff6f93;
+  --color-on-accent: #12050a;
+  --color-warn: #fbbf24;
+  --shadow-xs: 0 1px 3px rgb(0 0 0 / 0.45);
+  --shadow-sm: 0 6px 20px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.45);
+  color-scheme: dark;
+}
+
+html[data-theme="clay"] {
+  --color-bg: #fdf6f4;
+  --color-elev: #fbeeea;
+  --color-surface: #ffffff;
+  --color-surface-2: #f7e6e1;
+  --color-line: #eaddd8;
+  --color-line-strong: #d8c3bc;
+  --color-fg: #241715;
+  --color-muted: #6f5b56;
+  --color-faint: #8a736d;
+  --color-brass: #b3261e;
+  --color-brass-2: #d4534a;
+  --color-ink: #fdf6f4;
+  --color-ok: #15803d;
+  --color-danger: #b91c1c;
+  --color-paper: #ffffff;
+  --color-paper-ink: #241715;
+  --color-paper-muted: #6f5b56;
+  --color-accent: #b3261e;
+  --color-accent-hover: #d4534a;
+  --color-on-accent: #fdf6f4;
+  --color-warn: #b45309;
+  --shadow-xs: 0 1px 3px rgb(36 23 21 / 0.10);
+  --shadow-sm: 0 6px 20px rgb(36 23 21 / 0.14), 0 2px 6px rgb(36 23 21 / 0.10);
+  color-scheme: light;
+}
+
+/*
+ * Elevation.
+ *
+ * Every theme defined --shadow-xs and --shadow-sm, but nothing in the DOM ever
+ * referenced them: the tokens were decorative and every card rendered flat, which
+ * is exactly what the Posh reference does *not* do. Cards and badges now consume
+ * their theme's own shadow, so dark themes get a deep cast and light themes get a
+ * soft one without a single hardcoded colour here.
+ */
+@layer components {
+  [data-surface="card"] {
+    box-shadow: var(--shadow-sm);
+  }
+
+  [data-surface="badge"] {
+    box-shadow: var(--shadow-xs);
+  }
 }
 
 @layer base {

@@ -1,6 +1,6 @@
 /**
  * Rule 7 — custom theme system.
- * Eight hand-built themes, all our own. Each one must define the COMPLETE token
+ * Ten hand-built themes, all our own. Each one must define the COMPLETE token
  * set (styles.css mirrors these values under `html[data-theme="…"]`, and the
  * release gate test compares the two so they can never drift).
  *
@@ -18,6 +18,8 @@ export const THEMES = [
   { id: "ocean", label: "Ocean", canvas: "#06141c", accent: "#2aa7c9" },
   { id: "editorial", label: "Editorial", canvas: "#faf8f5", accent: "#8a4b2a" },
   { id: "telemetry", label: "Telemetry", canvas: "#090a0c", accent: "#34d399" },
+  { id: "crimson", label: "Crimson", canvas: "#0b0709", accent: "#ff1e56" },
+  { id: "clay", label: "Clay", canvas: "#fdf6f4", accent: "#b3261e" },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
@@ -210,6 +212,50 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     paper: "#f3f4f6",
     "paper-ink": "#090a0c",
     "paper-muted": "#6b7280",
+  },
+  /**
+   * Posh-style crimson: near-black warm charcoal with the reference's #FF1E56 as
+   * the accent. The bar-chart magenta is the same hue, so the whole surface reads
+   * red rather than merely carrying a red button.
+   */
+  crimson: {
+    bg: "#0b0709",
+    elev: "#14090e",
+    surface: "#1a0d13",
+    "surface-2": "#220f17",
+    line: "#331722",
+    "line-strong": "#4a2130",
+    fg: "#f9eff2",
+    muted: "#cbb0b8",
+    faint: "#9d828b",
+    brass: "#ff1e56",
+    "brass-2": "#ff6f93",
+    ink: "#12050a",
+    ok: "#4ade80",
+    danger: "#f87171",
+    paper: "#f9eff2",
+    "paper-ink": "#14090e",
+    "paper-muted": "#6b5a60",
+  },
+  /** The light half of the red pair: warm paper with a fired-clay accent. */
+  clay: {
+    bg: "#fdf6f4",
+    elev: "#fbeeea",
+    surface: "#ffffff",
+    "surface-2": "#f7e6e1",
+    line: "#eaddd8",
+    "line-strong": "#d8c3bc",
+    fg: "#241715",
+    muted: "#6f5b56",
+    faint: "#8a736d",
+    brass: "#b3261e",
+    "brass-2": "#d4534a",
+    ink: "#fdf6f4",
+    ok: "#15803d",
+    danger: "#b91c1c",
+    paper: "#ffffff",
+    "paper-ink": "#241715",
+    "paper-muted": "#6f5b56",
   },
 };
 
