@@ -36,9 +36,6 @@ export default defineConfig(() => ({
     strictPort: true,
   },
   resolve: { tsconfigPaths: true },
-  optimizeDeps: {
-    exclude: ["ssh2", "cpu-features"],
-  },
   plugins: [
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     // Dev-only /__app-env, read by scripts/check-auth-invariant.mjs.
