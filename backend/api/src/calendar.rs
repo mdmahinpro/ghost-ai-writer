@@ -265,8 +265,15 @@ pub fn publish_request(
     }
 
     let article_status = text(article, "status");
-    // Rule 3d: hold rather than publish prose that has not been humanized.
-    if article_status == "published" && text(article, "humanState") != "done" {
+    // Rule 3d: hold rather than publish prose that is mid-humanization.
+    //
+    // The flag is only ever set by the browser's HumanizePipeline, which is why
+    // an ABSENT value is publishable rather than held: the Rust pipeline folds
+    // the humanizer constitution into its own draft/revision prompts and has no
+    // second pass to wait for. Holding on absence would mean an armed calendar
+    // never publishes anything produced server-side — a silent deadlock.
+    let human_state = text(article, "humanState");
+    if article_status == "published" && matches!(human_state.as_str(), "running" | "pending") {
         return Err(PublishBlock::Held);
     }
 
@@ -680,6 +687,21 @@ mod tests {
         // A draft is not a live publish, so the hold does not apply.
         let state = state_with_article("running", "draft");
         assert!(publish_request(&state, &cal, "p1").is_ok());
+    }
+
+    #[test]
+    fn a_server_written_article_with_no_humanizer_flag_is_publishable() {
+        // Nothing on the server ever sets humanState; holding on absence would
+        // deadlock an armed calendar. Only a pass in flight may hold.
+        let mut state = state_with_article("done", "published");
+        state["articles"][0].as_object_mut().unwrap().remove("humanState");
+        assert!(publish_request(&state, &publishable_calendar(), "p1").is_ok());
+        // An explicit in-flight pass still holds.
+        let state = state_with_article("pending", "published");
+        assert_eq!(
+            publish_request(&state, &publishable_calendar(), "p1").unwrap_err(),
+            PublishBlock::Held
+        );
     }
 
     #[test]

@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { ChatTransport, ImageTransport } from "./engine";
 import {
-  advance,
   applyAudit,
   applyProbe,
   buildAudit,
@@ -41,7 +39,6 @@ import {
   pipelineSnapshot,
 } from "./pipeline-api";
 import { mergeSnapshot } from "./server-pipeline-merge";
-import { placeImages } from "./images.functions";
 import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow, publishSlots, queueCalendarItem, withSummaries } from "./operator";
 import { claimLease, heartbeat } from "./worker-api";
 import { embeddingProvider } from "./embed-key";
@@ -490,29 +487,12 @@ export const useApp = create<AppState>()(
               }
               return;
             }
-            // Hotfix: upsert-merge the advanced clone instead of a wholesale
-            // spread. A clone taken before `advance`'s awaits (gateText, image
-            // fetches) used to erase runs/jobs/articles committed concurrently
-            // by queueKeywords → "Run missing".
-            // Hotfix: upsert-merge the advanced clone instead of a wholesale
-            // spread. A clone taken before `advance`'s awaits (gateText, image
-            // fetches) used to erase runs/jobs/articles committed concurrently
-            // by queueKeywords → "Run missing".
-            let base = current;
-            if (needsWork(current, now)) {
-              // The sequential pipeline host: stage-by-stage commits stream job
-              // progress into the live store (and the server DB) the moment each
-              // stage finishes, so the UI and every other window see it instantly.
-              const advanced = await advance(snap(current), now, {
-                chat: chatTransport,
-                images: imageTransport,
-                provider: embeddingProvider(usableKey(snap(current), undefined, now) ?? undefined).provider,
-                commit: (patchState) => {
-                  useApp.setState((cur) => ({ ...cur, ...patchState, ...mergePersisted(cur, patchState, CHURNED_COLLECTIONS) }));
-                },
-              });
-              base = { ...current, ...advanced, ...mergePersisted(current, advanced, CHURNED_COLLECTIONS) };
-            }
+            // Stage execution is NOT done here any more. The Rust worker owns it
+            // (`worker::process_claim` behind a SQL lease), so a run keeps
+            // progressing after every tab is closed. This tick is now only the
+            // UI side of the bridge: claim the display lease, pulse the calendar
+            // bits the server does not own yet, and renew the heartbeat.
+            const base = current;
             const pulsed = await pulseCalendars(snap(base), now);
             // Same hotfix for the calendar/queue pulse: never wipe what a concurrent
             // action (a just-queued run) committed while the pulse was awaiting.
@@ -2145,56 +2125,6 @@ function drainPurges(): { sites?: string[]; keys?: string[]; articles?: string[]
   }
   return out;
 }
-
-function keyPoolSnapshot(preferredKeyId: string | undefined) {
-  const state = snap(useApp.getState());
-  return { state, keys: keyPool(state, preferredKeyId, Date.now()) };
-}
-
-/** Key-pool LLM transport: sequential failover + one validation retry. */
-const chatTransport: ChatTransport = {
-  async callModel({ system, user, validate, preferredKeyId }) {
-    const pool = (modifiedUser: string) => {
-      const { keys } = keyPoolSnapshot(preferredKeyId);
-      return runWithKeyPool({
-        keys,
-        onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error),
-        call: async (key) => {
-          const result = await generateDraft({ data: { preferredKeyId: key.serverKeyId, system, user: modifiedUser } });
-          if (result.ok) return { ok: true as const, value: result };
-          return { ok: false as const, status: result.status ?? 0, error: result.error };
-        },
-      });
-    };
-    const first = await pool(user);
-    if (!first.ok) throw new Error(first.error);
-    const problem = validate(first.value.text);
-    if (!problem) return { keyId: first.keyId, text: first.value.text, usage: first.value.usage };
-    const retry = await pool(`${user}\n\nThe previous response was rejected: ${problem} Return valid JSON only, no markdown fences.`);
-    if (!retry.ok) throw new Error(retry.error);
-    const secondProblem = validate(retry.value.text);
-    if (secondProblem) throw new Error(secondProblem);
-    return { keyId: retry.keyId, text: retry.value.text, usage: retry.value.usage };
-  },
-  async bladerChat(system, user) {
-    const { keys } = keyPoolSnapshot(undefined);
-    const outcome = await runWithKeyPool({
-      keys: keys.filter((key) => keyCallsModel(key)),
-      onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error),
-      call: async (key) => {
-        const result = await generateDraft({ data: { preferredKeyId: key.serverKeyId, system, user } });
-        if (result.ok) return { ok: true as const, value: result.text };
-        return { ok: false as const, status: result.status ?? 0, error: result.error };
-      },
-    });
-    if (!outcome.ok) return { ok: false as const, error: outcome.error };
-    return { ok: true as const, text: outcome.value, keyId: outcome.keyId };
-  },
-};
-
-const imageTransport: ImageTransport = {
-  placeImages: (input) => placeImages({ data: input }),
-};
 
 /**
  * Cross-window pull competition rules.
