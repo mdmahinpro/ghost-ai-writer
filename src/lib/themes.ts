@@ -1,8 +1,12 @@
 /**
  * Rule 7 — custom theme system.
- * Six hand-built themes, all our own. Each one must define the COMPLETE token
+ * Eight hand-built themes, all our own. Each one must define the COMPLETE token
  * set (styles.css mirrors these values under `html[data-theme="…"]`, and the
  * release gate test compares the two so they can never drift).
+ *
+ * `editorial` and `telemetry` are the Mobbin-derived pair: a warm paper
+ * workspace (Hilos) and a dark telemetry room (Modal / Fey / SoundCloud), so the
+ * app has a light and a dark face built from the same references.
  */
 
 export const THEMES = [
@@ -12,6 +16,8 @@ export const THEMES = [
   { id: "rose", label: "Rose", canvas: "#fbf4f6", accent: "#be3a5a" },
   { id: "sepia", label: "Sepia", canvas: "#f4efe4", accent: "#8a5424" },
   { id: "ocean", label: "Ocean", canvas: "#06141c", accent: "#2aa7c9" },
+  { id: "editorial", label: "Editorial", canvas: "#faf8f5", accent: "#8a4b2a" },
+  { id: "telemetry", label: "Telemetry", canvas: "#090a0c", accent: "#34d399" },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
@@ -154,6 +160,56 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     paper: "#f3f9fc",
     "paper-ink": "#0c1c28",
     "paper-muted": "#3e5a6c",
+  },
+  /**
+   * Hilos warm editorial workspace. The brief's `#9C968C` faint grey measures
+   * 2.77:1 on this canvas and fails the 3:1 gate, so it is darkened to #8A8478
+   * (3.50:1) — same warm cast, still legible. Line colours are the brief's
+   * rgba(28,27,25,.08/.18) borders flattened onto the canvas, because a theme
+   * token must be a hex colour.
+   */
+  editorial: {
+    bg: "#faf8f5",
+    elev: "#f7f4ee",
+    surface: "#ffffff",
+    "surface-2": "#f3f0ea",
+    line: "#e8e6e3",
+    "line-strong": "#d2d0cd",
+    fg: "#1c1b19",
+    muted: "#6e6a63",
+    faint: "#8a8478",
+    brass: "#8a4b2a",
+    "brass-2": "#c98a63",
+    ink: "#faf8f5",
+    ok: "#15803d",
+    danger: "#b91c1c",
+    paper: "#ffffff",
+    "paper-ink": "#1c1b19",
+    "paper-muted": "#6e6a63",
+  },
+  /**
+   * Modal / Fey / SoundCloud telemetry room. Emerald is the live-accent, crimson
+   * the failure colour, as in the references. Line colours are the brief's
+   * rgba(255,255,255,.07/.18) borders flattened onto the canvas.
+   */
+  telemetry: {
+    bg: "#090a0c",
+    elev: "#1a1d23",
+    surface: "#121418",
+    "surface-2": "#0d0e11",
+    line: "#1a1b1d",
+    "line-strong": "#35363a",
+    fg: "#f3f4f6",
+    muted: "#9ca3af",
+    faint: "#6b7280",
+    brass: "#34d399",
+    "brass-2": "#6ee7b7",
+    ink: "#06110c",
+    ok: "#34d399",
+    danger: "#f87171",
+    paper: "#f3f4f6",
+    "paper-ink": "#090a0c",
+    "paper-muted": "#6b7280",
   },
 };
 
