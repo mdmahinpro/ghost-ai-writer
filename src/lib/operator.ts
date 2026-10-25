@@ -329,17 +329,11 @@ export async function pulseCalendars(data: Persisted, now: number): Promise<Pers
   if (data.workerPaused) return null;
   let next = structuredClone(data);
   let changed = syncCalendarItems(next);
-  for (const calendar of [...next.calendars]) {
-    if (!calendar.autoGenerate) continue;
-    for (const item of calendar.items) {
-      if (item.status !== "SCHEDULED" || item.writeAt > now) continue;
-      const queued = await queueCalendarItem(next, calendar.id, item.id, now);
-      if (!queued.error) {
-        next = queued.data;
-        changed = true;
-      }
-    }
-  }
+  // Queuing due `autoGenerate` items is NOT done here any more. The Rust
+  // calendar pulse (`backend/api/src/calendar.rs`) owns it, so a scheduled
+  // article starts writing whether or not a tab is open. Doing it in both
+  // places would queue the same item twice while the client's copy still reads
+  // SCHEDULED.
   syncCalendarItems(next);
   for (const calendar of [...next.calendars]) {
     if (!calendar.autoPublish) continue;

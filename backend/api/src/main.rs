@@ -23,6 +23,7 @@ use std::net::SocketAddr;
 use std::time::Instant;
 
 mod email;
+mod calendar;
 mod gate;
 mod deploy;
 mod ftp;
@@ -1024,6 +1025,32 @@ async fn main() {
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     }
                 }
+            }
+        });
+
+        // Calendar automation belongs here, not in a browser tab: the queue must
+        // keep filling after every tab closes. Runs on its own task so a slow
+        // pulse can never delay a job claim.
+        let pool_cal = pool.clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(calendar::DEFAULT_INTERVAL_SECS);
+            loop {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                match calendar::pulse_all(&pool_cal, now_ms).await {
+                    Ok(summary) if summary.queued > 0 || summary.skipped_no_site > 0 => {
+                        tracing::info!(
+                            "calendar pulse queued {} item(s), skipped {} without a server site id",
+                            summary.queued,
+                            summary.skipped_no_site
+                        )
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("calendar pulse: {e}"),
+                }
+                tokio::time::sleep(interval).await;
             }
         });
     }
