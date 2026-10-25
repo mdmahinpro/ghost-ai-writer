@@ -219,3 +219,7 @@ export function post<T>(path: string, body?: unknown): Promise<ApiResponse<T>> {
 export function del<T>(path: string): Promise<ApiResponse<T>> {
   return request<T>("DELETE", path);
 }
+
+export function patch<T>(path: string, body: unknown): Promise<ApiResponse<T>> {
+  return request<T>("PATCH", path, body);
+}

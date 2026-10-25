@@ -343,7 +343,7 @@ export function KeysPage() {
               if (!effectiveModel) return;
               const nextLabel = label.trim() || `${PROVIDER_LABELS[providerKind]} ${effectiveModel}`;
               if (editingId) {
-                patchKey(editingId, {
+                void patchKey(editingId, {
                   provider: PROVIDER_LABELS[providerKind],
                   model: effectiveModel,
                   label: nextLabel,
@@ -355,8 +355,7 @@ export function KeysPage() {
                   catalogId: providerKind === "custom" ? undefined : catalogId,
                   pricePerM,
                   embeddingModel: embeddingModel.trim() || undefined,
-                });
-                resetForm();
+                }).then(() => resetForm());
                 return;
               }
               void addKey({
@@ -371,9 +370,10 @@ export function KeysPage() {
                 catalogId: providerKind === "custom" ? undefined : catalogId,
                 pricePerM,
                 embeddingModel: embeddingModel.trim() || undefined,
+              }).then(() => {
+                setSecret("");
+                setLabel("");
               });
-              setSecret("");
-              setLabel("");
             }}
             disabled={!effectiveModel}
           >

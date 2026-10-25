@@ -970,6 +970,70 @@ pub async fn insert_provider(
     Ok(id)
 }
 
+
+
+/// Partial update for a saved key. A blank optional `api_key` keeps the sealed
+/// credential on file; a non-blank one replaces it (re-sealed at rest).
+#[derive(Deserialize)]
+pub struct UpdateProvider {
+    pub workspace_id: i64,
+    pub label: String,
+    pub model_id: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub priority: i64,
+}
+
+/// Update a saved key in place. A blank (or absent) secret keeps the already-sealed
+/// credential on file, so editing the model, label, base URL, or priority never
+/// invalidates a working key. Returns the updated row's id so the browser can re-bind
+/// its local row to this server id.
+pub async fn update_provider(
+    pool: &SqlitePool,
+    id: i64,
+    req: &UpdateProvider,
+) -> Result<i64, sqlx::Error> {
+    let existing: Option<(String, String, String)> =
+        sqlx::query_as("SELECT key_enc, base_url, key_hint FROM ai_keys WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    let (enc, old_base, hint_on_file) = match existing {
+        None => return Err(sqlx::Error::RowNotFound),
+        Some(row) => row,
+    };
+
+    // Carry over base_url when the client sends none.
+    let base_url = req.base_url.clone().filter(|v| !v.trim().is_empty()).or(Some(old_base));
+
+    // A blank secret keeps the sealed value AND its hint; a non-blank one re-seals
+    // and re-derives the hint (masked last four). Decryption never happens here.
+    let (new_enc, new_hint) = if req.api_key.trim().is_empty() {
+        (enc, hint_on_file)
+    } else {
+        (crate::secrets::seal_secret(&req.api_key), hint(&req.api_key))
+    };
+
+    let res: i64 = sqlx::query_scalar(
+        "UPDATE ai_keys SET label = ?, model_id = ?, base_url = ?, priority = ?, \
+                 key_enc = ?, key_hint = ?, status = 'UNVERIFIED' \
+         WHERE id = ? RETURNING id",
+    )
+    .bind(&req.label)
+    .bind(&req.model_id)
+    .bind(base_url)
+    .bind(req.priority)
+    .bind(new_enc)
+    .bind(new_hint)
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(res)
+}
+
 pub async fn list_providers(
     pool: &SqlitePool,
     workspace_id: i64,

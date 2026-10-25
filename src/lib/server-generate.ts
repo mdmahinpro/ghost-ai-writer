@@ -6,7 +6,7 @@
  * decides which key serves it. That is what lets the store stop holding
  * secrets at all.
  */
-import { post } from "./api-client.ts";
+import { post, patch } from "./api-client.ts";
 import type { ApiResponse } from "./api-client.ts";
 
 /** The numeric `ai_keys.id` a browser key was saved as. */
@@ -53,6 +53,37 @@ export async function addProvider(input: {
     kind: input.kind,
     priority: input.priority,
     role: input.role,
+  });
+  if (!res.ok) return res;
+  return { ok: true, data: { id: res.data.id } };
+}
+
+
+/** The numeric `ai_keys.id` after an in-place update. */
+export type UpdatedProvider = { id: number };
+
+/**
+ * Update a saved key in place. A blank `apiKey` keeps the sealed credential on file,
+ * so editing the model, base URL, or label never invalidates a working key. This is
+ * also the rescue path for a key saved while the server was broken: binding the new
+ * id turns an orphaned "not saved" key into a working one.
+ */
+export async function updateProvider(input: {
+  id: number;
+  workspaceId: number;
+  label: string;
+  modelId: string;
+  baseUrl?: string;
+  apiKey?: string;
+  priority?: number;
+}): Promise<ApiResponse<UpdatedProvider>> {
+  const res = await patch<{ id: number; workspace_id: number }>(`/api/v1/providers/${input.id}`, {
+    workspace_id: input.workspaceId,
+    label: input.label,
+    model_id: input.modelId,
+    base_url: input.baseUrl,
+    api_key: input.apiKey ?? "",
+    priority: input.priority ?? 0,
   });
   if (!res.ok) return res;
   return { ok: true, data: { id: res.data.id } };

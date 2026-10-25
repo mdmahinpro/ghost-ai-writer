@@ -32,7 +32,7 @@ import {
   decideReview,
 } from "./engine";
 import { get, post } from "./api-client";
-import { addProvider, generate as serverGenerate } from "./server-generate";
+import { addProvider, generate as serverGenerate, updateProvider } from "./server-generate";
 import {
   enqueueKeywords,
   ensureSite,
@@ -217,7 +217,7 @@ export type AppState = Persisted & {
   /** Permanently remove a key/custom endpoint from this browser. Usage ledger rows are kept. */
   deleteKey: (id: string) => void;
   /** Edit a saved key in place (model id, base URL, label, priority). */
-  patchKey: (id: string, patch: Partial<Pick<AiKey, "provider" | "providerKind" | "model" | "baseUrl" | "secret" | "label" | "priority" | "allowanceUsd" | "pricePerM" | "hint" | "catalogId" | "embeddingModel" | "lastError" | "lastErrorAt" | "cooldownUntil">>) => void;
+  patchKey: (id: string, patch: Partial<Pick<AiKey, "provider" | "providerKind" | "model" | "baseUrl" | "secret" | "label" | "priority" | "allowanceUsd" | "pricePerM" | "hint" | "catalogId" | "embeddingModel" | "lastError" | "lastErrorAt" | "cooldownUntil">>) => Promise<void>;
   patchLimits: (patch: Partial<Limits>) => void;
   setWebSearchMode: (mode: WebSearchMode) => void;
   importWebSearchKeys: (provider: "tavily" | "firecrawl", raw: string) => number;
@@ -1072,11 +1072,85 @@ auditNow: () => {
             },
           };
         }),
-      patchKey: (id, patch) =>
-        set((s) => ({
-          ...s,
-          keys: s.keys.map((key) => (key.id === id ? { ...key, ...patch } : key)),
-        })),
+      patchKey: async (id, patch) => {
+        const current = useApp.getState().keys.find((key) => key.id === id);
+        if (!current) return;
+        const newSecret = patch.secret?.trim() ?? "";
+        const meta = { ...patch, secret: undefined as string | undefined };
+        // Nothing server-side to talk to: a purely local, secret-less edit.
+        if (!newSecret && current.serverKeyId === undefined) {
+          set((s) => ({ ...s, keys: s.keys.map((key) => (key.id === id ? { ...key, ...meta } : key)) }));
+          return;
+        }
+        try {
+          if (current.serverKeyId === undefined) {
+              // Orphan rescue: this key was saved while the server side was broken,
+              // so it never got an id. Sending its secret now binds it and the key
+              // becomes usable — no delete-and-re-add needed.
+              if (!newSecret) {
+                set({ notice: { tone: "danger", text: `${current.label} is not on the server yet. Enter the key and save — it is stored encrypted on the server, not in this browser.` } });
+                return;
+              }
+              const saved = await addProvider({
+                workspaceId: WORKSPACE_ID,
+                provider: patch.provider ?? current.provider,
+                label: patch.label ?? current.label,
+                apiKey: newSecret,
+                modelId: patch.model ?? current.model,
+                baseUrl: patch.baseUrl ?? current.baseUrl,
+                kind: current.kind === "custom" ? "openai_compatible" : "openai",
+                priority: patch.priority ?? current.priority,
+                role: "text",
+              });
+              if (!saved.ok) {
+                set({ notice: { tone: "danger", text: `Could not save the key on the server: ${saved.error}` } });
+                return;
+              }
+              set((st) => ({
+                ...st,
+                notice: { tone: "ok", text: `${patch.label ?? current.label} saved on the server, encrypted.` },
+                keys: st.keys.map((key) =>
+                  key.id === id
+                    ? {
+                        ...key, ...meta,
+                        serverKeyId: saved.data.id,
+                        hint: newSecret ? `••••${newSecret.slice(-4)}` : key.hint,
+                      }
+                    : key,
+                ),
+              }));
+              return;
+            }
+            const updated = await updateProvider({
+              id: current.serverKeyId,
+              workspaceId: WORKSPACE_ID,
+              label: patch.label ?? current.label,
+              modelId: patch.model ?? current.model,
+              baseUrl: patch.baseUrl ?? current.baseUrl,
+              apiKey: newSecret, // blank = keep the sealed one on file
+              priority: patch.priority ?? current.priority,
+            });
+            if (!updated.ok) {
+              set({ notice: { tone: "danger", text: `Could not update the key on the server: ${updated.error}` } });
+              return;
+            }
+            set((st) => ({
+              ...st,
+              notice: { tone: "ok", text: `${patch.label ?? current.label} updated on the server.` },
+              keys: st.keys.map((key) =>
+                key.id === id
+                  ? {
+                      ...key, ...meta,
+                      serverKeyId: updated.data.id,
+                      hint: newSecret ? `••••${newSecret.slice(-4)}` : key.hint,
+                    }
+                  : key,
+              ),
+            }));
+        } catch (e) {
+          set({ notice: { tone: "danger", text: `Could not update the key: ${e instanceof Error ? e.message : String(e)}` } });
+        }
+      },
       patchLimits: (patch) =>
         set((s) => ({
           ...s,

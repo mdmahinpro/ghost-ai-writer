@@ -14,7 +14,7 @@ use axum::{
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -633,6 +633,24 @@ async fn create_provider(
     ))
 }
 
+/// Update a saved key in place. A blank secret keeps the sealed credential on file.
+/// Returns the updated id. The browser re-binds its local row to this id, which is
+/// what lets an orphaned key (saved while the server was broken) be rescued by a
+/// single edit-and-save.
+async fn patch_provider(
+    State(st): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(req): Json<provider::UpdateProvider>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let updated = provider::update_provider(&st.pool, id, &req)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => ApiError::BadRequest("unknown key id"),
+            other => ApiError::Db(other),
+        })?;
+    Ok(Json(serde_json::json!({ "id": updated, "workspace_id": req.workspace_id })))
+}
+
 #[derive(Deserialize)]
 struct GenerateRequest {
     #[serde(default = "default_workspace")]
@@ -827,6 +845,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers/keys", get(key_pool))
         .route("/v1/generate", post(generate))
         .route("/v1/providers", get(list_provider_routes).post(create_provider))
+        .route("/v1/providers/{id}", patch(patch_provider))
 }
 
 /// Split out from `app` so the layers below can be read on their own; the tests
@@ -1231,6 +1250,91 @@ mod tests {
         .expect("a key must save against the bootstrapped workspace");
         assert!(row >= 1);
     }
+
+    #[tokio::test]
+    async fn update_keeps_the_sealed_credential_on_a_blank_secret() {
+        let pool = memory_pool().await;
+        let id = crate::provider::insert_provider(
+            &pool,
+            NOW,
+            &crate::provider::NewProvider {
+                workspace_id: 1,
+                provider: "custom".into(),
+                label: "My key".into(),
+                api_key: "sk-pro...4032".into(),
+                kind: Some("openai_compatible".into()),
+                base_url: Some("https://api.example.com/v1".into()),
+                model_id: "model-a".into(),
+                price_in_per_mtok: 0.5,
+                price_out_per_mtok: 0.7,
+                max_tokens: None,
+                temperature: None,
+                role: None,
+                is_default: false,
+            },
+        )
+        .await
+        .expect("insert");
+        let before: (String, String) =
+            sqlx::query_as("SELECT key_enc, key_hint FROM ai_keys WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("SELECT");
+        assert!(before.0.starts_with("enc:v1:"));
+
+        // Blank secret + a changed model/base URL: everything else holds.
+        crate::provider::update_provider(
+            &pool,
+            id,
+            &crate::provider::UpdateProvider {
+                workspace_id: 1,
+                label: "My key (edited)".into(),
+                model_id: "model-b".into(),
+                base_url: Some("https://api2.example.com/v1".into()),
+                api_key: String::new(),
+                priority: 55,
+            },
+        )
+        .await
+        .expect("update must not fail");
+
+        let after: (String, String, String, String, i64) =
+            sqlx::query_as(
+                "SELECT key_enc, key_hint, model_id, base_url, priority FROM ai_keys WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("after");
+        assert_eq!(after.0, before.0); // sealed credential untouched
+        assert_eq!(after.1, before.1); // hint survives a blank-secret edit
+        assert_eq!(after.2, "model-b");
+        assert_eq!(after.3, "https://api2.example.com/v1");
+        assert_eq!(after.4, 55);
+    }
+
+    #[tokio::test]
+    async fn update_404s_on_an_unknown_id() {
+        let pool = memory_pool().await;
+        let err = crate::provider::update_provider(
+            &pool,
+            9999,
+            &crate::provider::UpdateProvider {
+                workspace_id: 1,
+                label: "ghost".into(),
+                model_id: "m".into(),
+                base_url: None,
+                api_key: "sk-x".into(),
+                priority: 1,
+            },
+        )
+        .await
+        .err()
+        .expect("unknown id must be RowNotFound");
+        assert!(matches!(err, sqlx::Error::RowNotFound));
+    }
+
 
     #[tokio::test]
     async fn migrations_create_all_six_tables() {
