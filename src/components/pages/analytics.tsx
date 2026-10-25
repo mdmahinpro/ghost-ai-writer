@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Bar, BarChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { HumanizeBanner } from "@/components/humanize-pipeline";
+import { LinkField } from "@/components/link-field";
 import { bingChecks, bingScore, duplicatePairs } from "@/lib/bing";
 import { measureArticle, uniquenessAgainst } from "@/lib/engine";
 import { inboundCount } from "@/lib/link-graph";
@@ -363,41 +364,42 @@ export function AnalyticsPage() {
         </Card>
         {indexNote ? <p className="text-sm text-muted">{indexNote}</p> : null}
         {indexPreview ? <p className="text-sm text-muted">{indexPreview}</p> : null}
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card className="p-4">
-            <h3 className="font-semibold tracking-tight">Internal link graph</h3>
-            <p className="mt-1 text-xs text-faint">
-              Nodes are articles. Arrows are internal links already in the HTML. Grey nodes have no inbound link.
+        <Card className="p-5">
+          <h3 className="font-semibold tracking-tight">Internal link field</h3>
+          <p className="mt-1 text-xs text-faint">
+            Every article is a node on the sphere, every internal link already in the HTML is an
+            arrow between them. The field turns on its own — drag it to look from another angle.
+          </p>
+          <div className="mt-4">
+            <LinkField articles={linked} />
+          </div>
+        </Card>
+        <Card className="p-4">
+          <h3 className="font-semibold tracking-tight">Near-duplicates</h3>
+          <p className="mt-1 text-sm text-muted">
+            {pairs.length
+              ? "These pairs are close enough that Bing may fold them. Link one to the other and change the angle, or unpublish the weaker URL."
+              : "No pair is close enough to look like a copy. Keep linking sideways so new drafts do not drift into the same title."}
+          </p>
+          <ul className="mt-3 space-y-2 text-sm">
+            {pairs.map((pair) => (
+              <li key={pair.left.id + pair.right.id} className="rounded-lg border border-line px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate">{pair.left.title}</span>
+                  <span className="font-mono text-xs text-brass">{Math.round(pair.score * 100)}%</span>
+                </div>
+                <div className="truncate text-muted">{pair.right.title}</div>
+              </li>
+            ))}
+          </ul>
+          {orphans.length ? (
+            <p className="mt-3 text-sm text-danger">
+              {orphans.length} orphan{orphans.length === 1 ? "" : "s"} with no inbound link: {orphans.map((article) => article.title).join(", ")}.
             </p>
-            <LinkGraph articles={linked} />
-          </Card>
-          <Card className="p-4">
-            <h3 className="font-semibold tracking-tight">Near-duplicates</h3>
-            <p className="mt-1 text-sm text-muted">
-              {pairs.length
-                ? "These pairs are close enough that Bing may fold them. Link one to the other and change the angle, or unpublish the weaker URL."
-                : "No pair is close enough to look like a copy. Keep linking sideways so new drafts do not drift into the same title."}
-            </p>
-            <ul className="mt-3 space-y-2 text-sm">
-              {pairs.map((pair) => (
-                <li key={pair.left.id + pair.right.id} className="rounded-lg border border-line px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate">{pair.left.title}</span>
-                    <span className="font-mono text-xs text-brass">{Math.round(pair.score * 100)}%</span>
-                  </div>
-                  <div className="truncate text-muted">{pair.right.title}</div>
-                </li>
-              ))}
-            </ul>
-            {orphans.length ? (
-              <p className="mt-3 text-sm text-danger">
-                {orphans.length} orphan{orphans.length === 1 ? "" : "s"} with no inbound link: {orphans.map((article) => article.title).join(", ")}.
-              </p>
-            ) : (
-              <p className="mt-3 text-sm text-brass-2">No orphan pages. Every article has an inbound link.</p>
-            )}
-          </Card>
-        </div>
+          ) : (
+            <p className="mt-3 text-sm text-brass-2">No orphan pages. Every article has an inbound link.</p>
+          )}
+        </Card>
         <Card className="overflow-x-auto p-4">
           <h3 className="font-semibold tracking-tight">Page checklist</h3>
           <table className="mt-3 w-full min-w-lg text-left text-sm">
@@ -449,56 +451,5 @@ function LineItem({ k, v }: { k: string; v: string }) {
       <dt className="text-muted">{k}</dt>
       <dd className="font-mono">{v}</dd>
     </div>
-  );
-}
-
-function LinkGraph({ articles }: { articles: { id: string; title: string; slug: string; links: { targetSlug: string; state?: string }[] }[] }) {
-  const nodes = articles.slice(0, 24).map((article, index) => {
-    const angle = (index / Math.max(articles.length, 1)) * Math.PI * 2 - Math.PI / 2;
-    const radius = articles.length < 8 ? 32 : 38;
-    return {
-      ...article,
-      inbound: inboundCount(articles, article.slug),
-      x: 50 + Math.cos(angle) * radius,
-      y: 50 + Math.sin(angle) * radius * 0.82,
-    };
-  });
-  const bySlug = new Map(nodes.map((node) => [node.slug, node]));
-  const edges = nodes.flatMap((node) =>
-    node.links
-      .filter((link) => link.state !== "BROKEN" && link.state !== "FAILED")
-      .map((link) => bySlug.get(link.targetSlug))
-      .filter((target): target is (typeof nodes)[number] => Boolean(target))
-      .map((target) => ({ from: node, to: target })),
-  );
-  if (!nodes.length) return <p className="mt-6 text-sm text-muted">Publish a few articles and the graph fills in.</p>;
-  return (
-    <svg viewBox="0 0 100 100" className="mt-3 h-80 w-full" role="img" aria-label="Internal link graph">
-      <defs>
-        <marker id="link-arrow" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto">
-          <path d="M0,0 L4,2 L0,4 Z" fill="var(--color-brass)" />
-        </marker>
-      </defs>
-      {edges.map((edge) => (
-        <line
-          key={`${edge.from.id}-${edge.to.id}`}
-          x1={edge.from.x}
-          y1={edge.from.y}
-          x2={edge.to.x}
-          y2={edge.to.y}
-          stroke="var(--color-brass)"
-          strokeOpacity={0.7}
-          strokeWidth={0.45}
-          markerEnd="url(#link-arrow)"
-        />
-      ))}
-      {nodes.map((node) => (
-        <a key={node.id} href={`/articles/${node.id}`}>
-          <circle cx={node.x} cy={node.y} r={node.inbound ? 2.6 : 2} fill={node.inbound ? "var(--color-brass)" : "var(--color-faint)"}>
-            <title>{`${node.title} · ${node.links.length} out · ${node.inbound} in`}</title>
-          </circle>
-        </a>
-      ))}
-    </svg>
   );
 }
