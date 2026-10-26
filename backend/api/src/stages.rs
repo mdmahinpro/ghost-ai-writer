@@ -1716,7 +1716,7 @@ fn word_count(text: &str) -> i64 {
 /// synced snapshot. `sites.client_uid` is the bridge — it holds the snapshot's
 /// site id. Without this fallback every LIVE run resolved `Unconfigured` and
 /// held its article, so Ghost was never attempted at all.
-async fn ghost_config(
+pub(crate) async fn ghost_config(
     pool: &SqlitePool,
     site_id: i64,
     website_id: Option<i64>,
@@ -1786,6 +1786,83 @@ async fn ghost_config(
         "SANDBOX"
     };
     Ok((mode.to_string(), field("url"), field("adminKey")))
+}
+
+/// Push every finished article this site owns into Ghost as a draft, for the ones
+/// that never got there.
+///
+/// Stage 6 pushes at the moment it publishes and never looks back, so articles
+/// finished before the connection was saved stay off the CMS forever. The
+/// `ghost_post_id` marker is what makes this safe to run twice: an article Ghost
+/// already has is left untouched, and the direct answer says which connection
+/// was used, so an empty result is diagnosable instead of silent.
+pub async fn mirror_to_ghost(
+    pool: &SqlitePool,
+    site_id: i64,
+    website_id: Option<i64>,
+) -> serde_json::Value {
+    let (mode, url, key) = match ghost_config(pool, site_id, website_id).await {
+        Ok(resolved) => resolved,
+        Err(error) => return json!({ "ok": false, "error": error.to_string() }),
+    };
+    let (Some(url), Some(key)) = (url, key) else {
+        return json!({
+            "ok": false,
+            "mode": mode,
+            "error": "No Ghost connection is saved for this site yet. Connect the CMS on Connections, then run this again.",
+        });
+    };
+    let rows: Vec<(i64, String, String, String, Option<String>)> = match sqlx::query_as(
+        "SELECT id, title, slug, COALESCE(content_json, ''), featured_image_url FROM articles \
+         WHERE site_id = ? AND status != 'DELETED' AND COALESCE(content_json, '') != '' \
+           AND (ghost_post_id IS NULL OR ghost_post_id = '') \
+         ORDER BY id",
+    )
+    .bind(site_id)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(error) => return json!({ "ok": false, "error": error.to_string() }),
+    };
+    let mut pushed = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for (id, title, slug, markdown, image) in rows {
+        match crate::ghost::push_post(
+            Some(&url),
+            Some(&key),
+            &title,
+            &slug,
+            &markdown,
+            image.as_deref(),
+            "draft",
+        )
+        .await
+        {
+            Ok(res) => {
+                let stored = sqlx::query(
+                    "UPDATE articles SET ghost_post_id = ?, ghost_post_url = ? WHERE id = ?",
+                )
+                .bind(&res.ghost_post_id)
+                .bind(&res.url)
+                .bind(id)
+                .execute(pool)
+                .await;
+                match stored {
+                    Ok(_) => pushed += 1,
+                    Err(error) => failed.push(format!("{slug}: {error}")),
+                }
+            }
+            Err(error) => failed.push(format!("{slug}: {error}")),
+        }
+    }
+    json!({
+        "ok": true,
+        "mode": mode,
+        "url": url,
+        "pushed": pushed,
+        "failed": failed,
+    })
 }
 
 /// Stage 6 — the release gate and Ghost publish. Returns the article's final
@@ -2452,6 +2529,21 @@ mod tests {
             "tags": ["1","2","3","4","5","6","7","8","9"]
         });
         assert!(validate_metadata(&tags).is_err(), "tags > 8");
+    }
+
+    /// A backfill with nothing connected must say so, not pretend it worked:
+    /// the answer carries the mode the pipeline resolved.
+    #[tokio::test]
+    async fn the_cms_mirror_reports_the_missing_connection_instead_of_succeeding() {
+        let pool = test_pool().await;
+        let out = mirror_to_ghost(&pool, 1, None).await;
+        assert_eq!(out["ok"], serde_json::json!(false));
+        assert_eq!(out["mode"], serde_json::json!("SANDBOX"));
+        let reason = out["error"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains("No Ghost connection is saved"),
+            "the reason must name the missing connection, got: {reason}"
+        );
     }
 
     #[tokio::test]

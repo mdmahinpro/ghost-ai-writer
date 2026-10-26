@@ -369,6 +369,22 @@ pub(crate) async fn ghost_reweave(
     Json(crate::ghost_api::reweave(&req).await)
 }
 
+/// Backfill the CMS: push every finished article this site owns into Ghost as a
+/// draft, skipping the ones Ghost already has.
+pub(crate) async fn ghost_mirror(
+    axum::extract::State(st): axum::extract::State<crate::AppState>,
+    Json(req): Json<MirrorRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::stages::mirror_to_ghost(&st.pool, req.site_id, req.website_id).await)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MirrorRequest {
+    site_id: i64,
+    #[serde(default)]
+    website_id: Option<i64>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct GhostUrlRequest {
     url: String,

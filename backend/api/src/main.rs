@@ -188,6 +188,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/ghost/probe", post(ghost_api::ghost_probe))
         .route("/v1/ghost/publish", post(ghost_api::ghost_publish))
         .route("/v1/ghost/reweave", post(ghost_api::ghost_reweave))
+        .route("/v1/ghost/mirror", post(ghost_api::ghost_mirror))
         .route(
             "/v1/deploy/cloudflare",
             post(deploy::deploy_cloudflare_handler),
