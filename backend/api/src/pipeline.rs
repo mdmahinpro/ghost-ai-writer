@@ -403,11 +403,75 @@ pub(crate) async fn forget_articles(
             Err(error) => missing.push(format!("{slug}: {error}")),
         }
     }
+
+    // There is a third copy: the workspace snapshot the studio syncs from. It
+    // still lists the deleted articles, so the next hydration re-adds every row
+    // that was just dropped — which is exactly why a deletion looked like it came
+    // back. Purge the payload too, this site only, and leave `generation` alone
+    // so an in-flight client sync is not thrown away.
+    let purged = purge_from_snapshot(&st.pool, site_id, &req.slugs).await;
     Json(serde_json::json!({
         "ok": true,
         "deleted": deleted,
+        "purged": purged,
         "missing": missing,
     }))
+}
+
+/// Remove these slugs from the workspace snapshot's `articles`, this site only.
+/// Returns how many rows the snapshot lost.
+async fn purge_from_snapshot(pool: &sqlx::SqlitePool, site_id: i64, slugs: &[String]) -> usize {
+    let row: Option<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, payload, (SELECT client_uid FROM sites WHERE id = ?) FROM app_state \
+         WHERE workspace_id = (SELECT workspace_id FROM sites WHERE id = ?)",
+    )
+    .bind(site_id)
+    .bind(site_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    let Some((row_id, raw, uid)) = row else {
+        return 0;
+    };
+    let Ok(mut state) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return 0;
+    };
+    let Some(articles) = state
+        .get_mut("articles")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return 0;
+    };
+    let before = articles.len();
+    articles.retain(|article| {
+        let slug = article
+            .get("slug")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if !slugs.iter().any(|target| target == slug) {
+            return true;
+        }
+        // Same slug on another site: leave that site's copy alone.
+        match (
+            uid.as_deref(),
+            article.get("siteId").and_then(|value| value.as_str()),
+        ) {
+            (Some(uid), Some(site)) => site != uid,
+            _ => false,
+        }
+    });
+    let removed = before - articles.len();
+    if removed == 0 {
+        return 0;
+    }
+    if let Ok(text) = serde_json::to_string(&state) {
+        let _ = sqlx::query("UPDATE app_state SET payload = ?1 WHERE id = ?2")
+            .bind(text)
+            .bind(row_id)
+            .execute(pool)
+            .await;
+    }
+    removed
 }
 
 pub(crate) async fn list_workspaces(

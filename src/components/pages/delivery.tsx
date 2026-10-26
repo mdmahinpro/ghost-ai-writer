@@ -162,6 +162,9 @@ export function DeliveryPage() {
         return;
       }
       const host = result.host || saved.host;
+      // The CMS catches up on its own now: a deploy that went live should not
+      // leave Ghost behind until someone remembers to press a second button.
+      void mirrorArticlesToCms({ data: { site_ref: site.id } });
       // The provider card in this browser is a leftover from the localStorage
       // era and still reads "not_connected"; sync it from the connection the
       // server just used, or packageBuild refuses to record the deploy and the
