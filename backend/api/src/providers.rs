@@ -287,7 +287,10 @@ pub struct EmbeddingRequest {
 }
 
 /// Resolve base URL and credential, preferring a server-saved key.
-async fn embedding_credentials(pool: &sqlx::SqlitePool, req: &EmbeddingRequest) -> Result<(String, String), String> {
+async fn embedding_credentials(
+    pool: &sqlx::SqlitePool,
+    req: &EmbeddingRequest,
+) -> Result<(String, String), String> {
     if let Some(id) = req.key_id {
         return crate::provider::credentials(pool, id).await;
     }
@@ -340,10 +343,7 @@ pub async fn embedding(pool: &sqlx::SqlitePool, req: &EmbeddingRequest) -> Value
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let numbers: Vec<f64> = vector
-        .iter()
-        .filter_map(|n| n.as_f64())
-        .collect();
+    let numbers: Vec<f64> = vector.iter().filter_map(|n| n.as_f64()).collect();
     if numbers.len() < 2 || numbers.len() != vector.len() {
         return failure("This model has no embeddings support.");
     }

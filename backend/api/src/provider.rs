@@ -246,7 +246,11 @@ pub struct PoolEntry {
 /// must not be tried before a healthy one, but it still beats the other paused
 /// keys. Ties break on priority (lower number first, matching the TS
 /// `b.priority - a.priority` order), then id for determinism.
-pub fn order_pool(mut entries: Vec<PoolEntry>, preferred: Option<i64>, now: &str) -> Vec<PoolEntry> {
+pub fn order_pool(
+    mut entries: Vec<PoolEntry>,
+    preferred: Option<i64>,
+    now: &str,
+) -> Vec<PoolEntry> {
     for e in &mut entries {
         let cooling = e
             .cooldown_until
@@ -413,7 +417,8 @@ impl MockEngine {
                     ## What is the timeline of decisions?\n\
                     Expect a written answer in about ten working days. Keep a timeline of every \
                     request so escalation has dates attached.\n\n",
-                    "Funding gaps usually get solved by asking early and asking in writing. ".repeat(190)
+                    "Funding gaps usually get solved by asking early and asking in writing. "
+                        .repeat(190)
                 );
                 serde_json::json!({
                     "intro": "A stipend that stops without warning is a logistics problem first. \
@@ -1030,8 +1035,6 @@ pub async fn insert_provider(
     Ok(id)
 }
 
-
-
 /// Partial update for a saved key. A blank optional `api_key` keeps the sealed
 /// credential on file; a non-blank one replaces it (re-sealed at rest).
 #[derive(Deserialize)]
@@ -1067,14 +1070,21 @@ pub async fn update_provider(
     };
 
     // Carry over base_url when the client sends none.
-    let base_url = req.base_url.clone().filter(|v| !v.trim().is_empty()).or(Some(old_base));
+    let base_url = req
+        .base_url
+        .clone()
+        .filter(|v| !v.trim().is_empty())
+        .or(Some(old_base));
 
     // A blank secret keeps the sealed value AND its hint; a non-blank one re-seals
     // and re-derives the hint (masked last four). Decryption never happens here.
     let (new_enc, new_hint) = if req.api_key.trim().is_empty() {
         (enc, hint_on_file)
     } else {
-        (crate::secrets::seal_secret(&req.api_key), hint(&req.api_key))
+        (
+            crate::secrets::seal_secret(&req.api_key),
+            hint(&req.api_key),
+        )
     };
 
     let res: i64 = sqlx::query_scalar(
@@ -1196,7 +1206,11 @@ mod tests {
             NOW,
         );
         assert_eq!(ids(&pool), vec![2, 1], "the cooling key must not be first");
-        assert_eq!(pool.len(), 2, "a cooling key is never removed from the pool");
+        assert_eq!(
+            pool.len(),
+            2,
+            "a cooling key is never removed from the pool"
+        );
         assert_eq!(pool[1].health, KeyHealth::Cooling);
     }
 
@@ -1211,7 +1225,11 @@ mod tests {
             None,
             NOW,
         );
-        assert_eq!(ids(&pool), vec![1, 2], "priority order restored after cooldown");
+        assert_eq!(
+            ids(&pool),
+            vec![1, 2],
+            "priority order restored after cooldown"
+        );
         assert_eq!(pool[0].health, KeyHealth::Healthy);
     }
 
@@ -1251,7 +1269,11 @@ mod tests {
             Some(1),
             NOW,
         );
-        assert_eq!(ids(&pool), vec![2, 1], "a preferred key cannot outrank health");
+        assert_eq!(
+            ids(&pool),
+            vec![2, 1],
+            "a preferred key cannot outrank health"
+        );
     }
 
     #[test]
@@ -1329,11 +1351,16 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("db");
-        sqlx::migrate!("../migrations").run(&p).await.expect("migrate");
-        sqlx::query("INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')")
-            .execute(&p)
+        sqlx::migrate!("../migrations")
+            .run(&p)
             .await
-            .unwrap();
+            .expect("migrate");
+        sqlx::query(
+            "INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
         // key 2 has the better (lower) priority, so it leads while healthy.
         for (id, priority) in [(1i64, 50i64), (2, 10)] {
             sqlx::query(
@@ -1390,7 +1417,10 @@ mod tests {
         // No key for the role configured at all → the mock fallback, never an
         // error that fails every job on a fresh install.
         assert_eq!(
-            load_engine(&p, 1, "nonexistent-role").await.unwrap().provider(),
+            load_engine(&p, 1, "nonexistent-role")
+                .await
+                .unwrap()
+                .provider(),
             MOCK_PROVIDER
         );
 
@@ -1419,11 +1449,16 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("db");
-        sqlx::migrate!("../migrations").run(&p).await.expect("migrate");
-        sqlx::query("INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')")
-            .execute(&p)
+        sqlx::migrate!("../migrations")
+            .run(&p)
             .await
-            .unwrap();
+            .expect("migrate");
+        sqlx::query(
+            "INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
         p
     }
 
@@ -1459,7 +1494,10 @@ mod tests {
             .fetch_one(&p)
             .await
             .unwrap();
-        assert!(raw.starts_with("enc:v1:"), "stored value is ciphertext: {raw}");
+        assert!(
+            raw.starts_with("enc:v1:"),
+            "stored value is ciphertext: {raw}"
+        );
         assert!(!raw.contains("sk-live"), "the raw key must not be readable");
 
         // A sealed key must still hand the exact original string to the engine.
@@ -1554,6 +1592,9 @@ mod tests {
         assert_eq!(items[0].label, "listed");
         // The secret is never part of the view.
         let json = serde_json::to_string(&items[0]).unwrap();
-        assert!(!json.contains("sk-listed"), "the view must not expose the key: {json}");
+        assert!(
+            !json.contains("sk-listed"),
+            "the view must not expose the key: {json}"
+        );
     }
 }

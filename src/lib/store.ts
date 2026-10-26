@@ -45,6 +45,7 @@ import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow,
 import { claimLease, heartbeat } from "./worker-api";
 import { embeddingProvider } from "./embed-key";
 import { attachAuthor, generateAuthorForTopic, normalizeAuthorProfile } from "./authors";
+import { avatarSeed, capturePortrait, isStoredPortrait } from "./avatar";
 import { parseIntentStage } from "./stage-contracts";
 import {
   newResearchProject,
@@ -237,6 +238,15 @@ export type AppState = Persisted & {
   patchArticle: (id: string, patch: Partial<Article>) => void;
   /** Rule 2: one-click niche test — generates a fresh US expert author for the active site. */
   addExpertAuthor: (niche: string) => void;
+  /**
+   * Capture the author's portrait once and store it on the profile.
+   *
+   * The face generator has no stable URL — it ignores its query and answers
+   * with a new stranger on every request — so without this every author ends up
+   * showing the same (or a constantly changing) random face. Stored once, every
+   * later article by that author reuses the same picture.
+   */
+  captureAuthorPortrait: (id: string) => Promise<void>;
   patchAuthor: (id: string, patch: Partial<AuthorProfile>) => void;
   logEvent: (siteId: string, tone: Activity["tone"], message: string) => void;
   acceptModelStage: (
@@ -1351,12 +1361,16 @@ auditNow: () => {
             articles: s.articles.map((article) => (article.id === id ? { ...article, ...patch } : article)),
           };
         }),
-      addExpertAuthor: (niche) =>
+      addExpertAuthor: (niche) => {
+        // Held in an array so the author created inside the updater is visible
+        // after it returns (the capture is fired once, outside the updater).
+        const created: AuthorProfile[] = [];
         set((s) => {
           const siteId = s.activeSiteId;
           const topic = niche.trim() || s.sites.find((site) => site.id === siteId)?.nicheTag || "general research";
           const author = generateAuthorForTopic(topic, siteId, { niche: s.sites.find((site) => site.id === siteId)?.nicheTag });
           author.origin = "manual";
+          created.push(author);
           return {
             ...s,
             authors: [...s.authors, author],
@@ -1365,7 +1379,25 @@ auditNow: () => {
               text: `Generated US expert ${author.name} for “${topic}”. Capacity ${author.articleCount}/${author.maxArticles}.`,
             },
           };
-        }),
+        });
+        // One portrait, captured now and stored on the profile: the face
+        // generator ignores its query and answers with a new stranger on every
+        // request, so a generator URL left on the profile cannot identify an
+        // author from one article to the next.
+        if (created[0]) void get().captureAuthorPortrait(created[0].id);
+      },
+      captureAuthorPortrait: async (id) => {
+        const author = get().authors.find((candidate) => candidate.id === id);
+        if (!author || isStoredPortrait(author.avatarUrl)) return;
+        const seed = avatarSeed(author.avatarUrl) ?? `${author.id}:${author.name}`;
+        const captured = await capturePortrait(seed);
+        if (!captured) return;
+        set((s) => ({
+          authors: s.authors.map((candidate) =>
+            candidate.id === id ? { ...candidate, avatarUrl: captured } : candidate,
+          ),
+        }));
+      },
       patchAuthor: (id, patch) =>
         set((s) => ({
           ...s,

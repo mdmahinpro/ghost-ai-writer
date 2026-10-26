@@ -77,7 +77,7 @@ impl Sent {
             error: None,
         }
     }
-    fn sent() -> Sent {
+    fn delivered() -> Sent {
         Sent {
             ok: true,
             preview: false,
@@ -118,7 +118,11 @@ pub fn scrub(message: &str) -> String {
             }
         } else {
             // Advance one char, respecting UTF-8 boundaries.
-            let step = message[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            let step = message[i..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1);
             out.push_str(&message[i..i + step]);
             i += step;
         }
@@ -226,12 +230,18 @@ async fn send(
             display_name(vendor)
         ));
     }
-    Sent::sent()
+    Sent::delivered()
 }
 
 /// Validate the pieces both senders need. Returns the scrubbed error message a
 /// user should see, or Ok when the request may proceed.
-fn validate_common(vendor: Option<Vendor>, secret: &str, from: &str, to: &str, noun: &str) -> Result<Vendor, String> {
+fn validate_common(
+    vendor: Option<Vendor>,
+    secret: &str,
+    from: &str,
+    to: &str,
+    noun: &str,
+) -> Result<Vendor, String> {
     let vendor = vendor.ok_or_else(|| "Choose Resend or SendGrid.".to_string())?;
     if !secret_ok(secret) {
         return Err(format!("Add an email key before sending{noun}."));
@@ -262,7 +272,10 @@ fn parse_verify_link(raw: &str) -> Option<VerifyLink> {
     if host.is_empty() {
         return None;
     }
-    let path = caps.get(3).map(|m| m.as_str().to_string()).unwrap_or_default();
+    let path = caps
+        .get(3)
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
     let query = caps.get(4).map(|m| m.as_str()).unwrap_or("");
     // Match the TS check: a `token` parameter with a non-empty value.
     let has_token = query.split('&').any(|pair| {
@@ -289,7 +302,13 @@ pub async fn send_verification(
     to: &str,
     verify_url: &str,
 ) -> Sent {
-    let vendor = match validate_common(Vendor::parse(vendor), secret.trim(), from.trim(), to.trim(), "") {
+    let vendor = match validate_common(
+        Vendor::parse(vendor),
+        secret.trim(),
+        from.trim(),
+        to.trim(),
+        "",
+    ) {
         Ok(v) => v,
         Err(e) => return Sent::failed(e),
     };
@@ -435,22 +454,68 @@ mod tests {
     async fn validation_happens_before_any_network_call() {
         let cases: Vec<(&str, &str, &str, &str, &str, &str)> = vec![
             // vendor, secret, from, to, url, expected fragment
-            ("mailgun", "realkey12345", "a@b.com", "c@d.com", "https://x.com/verify-email?token=t", "Choose Resend"),
-            ("resend", "short", "a@b.com", "c@d.com", "https://x.com/verify-email?token=t", "Add an email key"),
-            ("resend", "realkey12345", "notanemail", "c@d.com", "https://x.com/verify-email?token=t", "email addresses"),
-            ("resend", "realkey12345", "a@b.com", "c@d.com", "not-a-url", "not a URL"),
-            ("resend", "realkey12345", "a@b.com", "c@d.com", "ftp://x.com/verify-email?token=t", "http or https"),
-            ("resend", "realkey12345", "a@b.com", "c@d.com", "https://x.com/wrong?token=t", "missing its token"),
-            ("resend", "realkey12345", "a@b.com", "c@d.com", "https://x.com/verify-email", "missing its token"),
+            (
+                "mailgun",
+                "realkey12345",
+                "a@b.com",
+                "c@d.com",
+                "https://x.com/verify-email?token=t",
+                "Choose Resend",
+            ),
+            (
+                "resend",
+                "short",
+                "a@b.com",
+                "c@d.com",
+                "https://x.com/verify-email?token=t",
+                "Add an email key",
+            ),
+            (
+                "resend",
+                "realkey12345",
+                "notanemail",
+                "c@d.com",
+                "https://x.com/verify-email?token=t",
+                "email addresses",
+            ),
+            (
+                "resend",
+                "realkey12345",
+                "a@b.com",
+                "c@d.com",
+                "not-a-url",
+                "not a URL",
+            ),
+            (
+                "resend",
+                "realkey12345",
+                "a@b.com",
+                "c@d.com",
+                "ftp://x.com/verify-email?token=t",
+                "http or https",
+            ),
+            (
+                "resend",
+                "realkey12345",
+                "a@b.com",
+                "c@d.com",
+                "https://x.com/wrong?token=t",
+                "missing its token",
+            ),
+            (
+                "resend",
+                "realkey12345",
+                "a@b.com",
+                "c@d.com",
+                "https://x.com/verify-email",
+                "missing its token",
+            ),
         ];
         for (vendor, secret, from, to, url, fragment) in cases {
             let out = send_verification(vendor, secret, from, to, url).await;
             assert!(!out.ok, "should have been rejected: {fragment}");
             let err = out.error.unwrap_or_default();
-            assert!(
-                err.contains(fragment),
-                "expected {fragment:?} in {err:?}"
-            );
+            assert!(err.contains(fragment), "expected {fragment:?} in {err:?}");
         }
     }
 

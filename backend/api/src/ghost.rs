@@ -37,6 +37,14 @@ pub fn client() -> &'static reqwest::Client {
 /// hostile URL cannot make this server probe its own network.
 pub fn validate_ghost_url(raw: &str) -> Result<String, String> {
     let raw = raw.trim();
+    // Test builds exercise the real push against a stub Ghost on loopback, and
+    // a per-test port keeps them parallel-safe (unlike a process-wide env
+    // override). Release builds fall through to the https+public rules below,
+    // so a loopback origin is still refused in production.
+    #[cfg(test)]
+    if raw.starts_with("http://127.0.0.1:") {
+        return Ok(raw.to_string());
+    }
     let rest = raw
         .strip_prefix("https://")
         .or_else(|| raw.strip_prefix("http://"))
@@ -80,11 +88,7 @@ pub fn validate_ghost_url(raw: &str) -> Result<String, String> {
 pub fn is_private_host(host: &str) -> bool {
     let h = host.to_lowercase();
     let h = h.trim_end_matches('.');
-    if h.is_empty()
-        || h == "localhost"
-        || h.ends_with(".local")
-        || h.ends_with(".internal")
-    {
+    if h.is_empty() || h == "localhost" || h.ends_with(".local") || h.ends_with(".internal") {
         return true;
     }
     let h = h.trim_start_matches('[').trim_end_matches(']');
@@ -222,7 +226,10 @@ pub enum PushError {
     /// Ghost answered with valid JSON-less / invalid JSON: create unverified.
     Parse(serde_json::Error),
     /// A wired Ghost answered with a non-2xx: the article was not created.
-    Rejected { status: u16, body: String },
+    Rejected {
+        status: u16,
+        body: String,
+    },
     /// No usable Ghost URL/key — the article stays REVIEW_HELD for manual
     /// publish. This is *not* a failure: SANDBOX websites publish by hand.
     Unconfigured,
@@ -298,7 +305,8 @@ pub async fn push_post(
         });
     }
     let v: Value = serde_json::from_str(&text).map_err(PushError::Parse)?;
-    let id = v.get("post")
+    let id = v
+        .get("post")
         .and_then(|p| p.get("id"))
         .and_then(Value::as_str)
         .ok_or_else(|| PushError::Rejected {
@@ -306,12 +314,16 @@ pub async fn push_post(
             body: "ghost response had no post.id".to_string(),
         })?
         .to_string();
-    let url = v.get("post")
+    let url = v
+        .get("post")
         .and_then(|p| p.get("url"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    Ok(PushResult { ghost_post_id: id, url })
+    Ok(PushResult {
+        ghost_post_id: id,
+        url,
+    })
 }
 
 #[cfg(test)]
@@ -429,10 +441,21 @@ mod tests {
 
     #[test]
     fn private_host_classification_matches_the_ts_ranges() {
-        for bad in ["172.16.0.1", "172.31.255.255", "100.64.0.0", "100.127.255.255"] {
+        for bad in [
+            "172.16.0.1",
+            "172.31.255.255",
+            "100.64.0.0",
+            "100.127.255.255",
+        ] {
             assert!(is_private_host(bad), "{bad} is private");
         }
-        for ok in ["172.15.0.1", "172.32.0.1", "100.63.0.1", "100.128.0.1", "8.8.8.8"] {
+        for ok in [
+            "172.15.0.1",
+            "172.32.0.1",
+            "100.63.0.1",
+            "100.128.0.1",
+            "8.8.8.8",
+        ] {
             assert!(!is_private_host(ok), "{ok} is public");
         }
         // A hostname is not an IP and is not blocked by the range check.
@@ -446,13 +469,18 @@ mod tests {
         //   Authorization header format is "Authorization: Ghost ***"
         // so a valid key could never authenticate. Pinned because the failure
         // looks exactly like a bad key.
-        assert_eq!(auth_header("header.payload.sig"), "Ghost header.payload.sig");
+        assert_eq!(
+            auth_header("header.payload.sig"),
+            "Ghost header.payload.sig"
+        );
         assert!(!auth_header("t").starts_with("Bearer"));
     }
 
     #[test]
     fn an_admin_key_must_be_hex_id_colon_hex_secret() {
-        assert!(valid_admin_key("0123456789abcdef0123456789abcdef:abcdef0123456789abcdef"));
+        assert!(valid_admin_key(
+            "0123456789abcdef0123456789abcdef:abcdef0123456789abcdef"
+        ));
         assert!(valid_admin_key("abcdef01:0123456789abcdef"));
         // No colon, empty halves, wrong lengths, non-hex characters.
         assert!(!valid_admin_key("nocolon"));
@@ -466,7 +494,8 @@ mod tests {
     #[test]
     fn a_message_that_echoes_credentials_is_replaced() {
         // Only messages that actually carry a key or a signed token are scrubbed.
-        let jwt = "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFiY2QiLCJ0eXAiOiJKV1QifQ.eyJpYXQiOjEsImV4cCI6Miwid\
+        let jwt =
+            "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFiY2QiLCJ0eXAiOiJKV1QifQ.eyJpYXQiOjEsImV4cCI6Miwid\
                    WQiOiIvYWRtaW4vIn0.c2lnbmF0dXJlLWhlcmUtMTIzNDU2Nzg5MA";
         for leaky in [
             // A full id:secret pair, and a bare 32+ hex secret.

@@ -1,6 +1,6 @@
 import { mediaRefs, rewriteMedia } from "./media-html.ts";
 import { articleImageSrc } from "./image-urls.ts";
-import { portraitDataUri, avatarSeed } from "./avatar.ts";
+import { portraitDataUri, avatarSeed, portraitSrc } from "./avatar.ts";
 import { avatarUrlFor } from "./authors.ts";
 import { AD_CODE_LIMIT, AD_SLOT_IDS, defaultAdSlots, type AdSlotConfig, type AdSlotId, type Article, type AuthorProfile, type Site } from "./types.ts";
 import { esc } from "./utils.ts";
@@ -220,7 +220,11 @@ export function articleJsonLd(input: {
  */
 export function avatarImgHtml(author: AuthorProfile, size = 52): string {
   const fallback = portraitDataUri(avatarSeed(author.avatarUrl) ?? author.id, author.name, 96).replace(/'/g, "%27");
-  return `<img src="${esc(author.avatarUrl)}" alt="Portrait of ${esc(author.name)}" width="${size}" height="${size}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${fallback}'" />`;
+  // `portraitSrc` keeps a captured portrait verbatim and puts anything still
+  // pointing at the face generator behind the resize CDN — a raw generator URL
+  // is a ~500 KB download that returns a different stranger every request.
+  const src = portraitSrc(author, Math.max(96, size * 2));
+  return `<img src="${esc(src || fallback)}" alt="Portrait of ${esc(author.name)}" width="${size}" height="${size}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${fallback}'" />`;
 }
 
 export function authorBylineHtml(author: AuthorProfile | undefined, origin: string): string {

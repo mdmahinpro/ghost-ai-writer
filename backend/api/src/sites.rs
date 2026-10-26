@@ -277,7 +277,10 @@ mod tests {
         let b: EnsureSiteResponse = serde_json::from_str(&second).unwrap();
 
         assert!(a.created);
-        assert!(!b.created, "the second call must not claim to create anything");
+        assert!(
+            !b.created,
+            "the second call must not claim to create anything"
+        );
         assert_eq!(a.site_id, b.site_id);
         assert_eq!(a.website_id, b.website_id);
 

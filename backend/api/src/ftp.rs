@@ -216,17 +216,27 @@ async fn open(target: &FtpTarget) -> Result<(Stream, Arc<ClientConfig>), String>
     let tcp = tokio::time::timeout(IO_TIMEOUT, TcpStream::connect(&address))
         .await
         .map_err(|_| "The FTP host did not answer.".to_string())?
-        .map_err(|e| format!("Could not reach {}: {}", target.host, redact(&e.to_string())))?;
+        .map_err(|e| {
+            format!(
+                "Could not reach {}: {}",
+                target.host,
+                redact(&e.to_string())
+            )
+        })?;
 
     // One config per request: its ticket cache is what makes the data connection
     // resume the control connection's session.
     let config = tls_config(target.trusts_certificate());
     let connector = TlsConnector::from(config.clone());
-    let name = server_name(&target.host).ok_or_else(|| "That host is not a valid name.".to_string())?;
+    let name =
+        server_name(&target.host).ok_or_else(|| "That host is not a valid name.".to_string())?;
     let mut plain = tcp;
     let greeting = read_plain(&mut plain).await?;
     if !is_ok(&greeting, &["220"]) {
-        return Err(format!("The server refused the connection: {}", trim(&greeting)));
+        return Err(format!(
+            "The server refused the connection: {}",
+            trim(&greeting)
+        ));
     }
     plain
         .write_all(b"AUTH TLS\r\n")
@@ -318,10 +328,13 @@ async fn open_data_tcp(stream: &mut Stream, host: &str) -> Result<TcpStream, Str
     }
     let (data_host, port) = parse_pasv(&reply, host)
         .ok_or_else(|| "The server sent an unreadable passive address.".to_string())?;
-    tokio::time::timeout(IO_TIMEOUT, TcpStream::connect(format!("{data_host}:{port}")))
-        .await
-        .map_err(|_| "The data connection did not open (passive ports may be blocked).".to_string())?
-        .map_err(|_| "The data connection was refused (passive ports may be blocked).".to_string())
+    tokio::time::timeout(
+        IO_TIMEOUT,
+        TcpStream::connect(format!("{data_host}:{port}")),
+    )
+    .await
+    .map_err(|_| "The data connection did not open (passive ports may be blocked).".to_string())?
+    .map_err(|_| "The data connection was refused (passive ports may be blocked).".to_string())
 }
 
 /// Protect the data connection, resuming the control connection's TLS session.
@@ -331,7 +344,11 @@ async fn open_data_tcp(stream: &mut Stream, host: &str) -> Result<TcpStream, Str
 /// client that waits for the handshake first leaves both sides waiting and the
 /// handshake dies on the timeout — connect and login look fine, and only the
 /// data step fails. Callers pair it with `tokio::join!`.
-async fn secure_data(tcp: TcpStream, host: &str, config: &Arc<ClientConfig>) -> Result<Stream, String> {
+async fn secure_data(
+    tcp: TcpStream,
+    host: &str,
+    config: &Arc<ClientConfig>,
+) -> Result<Stream, String> {
     let connector = TlsConnector::from(config.clone());
     let name = server_name(host).ok_or_else(|| "That host is not a valid name.".to_string())?;
     tokio::time::timeout(IO_TIMEOUT, connector.connect(name, tcp))
@@ -404,7 +421,7 @@ pub async fn upload(target: &FtpTarget, files: &[UploadedFile]) -> Value {
                 dir = if dir.is_empty() {
                     part.to_string()
                 } else {
-                    format!("{}/{}", dir, part)
+                    format!("{dir}/{part}")
                 };
                 if made.contains(&dir) {
                     continue;
@@ -535,7 +552,12 @@ pub async fn test_login(req: &LoginRequest) -> Value {
     };
     let protected_started = Instant::now();
     match attach_protected(&mut control).await {
-        Ok(()) => steps.push(step("PROT P", protected_started, true, "Protected data channel.".into())),
+        Ok(()) => steps.push(step(
+            "PROT P",
+            protected_started,
+            true,
+            "Protected data channel.".into(),
+        )),
         Err(error) => {
             steps.push(step("PROT P", protected_started, false, error.clone()));
             let _ = send(&mut control, "QUIT").await;
@@ -558,8 +580,10 @@ pub async fn test_login(req: &LoginRequest) -> Value {
             // Command and handshake together. A server opens the protected data
             // channel only once it sees LIST, so awaiting the handshake first
             // would deadlock both sides until the timeout.
-            let (reply, secured) =
-                tokio::join!(send(&mut control, "LIST"), secure_data(tcp, &target.host, &config));
+            let (reply, secured) = tokio::join!(
+                send(&mut control, "LIST"),
+                secure_data(tcp, &target.host, &config)
+            );
             match reply {
                 Err(error) => Err(error),
                 Ok(reply) => match secured {
@@ -634,7 +658,10 @@ mod tests {
             vec!["/".to_string(), "/public_html".to_string()]
         );
         let custom = path_candidates("/domains/x.com/public_html");
-        assert_eq!(custom.first().map(String::as_str), Some("/domains/x.com/public_html"));
+        assert_eq!(
+            custom.first().map(String::as_str),
+            Some("/domains/x.com/public_html")
+        );
         assert_eq!(custom.len(), 3);
     }
 
@@ -648,7 +675,10 @@ mod tests {
             path: None,
             trust_cert: None,
         };
-        assert!(target.trusts_certificate(), "shared cPanel hosts need this by default");
+        assert!(
+            target.trusts_certificate(),
+            "shared cPanel hosts need this by default"
+        );
         target.trust_cert = Some(false);
         assert!(!target.trusts_certificate());
     }
@@ -666,8 +696,8 @@ mod tests {
 
     #[test]
     fn a_nat_private_address_falls_back_to_the_connected_host() {
-        let (host, _) = parse_pasv("227 Entering Passive Mode (10,0,0,5,4,1).", "example.com")
-            .expect("pasv");
+        let (host, _) =
+            parse_pasv("227 Entering Passive Mode (10,0,0,5,4,1).", "example.com").expect("pasv");
         assert_eq!(host, "example.com");
     }
 
@@ -695,9 +725,7 @@ mod tests {
 pub fn index_now_key_name(key: &str) -> Option<String> {
     let ok = key.len() >= 8
         && key.len() <= 128
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-');
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
     ok.then(|| format!("{key}.txt"))
 }
 
@@ -721,12 +749,19 @@ pub struct IndexNowRequest {
 /// key cannot be fetched is rejected anyway, and calling early would just teach
 /// the engine that this host is broken.
 pub async fn submit_index_now(req: &IndexNowRequest) -> Value {
-    let failure = |status: u16, error: String| json!({ "ok": false, "status": status, "error": error });
+    let failure =
+        |status: u16, error: String| json!({ "ok": false, "status": status, "error": error });
     if !req.public_url.starts_with("https://") {
-        return failure(0, "Set a public https URL before submitting IndexNow.".into());
+        return failure(
+            0,
+            "Set a public https URL before submitting IndexNow.".into(),
+        );
     }
     let Some(name) = index_now_key_name(&req.key) else {
-        return failure(0, "IndexNow key must be 8–128 letters, numbers, or dashes.".into());
+        return failure(
+            0,
+            "IndexNow key must be 8–128 letters, numbers, or dashes.".into(),
+        );
     };
     if req.urls.is_empty() {
         return failure(0, "There are no article URLs to submit.".into());
@@ -761,7 +796,10 @@ pub async fn submit_index_now(req: &IndexNowRequest) -> Value {
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("The key file was not uploaded.");
-        return failure(0, format!("The key file was not uploaded. {detail} Bing was not called."));
+        return failure(
+            0,
+            format!("The key file was not uploaded. {detail} Bing was not called."),
+        );
     }
 
     let key_location = format!("{base}/{name}");
@@ -835,7 +873,6 @@ fn url_host(url: &str) -> Option<String> {
     Some(host.to_string())
 }
 
-
 /// The `via` the operator's saved connection says to use.
 /// Upload over FTPS. The `via` field is still accepted so a client that stored
 /// a value from an older build keeps working; there is only one protocol now,
@@ -851,7 +888,10 @@ mod index_tests {
 
     #[test]
     fn an_index_now_key_must_be_a_safe_file_name() {
-        assert_eq!(index_now_key_name("abc12345").as_deref(), Some("abc12345.txt"));
+        assert_eq!(
+            index_now_key_name("abc12345").as_deref(),
+            Some("abc12345.txt")
+        );
         assert!(index_now_key_name("short").is_none());
         assert!(index_now_key_name("has space").is_none());
         assert!(index_now_key_name("with/slash").is_none());
@@ -860,7 +900,10 @@ mod index_tests {
 
     #[test]
     fn a_public_url_host_is_extracted_and_private_ones_are_refused() {
-        assert_eq!(url_host("https://example.com").as_deref(), Some("example.com"));
+        assert_eq!(
+            url_host("https://example.com").as_deref(),
+            Some("example.com")
+        );
         assert_eq!(
             url_host("https://example.com/blog/x").as_deref(),
             Some("example.com")
@@ -904,7 +947,9 @@ mod live_tests {
         let Ok(port) = std::env::var("GAW_FTP_LIVE_PORT") else {
             return;
         };
-        let port: u16 = port.parse().expect("GAW_FTP_LIVE_PORT must be a port number");
+        let port: u16 = port
+            .parse()
+            .expect("GAW_FTP_LIVE_PORT must be a port number");
         assert_eq!(
             std::env::var("GAW_FTP_ALLOW_PRIVATE").as_deref(),
             Ok("1"),
@@ -920,7 +965,10 @@ mod live_tests {
         let login = test_login(&request).await;
         assert_eq!(login["ok"], true, "login + LIST failed: {login}");
         assert!(
-            login["banner"].as_str().unwrap_or_default().contains("public_html"),
+            login["banner"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("public_html"),
             "expected the configured directory to be the one read: {login}"
         );
 

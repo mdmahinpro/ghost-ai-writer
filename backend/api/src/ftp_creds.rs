@@ -54,7 +54,16 @@ fn trusted() -> bool {
     true
 }
 
-type Row = (String, String, String, i64, String, String, i64, Option<String>);
+type Row = (
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    i64,
+    Option<String>,
+);
 
 fn shape(workspace_id: i64, row: Row) -> SavedFtp {
     SavedFtp {
@@ -160,8 +169,7 @@ pub async fn target(
             .fetch_optional(pool)
             .await
             .map_err(|error| error.to_string())?;
-    let stored = sealed
-        .and_then(|(value,)| secrets::open_secret(&value).or(Some(value)));
+    let stored = sealed.and_then(|(value,)| secrets::open_secret(&value).or(Some(value)));
 
     let typed = overrides.unwrap_or(FtpTarget {
         host: String::new(),
@@ -173,12 +181,18 @@ pub async fn target(
     });
 
     let host = if typed.host.trim().is_empty() {
-        saved.as_ref().map(|row| row.host.clone()).unwrap_or_default()
+        saved
+            .as_ref()
+            .map(|row| row.host.clone())
+            .unwrap_or_default()
     } else {
         typed.host.clone()
     };
     let user = if typed.user.trim().is_empty() {
-        saved.as_ref().map(|row| row.username.clone()).unwrap_or_default()
+        saved
+            .as_ref()
+            .map(|row| row.username.clone())
+            .unwrap_or_default()
     } else {
         typed.user.clone()
     };
@@ -194,12 +208,16 @@ pub async fn target(
         host,
         user,
         password,
-        port: typed.port.or_else(|| saved.as_ref().map(|row| row.port as u16)),
+        port: typed
+            .port
+            .or_else(|| saved.as_ref().map(|row| row.port as u16)),
         path: typed
             .path
             .filter(|value| !value.trim().is_empty())
             .or_else(|| saved.as_ref().map(|row| row.remote_dir.clone())),
-        trust_cert: typed.trust_cert.or_else(|| saved.as_ref().map(|row| row.trust_cert)),
+        trust_cert: typed
+            .trust_cert
+            .or_else(|| saved.as_ref().map(|row| row.trust_cert)),
     })
 }
 
@@ -253,14 +271,23 @@ mod tests {
             .expect("save");
         assert!(saved.has_password);
         let json = serde_json::to_string(&saved).unwrap();
-        assert!(!json.contains("hunter2-secret"), "the password must not be serialised back");
+        assert!(
+            !json.contains("hunter2-secret"),
+            "the password must not be serialised back"
+        );
 
         let stored: String = sqlx::query_scalar("SELECT password_enc FROM ftp_connections")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_ne!(stored, "hunter2-secret", "stored at rest must be ciphertext");
-        assert!(secrets::looks_sealed(&stored), "must use the sealed envelope");
+        assert_ne!(
+            stored, "hunter2-secret",
+            "stored at rest must be ciphertext"
+        );
+        assert!(
+            secrets::looks_sealed(&stored),
+            "must use the sealed envelope"
+        );
         assert_eq!(
             secrets::open_secret(&stored).as_deref(),
             Some("hunter2-secret"),
@@ -271,10 +298,14 @@ mod tests {
     #[tokio::test]
     async fn saving_without_a_password_keeps_the_one_on_file() {
         let pool = pool().await;
-        save(&pool, &request("keep-me"), "2026-01-01T00:00:00Z").await.expect("first");
+        save(&pool, &request("keep-me"), "2026-01-01T00:00:00Z")
+            .await
+            .expect("first");
         let mut second = request("");
         second.host = "ftp2.example.com".into();
-        let saved = save(&pool, &second, "2026-01-02T00:00:00Z").await.expect("second");
+        let saved = save(&pool, &second, "2026-01-02T00:00:00Z")
+            .await
+            .expect("second");
         assert_eq!(saved.host, "ftp2.example.com");
         assert!(saved.has_password);
         let target = target(&pool, 1, None).await.expect("target");
@@ -285,14 +316,18 @@ mod tests {
     #[tokio::test]
     async fn a_first_save_with_no_password_is_refused() {
         let pool = pool().await;
-        let error = save(&pool, &request(""), "2026-01-01T00:00:00Z").await.unwrap_err();
+        let error = save(&pool, &request(""), "2026-01-01T00:00:00Z")
+            .await
+            .unwrap_err();
         assert!(error.contains("password"), "got {error}");
     }
 
     #[tokio::test]
     async fn a_typed_password_wins_over_the_stored_one() {
         let pool = pool().await;
-        save(&pool, &request("old"), "2026-01-01T00:00:00Z").await.expect("save");
+        save(&pool, &request("old"), "2026-01-01T00:00:00Z")
+            .await
+            .expect("save");
         let typed = FtpTarget {
             host: String::new(),
             user: String::new(),
@@ -303,13 +338,18 @@ mod tests {
         };
         let target = target(&pool, 1, Some(typed)).await.expect("target");
         assert_eq!(target.password, "new");
-        assert_eq!(target.host, "ftp.example.com", "blank fields fall back to the saved row");
+        assert_eq!(
+            target.host, "ftp.example.com",
+            "blank fields fall back to the saved row"
+        );
     }
 
     #[tokio::test]
     async fn forgetting_removes_the_row() {
         let pool = pool().await;
-        save(&pool, &request("x"), "2026-01-01T00:00:00Z").await.expect("save");
+        save(&pool, &request("x"), "2026-01-01T00:00:00Z")
+            .await
+            .expect("save");
         assert!(forget(&pool, 1).await.expect("forget"));
         assert!(load(&pool, 1).await.expect("load").is_none());
     }

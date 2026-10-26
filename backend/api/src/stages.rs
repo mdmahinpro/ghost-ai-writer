@@ -2,9 +2,9 @@
 //! their shipped bundles:
 //!
 //! * Blueprint  — `mustCover` 3–10 items, `sections` 1–12.
-//! * Draft      — `intro` 100–4000 chars, `body` ≥ 80 chars (length is the
-//!                prompt's 2,000-word target plus the expansion pass), `faq` ≤ 8,
-//!                `claims[]` each `SUPPORTED | UNSUPPORTED | OPINION`.
+//! * Draft      — `intro` 100–4000 chars, `body` ≥ 80 chars, `faq` ≤ 8,
+//!   `claims[]` each `SUPPORTED | UNSUPPORTED | OPINION`; the body floor is the
+//!   prompt's 2,000-word target plus the expansion pass.
 //!
 //! A stage that returns text outside those bounds is **rejected**, not clamped:
 //! silently trimming produces an article that no longer matches its blueprint.
@@ -374,18 +374,15 @@ pub fn draft_prompt_kw(keyword: &str, bp: &Blueprint, expanded: bool) -> (String
         - Do not start every paragraph the same way."
         .to_string();
     let len_rule = format!(
-        "- Length: the body must be at least {min} words, aim for {target}. Give every section \
+        "- Length: the body must be at least {MIN_ARTICLE_WORDS} words, aim for {TARGET_ARTICLE_WORDS}. Give every section \
          several developed paragraphs of concrete, specific detail. Never pad with filler — \
-         settle each section with real substance.",
-        min = MIN_ARTICLE_WORDS,
-        target = TARGET_ARTICLE_WORDS
+         settle each section with real substance."
     );
     if expanded {
         system.push_str(&format!(
             "\n- Your previous answer was under the length floor. Return the full article \
-             expanded to at least {min} words, keeping every heading and covering every mustCover \
-             item with more concrete detail.",
-            min = MIN_ARTICLE_WORDS
+             expanded to at least {MIN_ARTICLE_WORDS} words, keeping every heading and covering every mustCover \
+             item with more concrete detail."
         ));
     } else {
         system.push_str(&len_rule);
@@ -763,6 +760,10 @@ pub async fn stage_done(pool: &SqlitePool, job_id: i64, idx: i64) -> Result<bool
     Ok(n > 0)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a stage takes the pipeline's wiring explicitly: pool, engine, ids and clock are independent values a struct would only re-wrap"
+)]
 async fn record_stage(
     pool: &SqlitePool,
     article_id: i64,
@@ -825,6 +826,10 @@ fn blueprint_from_payload(pool_payload: &str) -> Option<Blueprint> {
     serde_json::from_value(v.get("blueprint")?.clone()).ok()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a stage takes the pipeline's wiring explicitly: pool, engine, ids and clock are independent values a struct would only re-wrap"
+)]
 pub async fn run_blueprint(
     pool: &SqlitePool,
     engine: &Engine,
@@ -837,8 +842,15 @@ pub async fn run_blueprint(
 ) -> Result<StageOutcome, StageError> {
     let article_id = ensure_article(pool, job_id, site_id, website_id, keyword, now).await?;
     let (system, user) = blueprint_prompt(keyword, site_name);
-    let (bp, spend, attempts) =
-        call_validated(pool, engine, "blueprint", &system, &user, validate_blueprint).await?;
+    let (bp, spend, attempts) = call_validated(
+        pool,
+        engine,
+        "blueprint",
+        &system,
+        &user,
+        validate_blueprint,
+    )
+    .await?;
     let outcome = StageOutcome {
         tokens_in: spend.tokens_in,
         tokens_out: spend.tokens_out,
@@ -902,8 +914,7 @@ pub async fn run_draft(
     // full-length article. A failed or still-short expansion never fails the
     // job — the lenient draft proceeds (the validator enforces shape, the
     // prompt enforces length).
-    let draft_words =
-        |d: &Draft| word_count(&format!("{} {}", d.intro, d.body));
+    let draft_words = |d: &Draft| word_count(&format!("{} {}", d.intro, d.body));
     if draft_words(&draft) < MIN_ARTICLE_WORDS as i64 {
         let (ex_system, ex_user) = draft_prompt_kw(keyword, &bp, true);
         if let Ok((expanded, ex_spend, _)) =
@@ -1214,6 +1225,10 @@ pub async fn run_metadata(
 /// Stage 5 — Site Enrichment: the featured image, chosen with their Bing
 /// thumbnail technique and gated by vision. Internal links are still to come,
 /// and the payload says so rather than pretending the stage is complete.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a stage takes the pipeline's wiring explicitly: pool, engine, ids and clock are independent values a struct would only re-wrap"
+)]
 pub async fn run_enrichment(
     pool: &SqlitePool,
     engine: &Engine,
@@ -1319,13 +1334,13 @@ pub async fn run_enrichment(
 //
 /// The TS `contentTokens` filter for `uniquenessAgainst`: >3 chars, stop-list.
 const CONTENT_STOP: &[&str] = &[
-    "the", "a", "an", "to", "of", "for", "and", "or", "is", "are", "with", "this", "that",
-    "from", "into", "about", "you", "your", "page", "not", "how", "what", "who", "when",
-    "does", "can", "write", "writing", "note", "notes", "plan", "week", "weeks", "name",
-    "named", "leave", "say", "says", "said", "one", "two", "also", "just", "more", "most",
-    "than", "then", "will", "would", "could", "should", "their", "there", "them", "they",
-    "our", "out", "its", "his", "her", "she", "he", "was", "were", "been", "being", "have",
-    "has", "had", "but", "if", "so", "as", "at", "by", "on", "in",
+    "the", "a", "an", "to", "of", "for", "and", "or", "is", "are", "with", "this", "that", "from",
+    "into", "about", "you", "your", "page", "not", "how", "what", "who", "when", "does", "can",
+    "write", "writing", "note", "notes", "plan", "week", "weeks", "name", "named", "leave", "say",
+    "says", "said", "one", "two", "also", "just", "more", "most", "than", "then", "will", "would",
+    "could", "should", "their", "there", "them", "they", "our", "out", "its", "his", "her", "she",
+    "he", "was", "were", "been", "being", "have", "has", "had", "but", "if", "so", "as", "at",
+    "by", "on", "in",
 ];
 
 fn content_tokens(text: &str) -> Vec<String> {
@@ -1335,7 +1350,7 @@ fn content_tokens(text: &str) -> Vec<String> {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
         .collect::<String>()
         .split_whitespace()
-        .filter(|w| w.len() > 3 && !CONTENT_STOP.contains(&w))
+        .filter(|w| w.len() > 3 && !CONTENT_STOP.contains(w))
         .map(str::to_string)
         .collect();
     out
@@ -1371,16 +1386,18 @@ pub fn uniqueness_against(
     let mine = content_tokens(&format!("{title} {keyword} {heads}"));
     let mut max: f64 = 0.0;
     for item in corpus {
-        let title_hit = crate::gate::lexical_similarity(title, &item.title).max(
-            crate::gate::lexical_similarity(
-                &slugify(title),
-                &item.slug,
-            ),
+        let title_hit = crate::gate::lexical_similarity(title, &item.title)
+            .max(crate::gate::lexical_similarity(&slugify(title), &item.slug));
+        let overlap = token_overlap(
+            &mine,
+            &content_tokens(&format!("{} {}", item.title, item.keyword)),
         );
-        let overlap =
-            token_overlap(&mine, &content_tokens(&format!("{} {}", item.title, item.keyword)));
         let combined = title_hit * 0.75 + overlap * 0.25;
-        max = max.max(if title_hit > 0.82 { title_hit } else { combined });
+        max = max.max(if title_hit > 0.82 {
+            title_hit
+        } else {
+            combined
+        });
     }
     // TS: `Math.round((1 - max) * 1000) / 1000` — the stored number is the
     // displayed one, rounded to three decimals. (`* 1000.0 / 1000.0` would be
@@ -1390,7 +1407,6 @@ pub fn uniqueness_against(
 
 /// TS `measureArticle`: mustCover coverage + keyword-in-title/opening intent.
 /// `MIN_ARTICLE_WORDS` (declared with the draft prompts) is theirs: 2000.
-
 fn measure_article(
     title: &str,
     keyword: &str,
@@ -1405,15 +1421,11 @@ fn measure_article(
         .iter()
         .filter(|item| {
             let item_l = item.to_lowercase();
-            let words: Vec<&str> = item_l
-                .split_whitespace()
-                .filter(|w| w.len() > 4)
-                .collect();
+            let words: Vec<&str> = item_l.split_whitespace().filter(|w| w.len() > 4).collect();
             if words.is_empty() {
                 text.contains(item_l.as_str())
             } else {
-                words.iter().filter(|w| text.contains(*w)).count()
-                    >= words.len().min(2)
+                words.iter().filter(|w| text.contains(*w)).count() >= words.len().min(2)
             }
         })
         .count();
@@ -1425,10 +1437,7 @@ fn measure_article(
         (words as f64 / MIN_ARTICLE_WORDS as f64).min(1.0)
     };
     let kw_l = keyword.to_lowercase();
-    let tokens: Vec<&str> = kw_l
-        .split_whitespace()
-        .filter(|w| w.len() > 3)
-        .collect();
+    let tokens: Vec<&str> = kw_l.split_whitespace().filter(|w| w.len() > 3).collect();
     let title_l = title.to_lowercase();
     let in_title = if !tokens.is_empty() {
         tokens.iter().filter(|w| title_l.contains(*w)).count() as f64 / tokens.len() as f64
@@ -1455,7 +1464,11 @@ fn measure_article(
 /// so readers see the whole FAQ instead of collapsed rows.
 fn render_final_markdown(title: &str, question: &str, content: &Value) -> String {
     let mut md = String::new();
-    if let Some(block) = content.get("answer_block").or_else(|| content.get("answerBlock")).and_then(Value::as_str) {
+    if let Some(block) = content
+        .get("answer_block")
+        .or_else(|| content.get("answerBlock"))
+        .and_then(Value::as_str)
+    {
         if !block.trim().is_empty() {
             md.push_str(&format!("**{title}** {question}\n\n{block}\n\n"));
         }
@@ -1478,9 +1491,10 @@ fn render_final_markdown(title: &str, question: &str, content: &Value) -> String
         if !faq.is_empty() {
             md.push_str("## Frequently Asked Questions\n");
             for q in faq {
-                if let (Some(question), Some(answer)) =
-                    (q.get("question").and_then(Value::as_str), q.get("answer").and_then(Value::as_str))
-                {
+                if let (Some(question), Some(answer)) = (
+                    q.get("question").and_then(Value::as_str),
+                    q.get("answer").and_then(Value::as_str),
+                ) {
                     let question = question.trim();
                     let answer = answer.trim();
                     if question.is_empty() || answer.is_empty() {
@@ -1601,7 +1615,9 @@ pub async fn run_validation(
         let reason = if repeat {
             "DUPLICATE REFUSED (L2-lexical). A second angle is not a new article.".to_string()
         } else {
-            gate.reason.clone().unwrap_or_else(|| "DUPLICATE REFUSED".to_string())
+            gate.reason
+                .clone()
+                .unwrap_or_else(|| "DUPLICATE REFUSED".to_string())
         };
         let outcome = StageOutcome {
             tokens_in: 0,
@@ -1737,25 +1753,29 @@ pub async fn run_validation(
     }
 
     // 5. Ghost publish (LIVE + configured) or store publish-held (SANDBOX /
-    // unconfigured). A refused push is a failure — the job retries, and the
-    // stage is not marked done, so no double-publish on the next attempt.
+    // unconfigured). The article is sealed either way, so a refused push holds
+    // it with the reason recorded instead of failing the stage: the content is
+    // already paid for, and the static delivery can still ship it. The hold is
+    // what stops a retry from double-publishing.
     let (ghost_mode, ghost_url, ghost_key): (String, Option<String>, Option<String>) =
         match website_id {
-            Some(wid) => sqlx::query_as(
-                "SELECT ghost_mode, ghost_url, ghost_admin_key_enc FROM websites WHERE id = ?",
-            )
-            .bind(wid)
-            .fetch_one(pool)
-            .await?
-            ,
+            Some(wid) => {
+                sqlx::query_as(
+                    "SELECT ghost_mode, ghost_url, ghost_admin_key_enc FROM websites WHERE id = ?",
+                )
+                .bind(wid)
+                .fetch_one(pool)
+                .await?
+            }
             None => ("SANDBOX".to_string(), None, None),
         };
     // Stage 4's packaged metadata (slug, excerpt, tags) — read before the slug
     // decision, because the packaged slug is what publish prefers.
-    let meta_raw: Option<String> = sqlx::query_scalar("SELECT meta_json FROM articles WHERE id = ?")
-        .bind(article_id)
-        .fetch_one(pool)
-        .await?;
+    let meta_raw: Option<String> =
+        sqlx::query_scalar("SELECT meta_json FROM articles WHERE id = ?")
+            .bind(article_id)
+            .fetch_one(pool)
+            .await?;
     let meta_json: Value = meta_raw
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .unwrap_or(json!({}));
@@ -1829,7 +1849,17 @@ pub async fn run_validation(
         // Ghost is actually wired; otherwise just store as publish-held.
         if let (Some(u), Some(k)) = (ghost_url.as_deref(), ghost_key.as_deref()) {
             if !u.trim().is_empty() && !k.trim().is_empty() {
-                match crate::ghost::push_post(Some(u), Some(k), &title, &slug, &markdown, feature_image.as_deref(), "draft").await {
+                match crate::ghost::push_post(
+                    Some(u),
+                    Some(k),
+                    &title,
+                    &slug,
+                    &markdown,
+                    feature_image.as_deref(),
+                    "draft",
+                )
+                .await
+                {
                     Ok(res) => {
                         ghost_post_url = Some(res.url.clone());
                         ghost_post_id = Some(res.ghost_post_id);
@@ -1851,15 +1881,16 @@ pub async fn run_validation(
         if !crate::gate::already_linked(&markdown, slug) {
             continue;
         }
-        let target_id: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM articles WHERE site_id = ? AND slug = ? AND id != ?")
-                .bind(site_id)
-                .bind(slug)
-                .bind(article_id)
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten();
+        let target_id: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM articles WHERE site_id = ? AND slug = ? AND id != ?",
+        )
+        .bind(site_id)
+        .bind(slug)
+        .bind(article_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
         sqlx::query(
             "INSERT INTO article_links (article_id, direction, target_article_id, target_slug, \
              target_title, anchor, status, health, created_at) \
@@ -1880,7 +1911,7 @@ pub async fn run_validation(
     // the gate could never pass. Deterministic per (site, keyword) so the same
     // article always gets the same writer across reruns.
     let (author_name, author_slug, author_beat, author_city) =
-        crate::byline::for_article(site_id, &keyword);
+        crate::byline::for_article(site_id, keyword);
 
     // Finalize the article row.
     sqlx::query(
@@ -1891,12 +1922,19 @@ pub async fn run_validation(
     )
     .bind(&article_status)
     .bind(&slug)
-    .bind(json!({ "markdown": markdown, "faq": content.get("faq").cloned().unwrap_or(json!([])) }).to_string())
+    .bind(
+        json!({ "markdown": markdown, "faq": content.get("faq").cloned().unwrap_or(json!([])) })
+            .to_string(),
+    )
     .bind(uniqueness)
     .bind(coverage)
     .bind(intent)
     .bind(ghost_post_id.as_deref())
-    .bind(if ghost_post_id.is_some() { Some(now.to_string()) } else { None })
+    .bind(if ghost_post_id.is_some() {
+        Some(now.to_string())
+    } else {
+        None
+    })
     .bind(&author_name)
     .bind(&author_slug)
     .bind(&author_beat)

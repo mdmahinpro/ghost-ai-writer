@@ -176,11 +176,16 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("db");
-        sqlx::migrate!("../migrations").run(&p).await.expect("migrate");
-        sqlx::query("INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')")
-            .execute(&p)
+        sqlx::migrate!("../migrations")
+            .run(&p)
             .await
-            .unwrap();
+            .expect("migrate");
+        sqlx::query(
+            "INSERT INTO workspaces (id,name,created_at) VALUES (1,'W','2026-01-01T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO sites (id,workspace_id,domain,created_at) VALUES (1,1,'a.com','2026-01-01T00:00:00Z')")
             .execute(&p)
             .await
@@ -226,7 +231,11 @@ mod tests {
             }
             v
         };
-        assert_eq!(wrote, vec![true, true, true], "every run's status changed once");
+        assert_eq!(
+            wrote,
+            vec![true, true, true],
+            "every run's status changed once"
+        );
 
         let got: Vec<(i64, String)> = sqlx::query_as("SELECT id, status FROM runs ORDER BY id")
             .fetch_all(&p)

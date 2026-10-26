@@ -22,13 +22,13 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
 use std::time::Instant;
 
-mod email;
-mod calendar;
 mod byline;
-mod gate;
+mod calendar;
 mod deploy;
+mod email;
 mod ftp;
 mod ftp_creds;
+mod gate;
 mod ghost;
 mod ghost_api;
 mod image;
@@ -37,8 +37,8 @@ mod lease;
 mod lint;
 mod metrics;
 mod pipeline;
-mod providers;
 mod provider;
+mod providers;
 mod runs;
 mod secrets;
 mod sites;
@@ -235,13 +235,12 @@ async fn intake_keywords(
     // numbered both tables identically; sites created through `sites/ensure`
     // carry an explicit link, and a mismatch would attribute work to the wrong
     // website (usage rollups and article visibility both key on it).
-    let website_id: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(website_id, id) FROM sites WHERE id = ?1",
-    )
-    .bind(req.site_id)
-    .fetch_one(&st.pool)
-    .await
-    .map_err(ApiError::Db)?;
+    let website_id: i64 =
+        sqlx::query_scalar("SELECT COALESCE(website_id, id) FROM sites WHERE id = ?1")
+            .bind(req.site_id)
+            .fetch_one(&st.pool)
+            .await
+            .map_err(ApiError::Db)?;
     let mut tx = st.pool.begin().await.map_err(ApiError::Db)?;
     // One run per intake call. The UI groups its queue by run, and
     // `runs::refresh_run` already rolls status up from the jobs, so creating it
@@ -364,7 +363,10 @@ async fn send_email_verification(
 async fn send_email_digest(
     Json(req): Json<SendEmailRequest>,
 ) -> Result<Json<email::Sent>, ApiError> {
-    let body = req.body.as_deref().ok_or(ApiError::BadRequest("body is required"))?;
+    let body = req
+        .body
+        .as_deref()
+        .ok_or(ApiError::BadRequest("body is required"))?;
     Ok(Json(
         email::send_digest(&req.vendor, &req.secret, &req.from, &req.to, body).await,
     ))
@@ -469,7 +471,13 @@ async fn ftp_upload(
     State(st): State<AppState>,
     Json(req): Json<FtpUploadRequest>,
 ) -> Json<serde_json::Value> {
-    let target = match ftp_creds::target(&st.pool, req.workspace_id.unwrap_or(1), Some(req.target.clone())).await {
+    let target = match ftp_creds::target(
+        &st.pool,
+        req.workspace_id.unwrap_or(1),
+        Some(req.target.clone()),
+    )
+    .await
+    {
         Ok(resolved) => resolved,
         Err(error) => return Json(serde_json::json!({ "ok": false, "error": error })),
     };
@@ -649,7 +657,9 @@ async fn patch_provider(
             sqlx::Error::RowNotFound => ApiError::BadRequest("unknown key id"),
             other => ApiError::Db(other),
         })?;
-    Ok(Json(serde_json::json!({ "id": updated, "workspace_id": req.workspace_id })))
+    Ok(Json(
+        serde_json::json!({ "id": updated, "workspace_id": req.workspace_id }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -699,15 +709,20 @@ async fn generate(
         images: req.images,
     };
 
-    let out =
-        provider::complete_chain(&st.pool, req.workspace_id, role, req.preferred_key_id, &chat)
-            .await
-            .map_err(|e| {
-                // Error bodies can echo the request, so the detail stays in the
-                // log and only a bounded message reaches the client.
-                tracing::warn!("generate failed: {e}");
-                ApiError::Upstream(provider::safe_message(&e))
-            })?;
+    let out = provider::complete_chain(
+        &st.pool,
+        req.workspace_id,
+        role,
+        req.preferred_key_id,
+        &chat,
+    )
+    .await
+    .map_err(|e| {
+        // Error bodies can echo the request, so the detail stays in the
+        // log and only a bounded message reaches the client.
+        tracing::warn!("generate failed: {e}");
+        ApiError::Upstream(provider::safe_message(&e))
+    })?;
 
     let spend = &out.completion;
     if let Err(e) = sqlx::query(
@@ -835,7 +850,12 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/deploy/vercel", post(deploy_vercel))
         .route("/v1/deploy/github", post(deploy_github))
         .route("/v1/ftp/test", post(ftp_test))
-        .route("/v1/ftp/credentials", get(load_ftp_credentials).post(save_ftp_credentials).delete(forget_ftp_credentials))
+        .route(
+            "/v1/ftp/credentials",
+            get(load_ftp_credentials)
+                .post(save_ftp_credentials)
+                .delete(forget_ftp_credentials),
+        )
         .route("/v1/ftp/upload", post(ftp_upload))
         .route("/v1/indexnow", post(index_now))
         .route("/v1/providers/test-model", post(test_model))
@@ -846,7 +866,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/search/firecrawl", post(firecrawl_search))
         .route("/v1/providers/keys", get(key_pool))
         .route("/v1/generate", post(generate))
-        .route("/v1/providers", get(list_provider_routes).post(create_provider))
+        .route(
+            "/v1/providers",
+            get(list_provider_routes).post(create_provider),
+        )
         .route("/v1/providers/{id}", patch(patch_provider))
 }
 
@@ -1211,7 +1234,10 @@ mod tests {
             .await
             .expect("count");
         // `connect` bootstraps, so the row is there before any request arrives.
-        assert_eq!(before, 1, "the default workspace must exist after migration");
+        assert_eq!(
+            before, 1,
+            "the default workspace must exist after migration"
+        );
         let name: String = sqlx::query_scalar("SELECT name FROM workspaces WHERE id = 1")
             .fetch_one(&pool)
             .await
@@ -1301,14 +1327,13 @@ mod tests {
         .await
         .expect("update must not fail");
 
-        let after: (String, String, String, String, i64) =
-            sqlx::query_as(
-                "SELECT key_enc, key_hint, model_id, base_url, priority FROM ai_keys WHERE id = ?",
-            )
-            .bind(id)
-            .fetch_one(&pool)
-            .await
-            .expect("after");
+        let after: (String, String, String, String, i64) = sqlx::query_as(
+            "SELECT key_enc, key_hint, model_id, base_url, priority FROM ai_keys WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("after");
         assert_eq!(after.0, before.0); // sealed credential untouched
         assert_eq!(after.1, before.1); // hint survives a blank-secret edit
         assert_eq!(after.2, "model-b");
@@ -1332,11 +1357,9 @@ mod tests {
             },
         )
         .await
-        .err()
-        .expect("unknown id must be RowNotFound");
+        .expect_err("unknown id must be RowNotFound");
         assert!(matches!(err, sqlx::Error::RowNotFound));
     }
-
 
     #[tokio::test]
     async fn migrations_create_all_six_tables() {
@@ -1555,19 +1578,17 @@ mod tests {
             .unwrap();
         assert_eq!(runs, 1, "one run per intake call");
 
-        let attached: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE run_id = ?")
-                .bind(run_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let attached: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(attached, 3, "every ingested keyword belongs to the run");
 
-        let orphans: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE run_id IS NULL")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let orphans: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE run_id IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(orphans, 0, "no job should be left without a run");
     }
 
@@ -1672,7 +1693,10 @@ mod tests {
         let leaked = provider::EngineError::Http(500, "sk-live-abc123 rejected".into());
         let msg = provider::safe_message(&leaked);
         assert_eq!(msg, "provider returned http 500");
-        assert!(!msg.contains("sk-live"), "must not carry key material: {msg}");
+        assert!(
+            !msg.contains("sk-live"),
+            "must not carry key material: {msg}"
+        );
 
         assert_eq!(
             provider::safe_message(&provider::EngineError::Http(401, "nope".into())),

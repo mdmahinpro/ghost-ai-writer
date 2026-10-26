@@ -172,7 +172,12 @@ pub fn mark_queued(calendar: &mut Value, item_id: &str, job_id: i64) -> bool {
 
 /// Record the outcome of a publish. Moving the item out of `READY` is what stops
 /// the next pulse from publishing it again.
-pub fn mark_published(calendar: &mut Value, item_id: &str, status: &str, note: Option<&str>) -> bool {
+pub fn mark_published(
+    calendar: &mut Value,
+    item_id: &str,
+    status: &str,
+    note: Option<&str>,
+) -> bool {
     let Some(items) = calendar.get_mut("items").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -288,8 +293,14 @@ pub fn publish_request(
                 .filter(|image| image.get("src").and_then(Value::as_str).is_some())
                 .map(|image| crate::ghost_api::PublishImage {
                     src: image.get("src").and_then(Value::as_str).map(str::to_string),
-                    remote: image.get("remote").and_then(Value::as_str).map(str::to_string),
-                    role: image.get("role").and_then(Value::as_str).map(str::to_string),
+                    remote: image
+                        .get("remote")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    role: image
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                     alt: text(image, "alt"),
                 })
                 .collect()
@@ -298,16 +309,15 @@ pub fn publish_request(
 
     // Rule 2: the byline travels as an external portrait URL, never a download.
     let author_id = text(article, "authorId");
-    let author = row_by_id(state, "authors", &author_id).map(|author| {
-        crate::ghost_api::PublishAuthor {
+    let author =
+        row_by_id(state, "authors", &author_id).map(|author| crate::ghost_api::PublishAuthor {
             name: text(author, "name"),
             slug: Some(text(author, "slug")).filter(|value| !value.is_empty()),
             bio: Some(text(author, "shortBio")),
             profile_image: Some(text(author, "avatarUrl")),
             known_ghost_author_id: Some(text(author, "ghostAuthorId"))
                 .filter(|value| !value.is_empty()),
-        }
-    });
+        });
 
     Ok(crate::ghost_api::PublishRequest {
         url,
@@ -340,10 +350,9 @@ pub fn publish_request(
 /// Words that make a poor anchor; mirrors `STOP` in `src/lib/link-graph.ts` so a
 /// link proposed on the server reads the same as one proposed in the browser.
 const ANCHOR_STOP: &[&str] = &[
-    "a", "an", "the", "of", "for", "and", "to", "in", "on", "how", "with", "your",
-    "that", "this", "from", "what", "when", "who", "why", "into", "over", "about",
-    "between", "without", "than", "then", "are", "was", "were", "will", "just",
-    "more", "most",
+    "a", "an", "the", "of", "for", "and", "to", "in", "on", "how", "with", "your", "that", "this",
+    "from", "what", "when", "who", "why", "into", "over", "about", "between", "without", "than",
+    "then", "are", "was", "were", "will", "just", "more", "most",
 ];
 
 /// The words a link should hang on: up to four content words, or the raw title
@@ -388,9 +397,11 @@ pub fn anchor_phrase(title: &str) -> String {
 }
 
 fn index_by_id(state: &Value, key: &str, id: &str) -> Option<usize> {
-    state.get(key).and_then(Value::as_array)?.iter().position(|row| {
-        row.get("id").and_then(Value::as_str) == Some(id)
-    })
+    state
+        .get(key)
+        .and_then(Value::as_array)?
+        .iter()
+        .position(|row| row.get("id").and_then(Value::as_str) == Some(id))
 }
 
 /// One published calendar item, as reweave sees it.
@@ -816,7 +827,10 @@ mod tests {
                 { "id": "site_2" },
             ],
         });
-        assert_eq!(server_site_id(&state, &json!({ "siteId": "site_1" })), Some(7));
+        assert_eq!(
+            server_site_id(&state, &json!({ "siteId": "site_1" })),
+            Some(7)
+        );
         // No server id yet: the client assigns it on first queue.
         assert_eq!(server_site_id(&state, &json!({ "siteId": "site_2" })), None);
         assert_eq!(server_site_id(&state, &json!({ "siteId": "absent" })), None);
@@ -885,11 +899,17 @@ mod tests {
     #[test]
     fn anchor_phrases_match_the_client_rule() {
         // Up to four content words, stopwords dropped.
-        assert_eq!(anchor_phrase("How to build a content calendar"), "build content calendar");
+        assert_eq!(
+            anchor_phrase("How to build a content calendar"),
+            "build content calendar"
+        );
         // A title that is already short keeps its whole self.
         assert_eq!(anchor_phrase("Pricing"), "Pricing");
         // Quotes are stripped, and "that" is a stopword like in the client set.
-        assert_eq!(anchor_phrase("\u{201c}Caching strategies that work\u{201d}"), "Caching strategies work");
+        assert_eq!(
+            anchor_phrase("\u{201c}Caching strategies that work\u{201d}"),
+            "Caching strategies work"
+        );
     }
 
     fn reweave_state(auto_reweave: bool) -> Value {
@@ -924,7 +944,10 @@ mod tests {
         assert_eq!(cluster["links"][0]["targetSlug"], "pillar-guide");
         assert_eq!(cluster["links"][0]["state"], "LOCAL");
         // ...and the pillar points at the only sibling it has.
-        assert_eq!(state["articles"][0]["links"][0]["targetSlug"], "cluster-post");
+        assert_eq!(
+            state["articles"][0]["links"][0]["targetSlug"],
+            "cluster-post"
+        );
     }
 
     #[test]
@@ -963,7 +986,10 @@ mod tests {
         // Nothing on the server ever sets humanState; holding on absence would
         // deadlock an armed calendar. Only a pass in flight may hold.
         let mut state = state_with_article("done", "published");
-        state["articles"][0].as_object_mut().unwrap().remove("humanState");
+        state["articles"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("humanState");
         assert!(publish_request(&state, &publishable_calendar(), "p1").is_ok());
         // An explicit in-flight pass still holds.
         let state = state_with_article("pending", "published");

@@ -1,11 +1,13 @@
 /**
  * Author portraits — client-safe helpers.
  *
- * The stored `avatarUrl` stays a tiny external URL string (zero disk). The UI
- * renders it with `referrerPolicy="no-referrer"` and falls back, in order, to
- * the in-memory server proxy (`/__grok/avatar`) and then to a deterministic
- * inline SVG portrait, so a portrait always renders even when the upstream AI
- * portrait host is blocked (ORB/CORP/referrer) or offline.
+ * A portrait is captured once, when the author is created, and stored on the
+ * profile as a small (≈4 KB, 128 px) self-contained data URI: the face
+ * generator behind `AVATAR_UPSTREAM` has no stable URL of its own, so keeping
+ * the generator URL is what made every author show the same picture. The UI and
+ * the static build render the stored portrait; if it is ever missing they fall
+ * back to the resize CDN, then to an in-memory proxy, then to a deterministic
+ * inline SVG portrait — so a portrait always renders with zero disk storage.
  */
 
 export const AVATAR_PROXY_PATH = "/__grok/avatar";
@@ -75,6 +77,80 @@ export function avatarSourceUrl(token: string): string {
 export function avatarCdnUrl(token: string, size = AVATAR_SIZE, quality = AVATAR_QUALITY): string {
   const upstream = avatarSourceUrl(token);
   return `${AVATAR_CDN}?url=${encodeURIComponent(upstream)}&w=${size}&h=${size}&fit=cover&output=webp&q=${quality}`;
+}
+
+/** Already a finished, self-contained portrait rather than a generator URL? */
+export function isStoredPortrait(avatarUrl?: string): boolean {
+  return String(avatarUrl ?? "").startsWith("data:");
+}
+
+/**
+ * The URL a page or the studio should actually load for an author.
+ *
+ * A stored portrait (data URI) is finished and is returned as-is. Anything still
+ * pointing at the face generator goes through the resize CDN: that host answers
+ * `no-store` and returns a new random stranger on every request, so a raw
+ * upstream URL is both a ~500 KB download and a different face per render.
+ */
+export function portraitSrc(
+  author: { id?: string; avatarUrl?: string },
+  size = AVATAR_SIZE,
+): string {
+  const url = String(author.avatarUrl ?? "").trim();
+  if (!url) return "";
+  if (isStoredPortrait(url)) return url;
+  const seed = avatarSeed(url);
+  if (seed && url.includes("random-person.jpeg")) return avatarCdnUrl(seed, size);
+  return url;
+}
+
+/** A token the CDN has never seen, so the generator answers with a new face. */
+export function freshPortraitToken(seed: string): string {
+  const noise = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  return avatarToken(`${seed}:${noise}`);
+}
+
+/**
+ * Capture one portrait for a new author and return it as a small self-contained
+ * data URI.
+ *
+ * The generator has no stable URL of its own — every fetch is a new random
+ * face — so the face is taken once here and stored on the profile. Every later
+ * article by that author reuses the same picture, which is the only way two
+ * authors can be told apart on a page. Returns null when there is no browser
+ * (tests, server-side render) or the CDN/CORS request fails, so the caller can
+ * keep whatever URL it already had.
+ */
+export async function capturePortrait(
+  seed: string,
+  size = AVATAR_SIZE,
+  quality = 0.82,
+): Promise<string | null> {
+  if (typeof document === "undefined" || typeof Image === "undefined") return null;
+  const url = avatarCdnUrl(freshPortraitToken(seed), size);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.referrerPolicy = "no-referrer";
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("portrait fetch failed"));
+      img.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(image, 0, 0, size, size);
+    const webp = canvas.toDataURL("image/webp", quality);
+    const data = webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/jpeg", quality);
+    // A 128 px portrait is a few KB. Anything smaller means an empty canvas, or
+    // one the browser refused to export — the caller is better off with its URL.
+    return data.length > 512 ? data : null;
+  } catch {
+    return null;
+  }
 }
 
 /** True for a portrait URL this app manages (upstream host or the CDN form). */

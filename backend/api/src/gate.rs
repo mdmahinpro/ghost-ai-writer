@@ -43,10 +43,7 @@ fn normalize(raw: &str) -> String {
             out.push(' ');
         }
     }
-    let collapsed: String = out
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let collapsed: String = out.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.trim().to_string()
 }
 
@@ -172,7 +169,10 @@ pub fn gate_text(title: &str, keyword: &str, corpus: &[CorpusItem]) -> GateResul
     for item in corpus {
         // TS: max(lex(title, item.title), lex(slugify(title), item.slug))
         max_sim = max_sim.max(lexical_similarity(title, &item.title));
-        max_sim = max_sim.max(lexical_similarity(&crate::stages::slugify(title), &item.slug));
+        max_sim = max_sim.max(lexical_similarity(
+            &crate::stages::slugify(title),
+            &item.slug,
+        ));
     }
     if max_sim > L2 {
         return GateResult {
@@ -256,9 +256,9 @@ pub fn post_href(slug: &str) -> String {
 }
 
 const STOP: &[&str] = &[
-    "a", "an", "the", "of", "for", "and", "to", "in", "on", "how", "with", "your", "that",
-    "this", "from", "what", "when", "who", "why", "into", "over", "about", "between",
-    "without", "than", "then", "are", "was", "were", "will", "just", "more", "most",
+    "a", "an", "the", "of", "for", "and", "to", "in", "on", "how", "with", "your", "that", "this",
+    "from", "what", "when", "who", "why", "into", "over", "about", "between", "without", "than",
+    "then", "are", "was", "were", "will", "just", "more", "most",
 ];
 
 /// `anchorPhrase`: the first up-to-four content words of the target title
@@ -308,11 +308,7 @@ pub fn already_linked(html_or_md: &str, slug: &str) -> bool {
 /// `insertAnchor` for markdown: append the TS link sentence with the anchor
 /// wrapped as a link. `html` is accepted so the signature mirrors theirs; the
 /// Rust pipeline stores markdown.
-pub fn insert_anchor_md(
-    markdown: &str,
-    anchor: &str,
-    slug: &str,
-) -> (String, bool) {
+pub fn insert_anchor_md(markdown: &str, anchor: &str, slug: &str) -> (String, bool) {
     if anchor.trim().is_empty() || slug.trim().is_empty() {
         return (markdown.to_string(), false);
     }
@@ -339,11 +335,7 @@ mod tests {
             keyword: "stipend cut guidance".into(),
             slug: "when-a-phd-stipend-stops".into(),
         }];
-        let g = gate_text(
-            "Totally Different Title",
-            "Stipend Cut Guidance!",
-            &corpus,
-        );
+        let g = gate_text("Totally Different Title", "Stipend Cut Guidance!", &corpus);
         assert!(matches!(g.layer, "L1"));
         assert!(!g.ok);
     }
@@ -388,7 +380,11 @@ mod tests {
                 slug: "calf-teeth".into(),
             },
         ];
-        let g = gate_text("Baling Hay When The Forecast Turns", "hay baling weather", &corpus);
+        let g = gate_text(
+            "Baling Hay When The Forecast Turns",
+            "hay baling weather",
+            &corpus,
+        );
         assert!(g.ok, "{g:?}");
     }
 

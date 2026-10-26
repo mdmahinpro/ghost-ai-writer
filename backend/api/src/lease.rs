@@ -162,7 +162,13 @@ fn read_input(input: WorkInput) -> Result<(String, String, i64, Option<i64>, i64
     let tick_id: String = input.tick_id.chars().take(64).collect();
     let active_jobs = input.active_jobs.unwrap_or(0).clamp(0, 10_000);
     let pulse = input.next_calendar_pulse_at;
-    Ok((site_id, tick_id, active_jobs, pulse, clamp_ttl(input.ttl_ms)))
+    Ok((
+        site_id,
+        tick_id,
+        active_jobs,
+        pulse,
+        clamp_ttl(input.ttl_ms),
+    ))
 }
 
 /// POST /api/v1/worker/heartbeat — beat plus lease renewal in one call.
@@ -173,31 +179,41 @@ pub async fn heartbeat(
     let (site_id, tick_id, active_jobs, pulse, ttl_ms) =
         read_input(input).map_err(ApiError::BadRequest)?;
     let now = now_ms();
-    let existing = read_lease(&st.pool, &site_id)
-        .await
-        .map_err(ApiError::Db)?;
+    let existing = read_lease(&st.pool, &site_id).await.map_err(ApiError::Db)?;
 
     let holder_is_self = existing
         .as_ref()
         .map(|r| r.lease_id == tick_id && !tick_id.is_empty())
         .unwrap_or(false);
-    let free = existing.as_ref().map(|r| r.expires_at <= now).unwrap_or(true);
+    let free = existing
+        .as_ref()
+        .map(|r| r.expires_at <= now)
+        .unwrap_or(true);
 
     // A heartbeat keeps the lease alive only if this tick holds it or the
     // lease was free; it must never steal an active lease from another tab.
     let lease_id = if free || holder_is_self {
         if tick_id.is_empty() {
-            existing.as_ref().map(|r| r.lease_id.clone()).unwrap_or_default()
+            existing
+                .as_ref()
+                .map(|r| r.lease_id.clone())
+                .unwrap_or_default()
         } else {
             tick_id.clone()
         }
     } else {
-        existing.as_ref().map(|r| r.lease_id.clone()).unwrap_or_default()
+        existing
+            .as_ref()
+            .map(|r| r.lease_id.clone())
+            .unwrap_or_default()
     };
     let expires_at = if free || holder_is_self {
         now + ttl_ms
     } else {
-        existing.as_ref().map(|r| r.expires_at).unwrap_or(now + ttl_ms)
+        existing
+            .as_ref()
+            .map(|r| r.expires_at)
+            .unwrap_or(now + ttl_ms)
     };
     let lease_ticks = existing.as_ref().map(|r| r.lease_ticks).unwrap_or(0) + 1;
 
@@ -225,9 +241,7 @@ pub async fn heartbeat(
     .await
     .map_err(ApiError::Db)?;
 
-    let row = read_lease(&st.pool, &site_id)
-        .await
-        .map_err(ApiError::Db)?;
+    let row = read_lease(&st.pool, &site_id).await.map_err(ApiError::Db)?;
     Ok(Json(beat_for(row.as_ref(), &tick_id, now)))
 }
 
@@ -239,12 +253,9 @@ pub async fn claim_lease(
     let (site_id, tick_id, active_jobs, pulse, ttl_ms) =
         read_input(input).map_err(ApiError::BadRequest)?;
     let now = now_ms();
-    let existing = read_lease(&st.pool, &site_id)
-        .await
-        .map_err(ApiError::Db)?;
+    let existing = read_lease(&st.pool, &site_id).await.map_err(ApiError::Db)?;
 
-    let (granted, holder, expires_at) =
-        lease_decision(existing.as_ref(), &tick_id, now, ttl_ms);
+    let (granted, holder, expires_at) = lease_decision(existing.as_ref(), &tick_id, now, ttl_ms);
 
     if granted {
         let lease_ticks = existing.as_ref().map(|r| r.lease_ticks).unwrap_or(0) + 1;
@@ -273,9 +284,7 @@ pub async fn claim_lease(
         .map_err(ApiError::Db)?;
     }
 
-    let row = read_lease(&st.pool, &site_id)
-        .await
-        .map_err(ApiError::Db)?;
+    let row = read_lease(&st.pool, &site_id).await.map_err(ApiError::Db)?;
     Ok(Json(beat_for(row.as_ref(), &tick_id, now)))
 }
 
@@ -290,9 +299,7 @@ pub async fn release_lease(
     Json(input): Json<WorkInput>,
 ) -> Result<Json<ReleaseOut>, ApiError> {
     let (site_id, tick_id, _, _, _) = read_input(input).map_err(ApiError::BadRequest)?;
-    let existing = read_lease(&st.pool, &site_id)
-        .await
-        .map_err(ApiError::Db)?;
+    let existing = read_lease(&st.pool, &site_id).await.map_err(ApiError::Db)?;
 
     let Some(row) = existing else {
         return Ok(Json(ReleaseOut { released: false }));
@@ -359,7 +366,10 @@ mod tests {
         let (granted, holder, exp) = lease_decision(Some(&existing), "tick-a", 1_000, 15_000);
         assert!(granted);
         assert_eq!(holder, "tick-a");
-        assert_eq!(exp, 16_000, "renewal extends from now, not from the old expiry");
+        assert_eq!(
+            exp, 16_000,
+            "renewal extends from now, not from the old expiry"
+        );
     }
 
     #[test]
@@ -381,9 +391,17 @@ mod tests {
     #[test]
     fn ttl_is_clamped_into_the_safe_window() {
         assert_eq!(clamp_ttl(None), DEFAULT_TTL_MS);
-        assert_eq!(clamp_ttl(Some(0)), MIN_TTL_MS, "a zero lease is already dead");
+        assert_eq!(
+            clamp_ttl(Some(0)),
+            MIN_TTL_MS,
+            "a zero lease is already dead"
+        );
         assert_eq!(clamp_ttl(Some(1)), MIN_TTL_MS);
-        assert_eq!(clamp_ttl(Some(i64::MAX)), MAX_TTL_MS, "an hour would wedge the site");
+        assert_eq!(
+            clamp_ttl(Some(i64::MAX)),
+            MAX_TTL_MS,
+            "an hour would wedge the site"
+        );
         assert_eq!(clamp_ttl(Some(20_000)), 20_000);
     }
 

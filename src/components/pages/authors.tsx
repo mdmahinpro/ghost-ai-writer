@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { previewAuthorMatch } from "@/lib/authors";
-import { avatarProxySrc, avatarSeed, portraitDataUri } from "@/lib/avatar";
+import { avatarProxySrc, avatarSeed, isStoredPortrait, portraitDataUri, portraitSrc } from "@/lib/avatar";
 import { useApp } from "@/lib/store";
 import type { AuthorProfile } from "@/lib/types";
 import { Card, Empty, PageIntro } from "@/components/ui";
@@ -32,7 +32,7 @@ export function AuthorAvatar({ author, size = 44 }: { author: AuthorProfile; siz
       />
     );
   }
-  const src = stage === 0 ? author.avatarUrl : avatarProxySrc({ ...author, avatarUrl: author.avatarUrl }, Math.max(96, size * 2));
+  const src = stage === 0 ? portraitSrc(author, Math.max(96, size * 2)) : avatarProxySrc({ ...author, avatarUrl: author.avatarUrl }, Math.max(96, size * 2));
   return (
     <img
       src={src || portraitDataUri(seed, author.name, Math.max(96, size * 2))}
@@ -171,6 +171,20 @@ function MatchSimulator() {
 export function AuthorsPage() {
   const siteId = useApp((s) => s.activeSiteId);
   const authorList = useApp((s) => s.authors);
+  const captureAuthorPortrait = useApp((s) => s.captureAuthorPortrait);
+  // Authors created before portraits were captured — or by an older sync — still
+  // carry a generator URL. Capture those once per session: the generator ignores
+  // its query and answers with a new stranger per request, so a profile without a
+  // stored portrait shows a different face on every render.
+  const attempted = useRef(new Set<string>());
+  useEffect(() => {
+    for (const author of authorList) {
+      if (author.siteId !== siteId || isStoredPortrait(author.avatarUrl)) continue;
+      if (attempted.current.has(author.id)) continue;
+      attempted.current.add(author.id);
+      void captureAuthorPortrait(author.id);
+    }
+  }, [authorList, captureAuthorPortrait, siteId]);
   const authors = useMemo(() => authorList.filter((author) => author.siteId === siteId), [authorList, siteId]);
 
   return (

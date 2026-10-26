@@ -19,9 +19,30 @@ const FIRST: [&str; 24] = [
 ];
 
 const LAST: [&str; 24] = [
-    "Whitfield", "Okafor", "Raghavan", "Linden", "Marsh", "Delgado", "Bishop", "Osei", "Cardenas",
-    "Novak", "Ellery", "Sandoval", "Bright", "Kaur", "Fenn", "Moreau", "Ashby", "Reyes", "Thorne",
-    "Adeyemi", "Vance", "Lindqvist", "Barros", "Hollis",
+    "Whitfield",
+    "Okafor",
+    "Raghavan",
+    "Linden",
+    "Marsh",
+    "Delgado",
+    "Bishop",
+    "Osei",
+    "Cardenas",
+    "Novak",
+    "Ellery",
+    "Sandoval",
+    "Bright",
+    "Kaur",
+    "Fenn",
+    "Moreau",
+    "Ashby",
+    "Reyes",
+    "Thorne",
+    "Adeyemi",
+    "Vance",
+    "Lindqvist",
+    "Barros",
+    "Hollis",
 ];
 
 /// `(city, state code)` pairs for the byline's location.
@@ -148,7 +169,8 @@ mod tests {
             assert!(!beat.trim().is_empty(), "empty beat for {keyword:?}");
             assert!(city.contains(", "), "city {city:?} is not 'City, State'");
             assert!(
-                slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                slug.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
                 "slug {slug:?} is not url-safe"
             );
         }

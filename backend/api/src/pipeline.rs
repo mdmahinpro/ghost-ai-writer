@@ -304,14 +304,13 @@ pub async fn requeue_job(
     State(st): State<crate::AppState>,
     Json(req): Json<RequeueRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let status: Option<String> = sqlx::query_scalar(
-        "SELECT status FROM jobs WHERE id = ? AND workspace_id = ?",
-    )
-    .bind(req.job_id)
-    .bind(req.workspace_id)
-    .fetch_optional(&st.pool)
-    .await
-    .map_err(ApiError::Db)?;
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM jobs WHERE id = ? AND workspace_id = ?")
+            .bind(req.job_id)
+            .bind(req.workspace_id)
+            .fetch_optional(&st.pool)
+            .await
+            .map_err(ApiError::Db)?;
 
     let status = status.ok_or_else(|| {
         ApiError::Invalid(format!(
@@ -348,7 +347,9 @@ pub async fn requeue_job(
         )));
     }
 
-    Ok(Json(serde_json::json!({ "ok": true, "job_id": req.job_id })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "job_id": req.job_id }),
+    ))
 }
 
 #[cfg(test)]
@@ -487,10 +488,7 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        for (stage, tin, tout, cost) in [
-            ("blueprint", 100, 50, 0.01),
-            ("draft", 300, 900, 0.09),
-        ] {
+        for (stage, tin, tout, cost) in [("blueprint", 100, 50, 0.01), ("draft", 300, 900, 0.09)] {
             sqlx::query(
                 "INSERT INTO usage_ledger (article_id, stage, tokens_in, tokens_out, cost_usd, at)
                  VALUES (1, ?, ?, ?, ?, '2026-01-01T00:00:00Z')",
@@ -537,10 +535,7 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
-        let resp = app(pool.clone())
-            .oneshot(req)
-            .await
-            .unwrap();
+        let resp = app(pool.clone()).oneshot(req).await.unwrap();
         let status = resp.status();
         let bytes = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024)
             .await
@@ -557,7 +552,10 @@ mod tests {
 
         // Workspace scoping: job 3 belongs to workspace 2.
         assert_eq!(state.jobs.len(), 2, "only workspace 1's jobs");
-        assert!(state.jobs.iter().all(|j| j.id != 3), "no cross-workspace leak");
+        assert!(
+            state.jobs.iter().all(|j| j.id != 3),
+            "no cross-workspace leak"
+        );
         assert_eq!(state.articles.len(), 1);
         assert_eq!(state.runs.len(), 1);
     }
@@ -598,7 +596,10 @@ mod tests {
         assert_eq!(draft.tokens_in, 300);
         assert_eq!(draft.tokens_out, 900);
         assert_eq!(draft.duration_ms, 4300);
-        assert!(state.stages.iter().all(|s| s.job_id == 1), "workspace scoping");
+        assert!(
+            state.stages.iter().all(|s| s.job_id == 1),
+            "workspace scoping"
+        );
     }
 
     #[tokio::test]
@@ -606,7 +607,10 @@ mod tests {
         let pool = pool().await;
         seed(&pool).await;
         let state = get_state(pool.clone(), "/api/v1/pipeline/state?workspace_id=1").await;
-        assert!(state.active, "a QUEUED job means the client should keep polling");
+        assert!(
+            state.active,
+            "a QUEUED job means the client should keep polling"
+        );
 
         sqlx::query("UPDATE jobs SET status = 'COMPLETED' WHERE id = 2")
             .execute(&pool)
@@ -642,12 +646,10 @@ mod tests {
         // as the active site's.
         let pool = pool().await;
         seed(&pool).await;
-        sqlx::query(
-            "INSERT INTO websites (id, workspace_id, name) VALUES (3, 1, 'Site 3')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO websites (id, workspace_id, name) VALUES (3, 1, 'Site 3')")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO sites (id, workspace_id, domain, client_uid, website_id)
              VALUES (3, 1, 'three.example', 'site_three', 3)",
@@ -657,10 +659,12 @@ mod tests {
         .unwrap();
         // seed() already owns run 1 for website 1; this is a second site in the
         // same workspace, which is what the workspace-only filter got wrong.
-        sqlx::query("INSERT INTO runs (id, website_id, type, status) VALUES (9, 3, 'keyword', 'COMPLETED')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO runs (id, website_id, type, status) VALUES (9, 3, 'keyword', 'COMPLETED')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let one = get_state(
             pool.clone(),
@@ -712,11 +716,8 @@ mod tests {
         .await
         .unwrap();
 
-        let (status, body) = post_requeue(
-            &pool,
-            serde_json::json!({ "workspace_id": 1, "job_id": 5 }),
-        )
-        .await;
+        let (status, body) =
+            post_requeue(&pool, serde_json::json!({ "workspace_id": 1, "job_id": 5 })).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["ok"], true);
         assert_eq!(body["job_id"], 5);
@@ -739,11 +740,8 @@ mod tests {
         seed(&pool).await;
 
         // Job 1 is COMPLETED — a stale-UI retry must not re-run it.
-        let (status, body) = post_requeue(
-            &pool,
-            serde_json::json!({ "workspace_id": 1, "job_id": 1 }),
-        )
-        .await;
+        let (status, body) =
+            post_requeue(&pool, serde_json::json!({ "workspace_id": 1, "job_id": 1 })).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(
             body["error"]["message"]
@@ -753,11 +751,10 @@ mod tests {
             "actual status in the message: {body}"
         );
 
-        let still: String =
-            sqlx::query_scalar("SELECT status FROM jobs WHERE id = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let still: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(still, "COMPLETED", "completed job untouched");
 
         // Unknown id.
@@ -775,11 +772,8 @@ mod tests {
         seed(&pool).await;
         // Job 3 lives in workspace 2 (see seed). Workspace 1 asking for it
         // gets not-found, not a silent cross-workspace write.
-        let (status, body) = post_requeue(
-            &pool,
-            serde_json::json!({ "workspace_id": 1, "job_id": 3 }),
-        )
-        .await;
+        let (status, body) =
+            post_requeue(&pool, serde_json::json!({ "workspace_id": 1, "job_id": 3 })).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(
             body["error"]["message"]
@@ -795,11 +789,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let (status, _) = post_requeue(
-            &pool,
-            serde_json::json!({ "workspace_id": 2, "job_id": 3 }),
-        )
-        .await;
+        let (status, _) =
+            post_requeue(&pool, serde_json::json!({ "workspace_id": 2, "job_id": 3 })).await;
         assert_eq!(status, StatusCode::OK);
     }
 
@@ -818,22 +809,17 @@ mod tests {
         .await
         .unwrap();
 
-        let (status, _) = post_requeue(
-            &pool,
-            serde_json::json!({ "workspace_id": 1, "job_id": 2 }),
-        )
-        .await;
+        let (status, _) =
+            post_requeue(&pool, serde_json::json!({ "workspace_id": 1, "job_id": 2 })).await;
         assert_eq!(status, StatusCode::OK);
 
         // Mirror of the exact claim predicate in worker.rs (`claim`): the
         // candidate query plus the guarded-UPDATE lease check. A requeued
         // row must satisfy both, or the rescue is a no-op.
-        let now = sqlx::query_scalar::<_, String>(
-            "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let now = sqlx::query_scalar::<_, String>("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let claimable: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM jobs WHERE id = 2 AND (
                  (status IN ('QUEUED', 'pending', 'RETRY') AND not_before IS NULL)

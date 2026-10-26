@@ -24,3 +24,23 @@ webpki-roots.workspace = true
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+
+# Lint policy, per the BeautifulRust guidelines: enforced in CI with
+# `cargo clippy --all-targets --all-features -- -D warnings`.
+#
+# This is a binary service, not a crate with external users, so the
+# published-library subset is deliberately absent: `missing_docs`,
+# `print_stdout`/`print_stderr`, `missing_errors_doc` and `unreachable_pub`
+# (in a bin crate every `pub` item is formally unreachable, so the lint flags
+# the whole crate rather than a mistake).
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+string_add = "warn"
+redundant_clone = "warn"
+uninlined_format_args = "warn"

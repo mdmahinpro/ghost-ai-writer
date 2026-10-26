@@ -162,7 +162,10 @@ pub async fn fetch_image(remote: &str) -> Option<Fetched> {
     }
     let final_url = resp.url().to_string();
     // A redirect may land somewhere private; check again before reading.
-    let final_host = reqwest::Url::parse(&final_url).ok()?.host_str()?.to_string();
+    let final_host = reqwest::Url::parse(&final_url)
+        .ok()?
+        .host_str()?
+        .to_string();
     if crate::ghost::is_private_host(&final_host) {
         return None;
     }
@@ -235,7 +238,10 @@ fn size_for(slot: &Slot) -> (u32, u32) {
         crate::image::CONTENT
     };
     (
-        slot.width.filter(|w| *w > 0).map(|w| w.min(1600)).unwrap_or(dw),
+        slot.width
+            .filter(|w| *w > 0)
+            .map(|w| w.min(1600))
+            .unwrap_or(dw),
         slot.height
             .filter(|h| *h > 0)
             .map(|h| h.min(1200))
@@ -399,7 +405,10 @@ pub async fn read_batch(req: &ReadMediaRequest) -> Value {
 
 /// Read one image for upload: from disk when we placed it, otherwise fetch the
 /// remote URL. Returns `(filename, mime, bytes)`.
-pub async fn read_one(name: Option<&str>, remote: Option<&str>) -> Option<(String, String, Vec<u8>)> {
+pub async fn read_one(
+    name: Option<&str>,
+    remote: Option<&str>,
+) -> Option<(String, String, Vec<u8>)> {
     if let Some(name) = name.and_then(safe_name) {
         for dir in media_dirs() {
             if let Ok(bytes) = std::fs::read(dir.join(&name)) {
@@ -451,11 +460,17 @@ mod tests {
 
     #[test]
     fn a_stored_name_is_a_hash_and_a_known_extension() {
-        assert_eq!(safe_name("0123456789abcdef01234567.jpg").as_deref(), Some("0123456789abcdef01234567.jpg"));
+        assert_eq!(
+            safe_name("0123456789abcdef01234567.jpg").as_deref(),
+            Some("0123456789abcdef01234567.jpg")
+        );
         assert_eq!(safe_name("../etc/passwd"), None);
         assert_eq!(safe_name("0123456789abcdef01234567.exe"), None);
         assert_eq!(safe_name("short.jpg"), None, "a short stem is not a hash");
-        assert_eq!(safe_name("0123456789abcdef01234567.JPG").as_deref(), Some("0123456789abcdef01234567.jpg"));
+        assert_eq!(
+            safe_name("0123456789abcdef01234567.JPG").as_deref(),
+            Some("0123456789abcdef01234567.jpg")
+        );
     }
 
     #[test]
@@ -487,7 +502,10 @@ mod tests {
         // Loopback and friends must never be fetched, even for a redirect.
         assert!(fetch_image("https://127.0.0.1/x.jpg").await.is_none());
         assert!(fetch_image("https://localhost/x.jpg").await.is_none());
-        assert!(fetch_image("http://example.com/x.jpg").await.is_none(), "https only");
+        assert!(
+            fetch_image("http://example.com/x.jpg").await.is_none(),
+            "https only"
+        );
         assert!(fetch_image("not a url").await.is_none());
     }
 }

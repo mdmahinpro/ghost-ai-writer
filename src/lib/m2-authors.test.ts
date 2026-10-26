@@ -14,7 +14,8 @@ import {
   topicStem,
   voiceFor,
 } from "./authors.ts";
-import { articleJsonLd, staticFiles } from "./static-site.ts";
+import { articleJsonLd, avatarImgHtml, staticFiles } from "./static-site.ts";
+import { avatarSeed, capturePortrait, freshPortraitToken, portraitSrc } from "./avatar.ts";
 
 const AVATAR_HOST = "https://thispersondoesnotexist.com/random-person.jpeg?r=";
 
@@ -296,4 +297,41 @@ test("Rule 2 persona: personaForTopic is deterministic per topic", () => {
   const b = personaForTopic("graduate school funding", "academic life");
   assert.deepEqual(a, b);
   assert.equal(a.family, "academic");
+});
+
+test("a captured portrait is kept as-is, and a legacy generator URL is resized through the CDN", () => {
+  const stored = `data:image/webp;base64,${"A".repeat(900)}`;
+  assert.equal(portraitSrc({ id: "a1", avatarUrl: stored }, 128), stored);
+
+  const legacy = avatarUrlFor("avatar:s1:ellen");
+  assert.match(legacy, /random-person\.jpeg\?r=/);
+  const resized = portraitSrc({ id: "a1", avatarUrl: legacy }, 128);
+  const token = avatarSeed(legacy);
+  assert.ok(token, "the token must be readable back out of the URL");
+  assert.ok(resized.includes("wsrv.nl"), resized);
+  assert.ok(resized.includes(encodeURIComponent(token)), "the per-author token must survive the resize");
+  assert.ok(resized.includes("w=128&h=128"), resized);
+  assert.ok(resized.includes("output=webp"), resized);
+});
+
+test("every capture asks the generator for a face the CDN has not seen", () => {
+  const first = freshPortraitToken("a1");
+  const second = freshPortraitToken("a1");
+  assert.notEqual(first, second, "two captures must never resolve to the same face");
+  assert.notEqual(freshPortraitToken("a1"), freshPortraitToken("a2"));
+});
+
+test("the static build ships the stored portrait instead of the 500 KB generator URL", () => {
+  const stored = `data:image/webp;base64,${"B".repeat(900)}`;
+  const captured = avatarImgHtml(author({ avatarUrl: stored }));
+  assert.ok(captured.includes(stored), "the captured portrait must be embedded as-is");
+  assert.ok(!captured.includes("thispersondoesnotexist.com"), captured);
+
+  const legacy = avatarImgHtml(author({ avatarUrl: avatarUrlFor("avatar:s1:ellen") }));
+  assert.ok(legacy.includes("wsrv.nl"), legacy);
+  assert.ok(!legacy.includes("random-person.jpeg?r="), "the raw generator URL must never reach a page");
+});
+
+test("portrait capture returns null instead of throwing outside a browser", async () => {
+  assert.equal(await capturePortrait("a1"), null);
 });

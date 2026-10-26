@@ -212,7 +212,7 @@ pub fn seal_secret(value: &str) -> String {
     let (ciphertext, tag) = in_out.split_at(split);
     format!(
         "{PREFIX}{}:{}:{}",
-        URL_SAFE_NO_PAD.encode(&nonce_bytes),
+        URL_SAFE_NO_PAD.encode(nonce_bytes),
         URL_SAFE_NO_PAD.encode(tag),
         URL_SAFE_NO_PAD.encode(ciphertext)
     )

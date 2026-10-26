@@ -150,9 +150,8 @@ pub async fn deploy_cloudflare(req: &CloudflareRequest) -> Value {
         .text("manifest", Value::Object(manifest).to_string())
         .text("branch", "production");
 
-    let url = format!(
-        "{CLOUDFLARE}/client/v4/accounts/{account}/pages/projects/{project}/deployments"
-    );
+    let url =
+        format!("{CLOUDFLARE}/client/v4/accounts/{account}/pages/projects/{project}/deployments");
     let response = reqwest::Client::new()
         .post(url)
         .header("Authorization", format!("Bearer {token}"))
@@ -386,7 +385,13 @@ mod tests {
 
     #[test]
     fn a_traversing_or_odd_filename_is_refused() {
-        for name in ["../etc/passwd", "a/../../b", "", "weird name.html", "quote\"s"] {
+        for name in [
+            "../etc/passwd",
+            "a/../../b",
+            "",
+            "weird name.html",
+            "quote\"s",
+        ] {
             assert!(
                 read_deploy_files(&[file(name, "aGk=")]).error.is_some(),
                 "accepted {name:?}"
@@ -411,7 +416,9 @@ mod tests {
 
     #[test]
     fn the_file_cap_is_enforced() {
-        let many: Vec<DeployFile> = (0..401).map(|i| file(&format!("f{i}.html"), "aGk=")).collect();
+        let many: Vec<DeployFile> = (0..401)
+            .map(|i| file(&format!("f{i}.html"), "aGk="))
+            .collect();
         assert_eq!(
             read_deploy_files(&many).error.as_deref(),
             Some("Refusing more than 400 files in one adapter deploy.")

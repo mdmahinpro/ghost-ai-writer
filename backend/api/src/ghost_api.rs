@@ -30,7 +30,7 @@ fn now_secs() -> u64 {
 }
 
 fn hex_bytes(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
@@ -59,9 +59,8 @@ pub fn admin_token(admin_key: &str, issued_at: u64) -> Option<String> {
         "exp": issued_at + 300,
         "aud": "/admin/",
     });
-    let enc = |v: &Value| -> String {
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).unwrap_or_default())
-    };
+    let enc =
+        |v: &Value| -> String { URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).unwrap_or_default()) };
     let signing_input = format!("{}.{}", enc(&header), enc(&payload));
     let key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
     let signature = hmac::sign(&key, signing_input.as_bytes());
@@ -88,7 +87,7 @@ fn client() -> &'static reqwest::Client {
 async fn admin_get(origin: &str, path: &str, token: &str) -> Result<(u16, String), String> {
     let resp = client()
         .get(format!("{origin}{path}"))
-        .header("Authorization", ghost::auth_header(&token))
+        .header("Authorization", ghost::auth_header(token))
         .header("Accept", "application/json")
         .send()
         .await
@@ -290,11 +289,7 @@ pub fn validate_public_url(raw: &str) -> Result<String, String> {
         .next()
         .unwrap_or("");
     let host = if let Some(stripped) = host_port.strip_prefix('[') {
-        stripped
-            .split(']')
-            .next()
-            .unwrap_or("")
-            .to_string()
+        stripped.split(']').next().unwrap_or("").to_string()
     } else {
         host_port.split(':').next().unwrap_or("").to_string()
     };
@@ -364,7 +359,10 @@ mod tests {
         let payload = decode(p[1]);
         assert_eq!(payload["aud"], "/admin/");
         assert_eq!(payload["iat"], 1_700_000_000u64);
-        assert_eq!(payload["exp"], 1_700_000_300u64, "Ghost caps the window at 5 minutes");
+        assert_eq!(
+            payload["exp"], 1_700_000_300u64,
+            "Ghost caps the window at 5 minutes"
+        );
     }
 
     #[test]
@@ -373,21 +371,19 @@ mod tests {
         let p = parts(&token);
         let secret = hex_bytes("0123456789abcdef0123456789abcdef").unwrap();
         let key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
-        let expected = URL_SAFE_NO_PAD.encode(
-            hmac::sign(&key, format!("{}.{}", p[0], p[1]).as_bytes()).as_ref(),
-        );
+        let expected = URL_SAFE_NO_PAD
+            .encode(hmac::sign(&key, format!("{}.{}", p[0], p[1]).as_bytes()).as_ref());
         assert_eq!(p[2], expected);
     }
 
     #[test]
     fn a_key_that_is_not_hex_id_colon_secret_is_refused() {
         assert!(admin_token("not-a-key", 0).is_none());
-        assert!(admin_token("abc:def", 0).is_none(), "secret must be long hex");
-        assert!(admin_token(
-            "0123abcd0123abcd0123abcd0123abcd:zzzz",
-            0
-        )
-        .is_none());
+        assert!(
+            admin_token("abc:def", 0).is_none(),
+            "secret must be long hex"
+        );
+        assert!(admin_token("0123abcd0123abcd0123abcd0123abcd:zzzz", 0).is_none());
     }
 
     #[test]
@@ -505,7 +501,7 @@ async fn admin_json(
         "PUT" => client().put(format!("{origin}{path}")),
         _ => client().post(format!("{origin}{path}")),
     }
-    .header("Authorization", ghost::auth_header(&token))
+    .header("Authorization", ghost::auth_header(token))
     .header("Accept", "application/json");
     if let Some(body) = body {
         request = request
@@ -539,7 +535,7 @@ async fn upload_image(
     let form = reqwest::multipart::Form::new().part("file", part);
     let resp = client()
         .post(format!("{origin}/ghost/api/admin/images/upload/"))
-        .header("Authorization", ghost::auth_header(&token))
+        .header("Authorization", ghost::auth_header(token))
         .multipart(form)
         .send()
         .await
@@ -558,7 +554,11 @@ async fn upload_image(
 /// Resolve the assigned author. Only a real Ghost author id is ever attached —
 /// creation is never attempted, and a failed lookup keeps Ghost's default byline
 /// while the article HTML keeps its byline and Person JSON-LD.
-async fn resolve_author(origin: &str, token: &str, wanted: &PublishAuthor) -> (String, String, bool) {
+async fn resolve_author(
+    origin: &str,
+    token: &str,
+    wanted: &PublishAuthor,
+) -> (String, String, bool) {
     let known = wanted.known_ghost_author_id.as_deref().unwrap_or("");
     if known.len() == 24 && known.chars().all(|c| c.is_ascii_hexdigit()) {
         let (status, _) = admin_get(origin, &format!("/ghost/api/admin/authors/{known}/"), token)
@@ -659,8 +659,7 @@ pub async fn publish(req: &PublishRequest) -> Value {
         // `src` arrives as `/media/<hash>.jpg`; the media store keys on the bare
         // filename.
         let src_name = src.as_deref().and_then(|s| s.rsplit('/').next());
-        let Some((name, mime, bytes)) =
-            crate::images::read_one(src_name, remote.as_deref()).await
+        let Some((name, mime, bytes)) = crate::images::read_one(src_name, remote.as_deref()).await
         else {
             continue;
         };
@@ -733,8 +732,14 @@ pub async fn publish(req: &PublishRequest) -> Value {
             put.insert("updated_at".into(), json!(updated_at));
         }
         let path = format!("/ghost/api/admin/posts/{post_id}/?source=html");
-        if let Ok((status, response)) =
-            admin_json(&origin, &path, &token, "PUT", Some(json!({ "posts": [put] }))).await
+        if let Ok((status, response)) = admin_json(
+            &origin,
+            &path,
+            &token,
+            "PUT",
+            Some(json!({ "posts": [put] })),
+        )
+        .await
         {
             if (200..300).contains(&status) {
                 let post = post_from(&response);
@@ -787,8 +792,8 @@ pub async fn publish(req: &PublishRequest) -> Value {
                 return json!({ "ok": false, "error": "Ghost rejected the post. The slug may already exist, and it was not created again." });
             }
             if status == 401 || status == 403 {
-                let reason = ghost_error_message(&response)
-                    .unwrap_or_else(|| format!("HTTP {status}"));
+                let reason =
+                    ghost_error_message(&response).unwrap_or_else(|| format!("HTTP {status}"));
                 return json!({
                     "ok": false,
                     "error": format!("Ghost rejected the push: {reason}")
@@ -881,7 +886,10 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
     };
     if status == 401 || status == 403 {
         let reason = ghost_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
-        return fail("FORBIDDEN", &format!("Ghost rejected the request: {reason}"));
+        return fail(
+            "FORBIDDEN",
+            &format!("Ghost rejected the request: {reason}"),
+        );
     }
     if status == 404 {
         return fail("NOT_FOUND", "That post is not on Ghost. Re-weave skipped.");
@@ -917,15 +925,24 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
         lock.insert("updated_at".into(), json!(remote_updated_at));
     }
     let path = format!("/ghost/api/admin/posts/{id}/?source=html");
-    let (status, body) = match admin_json(&origin, &path, &token, "PUT", Some(json!({ "posts": [lock] })))
-        .await
+    let (status, body) = match admin_json(
+        &origin,
+        &path,
+        &token,
+        "PUT",
+        Some(json!({ "posts": [lock] })),
+    )
+    .await
     {
         Ok(pair) => pair,
         Err(error) => return fail("ERROR", &error),
     };
     if status == 401 || status == 403 {
         let reason = ghost_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
-        return fail("FORBIDDEN", &format!("Ghost rejected the request: {reason}"));
+        return fail(
+            "FORBIDDEN",
+            &format!("Ghost rejected the request: {reason}"),
+        );
     }
     if status == 422 {
         return fail(

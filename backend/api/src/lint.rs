@@ -243,7 +243,9 @@ pub fn lint(text: &str) -> Report {
             .map(|m| {
                 let s = m.as_str().trim().to_string();
                 if s.chars().count() > 90 {
-                    s.chars().take(90).collect::<String>() + "…"
+                    let mut head: String = s.chars().take(90).collect();
+                    head.push('…');
+                    head
                 } else {
                     s
                 }

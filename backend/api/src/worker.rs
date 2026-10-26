@@ -1026,7 +1026,10 @@ mod tests {
             assert_eq!(st, "DONE", "stage {idx} ({key}) is not DONE");
         }
         assert_eq!(
-            stages.iter().map(|(_, k, _)| k.as_str()).collect::<Vec<_>>(),
+            stages
+                .iter()
+                .map(|(_, k, _)| k.as_str())
+                .collect::<Vec<_>>(),
             vec![
                 "blueprint",
                 "draft",
@@ -1094,12 +1097,11 @@ mod tests {
         let p = pool().await;
         enqueue(&p, 1).await;
         run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap();
-        let first_events: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM job_events WHERE kind = 'STAGE_DONE'",
-        )
-        .fetch_one(&p)
-        .await
-        .unwrap();
+        let first_events: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM job_events WHERE kind = 'STAGE_DONE'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
         assert_eq!(first_events, 6);
 
         // A worker that claims the already-finished job must do nothing.
@@ -1112,6 +1114,84 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(stage6_rows, 1, "stage 6 committed twice");
+    }
+
+    /// A Ghost that answers and REFUSES the push must hold the article, not fail
+    /// the stage. The body is sealed either way, so failing the run threw away a
+    /// fully written, fully billed article and left the row with no content for
+    /// any other delivery channel — the static build included.
+    #[tokio::test]
+    async fn a_refused_ghost_push_holds_the_article_instead_of_failing_it() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let p = pool().await;
+
+        // A stub Ghost: read the request, answer like Ghost does when the key
+        // is unknown. One connection is all this test needs.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stub = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let _ = sock.read(&mut buf).await.unwrap();
+            let body = r#"{"errors":[{"message":"Unknown Admin API Key"}]}"#;
+            let response = format!(
+                "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            sock.write_all(response.as_bytes()).await.unwrap();
+            sock.flush().await.unwrap();
+        });
+
+        // LIVE mode, a reachable origin, a well-formed Admin key. The test-only
+        // relaxation in `validate_ghost_url` admits this loopback origin; a
+        // release build still refuses it.
+        sqlx::query(
+            "UPDATE websites SET ghost_mode = 'LIVE', ghost_url = ?, ghost_admin_key_enc = ? WHERE id = 1",
+        )
+        .bind(format!("http://127.0.0.1:{port}"))
+        .bind("64f1b2c3d4e5f607:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+        .execute(&p)
+        .await
+        .unwrap();
+
+        enqueue(&p, 1).await;
+        run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap();
+        stub.await.unwrap();
+
+        let (status, content): (String, Option<String>) =
+            sqlx::query_as("SELECT status, content_json FROM articles WHERE site_id = 1")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "REVIEW_HELD",
+            "a refused push must hold the article, never discard it"
+        );
+        assert!(
+            content.is_some(),
+            "the sealed content must survive so another channel can ship it"
+        );
+
+        let job: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = 1")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(job, "COMPLETED", "a refused push must not fail the job");
+
+        let payload: String =
+            sqlx::query_scalar("SELECT payload_json FROM article_stages WHERE idx = 6")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert!(
+            payload.contains("ghost push failed"),
+            "the hold reason must be recorded on the stage: {payload}"
+        );
+        assert!(
+            payload.contains("Unknown Admin API Key"),
+            "Ghost's own message must reach the record, not a fixed sentence: {payload}"
+        );
     }
 
     #[test]
