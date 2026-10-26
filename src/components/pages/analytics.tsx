@@ -124,6 +124,30 @@ export function AnalyticsPage() {
       }
     : null;
   const pairs = useMemo(() => duplicatePairs(corpus), [corpus]);
+  // Worst first, by the same measure the article list already shows per row. An
+  // average tells you the site is fine; it does not tell you which page to fix.
+  const uniquenessRanked = useMemo(
+    () =>
+      corpus
+        .map((article) => ({
+          article,
+          score: uniquenessAgainst(
+            article.title,
+            article.keyword,
+            corpus
+              .filter((other) => other.id !== article.id)
+              .map((other) => ({
+                keyword: other.keyword,
+                title: other.title,
+                slug: other.slug,
+                sample: `${other.title}. ${other.sections.map((section) => section.heading).join(". ")}`,
+              })),
+            article.sections,
+          ),
+        }))
+        .sort((a, b) => a.score - b.score),
+    [corpus],
+  );
   const scored = corpus.map((article) => {
     const checks = bingChecks(article, corpus, site);
     return { article, checks, score: bingScore(checks) };
@@ -373,6 +397,31 @@ export function AnalyticsPage() {
           <div className="mt-4">
             <LinkField articles={linked} />
           </div>
+        </Card>
+        <Card className="p-4">
+          <h3 className="font-semibold tracking-tight">Uniqueness worklist</h3>
+          <p className="mt-1 text-sm text-muted">
+            Worst first, measured against every other article on this site. Under 70 percent, a page is mostly
+            re-saying what a sibling already said — that is the one to rewrite or merge, not the whole site.
+          </p>
+          <ul className="mt-3 space-y-2 text-sm">
+            {uniquenessRanked.slice(0, 8).map(({ article, score }) => (
+              <li key={article.id} className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
+                <Link
+                  to="/articles/$id"
+                  params={{ id: article.id }}
+                  className="min-w-0 flex-1 truncate hover:text-accent"
+                  title={article.title}
+                >
+                  {article.title}
+                </Link>
+                <span className={`font-mono text-xs ${score < 0.7 ? "text-danger" : "text-brass"}`}>
+                  {Math.round(score * 100)}%
+                </span>
+              </li>
+            ))}
+            {uniquenessRanked.length ? null : <li className="text-muted">No article to rank yet.</li>}
+          </ul>
         </Card>
         <Card className="p-4">
           <h3 className="font-semibold tracking-tight">Near-duplicates</h3>
