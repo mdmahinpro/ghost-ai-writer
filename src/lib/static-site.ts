@@ -348,9 +348,15 @@ ${bodyEnd}
     const heroSrc = hero ? articleImageSrc(hero, article.keyword || article.title) : "";
     const share = [
       `<meta property="og:type" content="article">`,
+      `<meta property="og:url" content="${esc(origin)}/post/${esc(article.slug)}/">`,
       `<meta property="og:title" content="${esc(article.metaTitle || article.title)}">`,
+      // The byline and the publish date are what a crawler needs to attribute the
+      // page; the keyword line below the H1 used to carry nothing at all.
       `<meta property="og:description" content="${esc(article.metaDescription || article.excerpt)}">`,
       `<meta name="theme-color" content="#f7f3ea">`,
+      article.publishedAt
+        ? `<meta property="article:published_time" content="${esc(new Date(article.publishedAt).toISOString())}">`
+        : "",
       heroSrc ? `<meta property="og:image" content="${esc(heroSrc)}">` : "",
       heroSrc ? `<meta name="twitter:card" content="summary_large_image">` : "",
     ]
@@ -380,7 +386,6 @@ ${slot("site_top")}
 <div class="post-layout">
 <article class="post">
   ${slot("article_top")}
-  <p class="meta">${esc(article.keyword)}</p>
   <h1>${esc(article.title)}</h1>
   ${authorBylineHtml(author, origin) ||
     authorNameBylineHtml(
@@ -389,7 +394,7 @@ ${slot("site_top")}
       article.authorBeat,
       article.authorCity,
     )}
-  ${heroSrc ? `<figure class="article-hero"><img src="${esc(heroSrc)}" alt="${esc(hero?.alt || article.title)}" width="1200" height="675" loading="eager" decoding="async" referrerpolicy="no-referrer"></figure>` : ""}
+  ${heroSrc ? `<figure class="article-hero"><img src="${esc(heroSrc)}" alt="${esc(hero?.alt || article.title)}" width="${hero?.width ?? 1200}" height="${hero?.height ?? 675}" loading="eager" decoding="async" referrerpolicy="no-referrer"></figure>` : ""}
   ${withInline}
   ${slot("article_bottom")}
 </article>
