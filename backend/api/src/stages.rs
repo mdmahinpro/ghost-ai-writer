@@ -1768,6 +1768,17 @@ pub(crate) async fn ghost_config(
             sites
                 .iter()
                 .find(|row| row.get("id").and_then(Value::as_str) == uid.as_deref())
+                // One site in the workspace's snapshot and no id match: that site
+                // is the one this connection belongs to. Without this the lookup
+                // fell through to "nothing saved" on a single-site workspace —
+                // the shape almost every user has — and the CMS push never ran.
+                .or_else(|| {
+                    if sites.len() == 1 {
+                        sites.first()
+                    } else {
+                        None
+                    }
+                })
         })
         .and_then(|row| row.get("ghost"));
     let Some(ghost) = ghost else {
