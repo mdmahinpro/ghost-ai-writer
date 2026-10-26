@@ -42,6 +42,7 @@ import {
 } from "./pipeline-api";
 import { mergeSnapshot } from "./server-pipeline-merge";
 import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow, publishSlots, queueCalendarItem, withSummaries } from "./operator";
+import { repairArticleSlugs } from "./slug-repair.ts";
 import { claimLease, heartbeat } from "./worker-api";
 import { embeddingProvider } from "./embed-key";
 import { attachAuthor, generateAuthorForTopic, normalizeAuthorProfile } from "./authors";
@@ -2136,14 +2137,26 @@ auditNow: () => {
     }),
     {
       name: "gaw-v2",
-      version: 14,
+      // 15: slug repair. A version bump is what makes an existing snapshot run
+      // through `migrate` at all, and that pass is where the -2 addresses are
+      // handed back to the pages that are live.
+      version: 15,
       skipHydration: true,
       storage: createJSONStorage(() => durableStorage),
-      migrate: (persisted, version) => migratePersistedSnapshot(persisted as Persisted, version),
+      migrate: (persisted, version) => withRepairedSlugs(migratePersistedSnapshot(persisted as Persisted, version)),
       partialize: (s) => snap(s),
     },
   ),
 );
+
+/**
+ * Rule 8 on any snapshot, wherever it came from: the live page owns the clean
+ * address. Both hydration paths run through here, so the studio and the server
+ * database cannot disagree about what a post is called.
+ */
+function withRepairedSlugs(snapshot: Persisted): Persisted {
+  return { ...snapshot, articles: repairArticleSlugs(snapshot.articles).articles };
+}
 
 /**
  * Normalizes any persisted snapshot (IndexedDB mirror or the server database)
@@ -2370,7 +2383,7 @@ function stampedConfig<T>(local: T, incoming: T | undefined): { value: T; change
 
 function ingestRemote(remoteRaw: unknown): void {
   if (!remoteRaw || typeof remoteRaw !== "object") return;
-  const migrated = migratePersistedSnapshot(structuredClone(remoteRaw) as Persisted);
+  const migrated = withRepairedSlugs(migratePersistedSnapshot(structuredClone(remoteRaw) as Persisted));
   // Work on a shallow copy so the live state object is never mutated in place.
   const cur = { ...useApp.getState() } as AppState;
   // Auto-reload fix: compute the merge FIRST and skip useApp.setState entirely
