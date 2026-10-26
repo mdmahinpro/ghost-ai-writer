@@ -271,6 +271,41 @@ export function ArticleDetail({ id }: { id: string }) {
   const [copied, setCopied] = useState<"html" | "md" | "">("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  // Editing text in the studio, and taking the file with you. Both act on the
+  // stored markdown, so what you save is exactly what the build and the CMS send.
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState("");
+
+  function startEdit() {
+    if (!article) return;
+    setDraftText(`# ${article.title}\n\n${article.markdown}`);
+    setEditing(true);
+    setNote("");
+  }
+
+  function saveEdit() {
+    if (!article) return;
+    const body = articleFromMarkdown(draftText);
+    const withImages = applyFetchedImages(body.html, body.markdown, article.images, article.keyword || article.title);
+    useApp.getState().patchArticle(article.id, {
+      ...body,
+      html: withImages.html,
+      markdown: withImages.markdown,
+    });
+    setEditing(false);
+    setNote("Saved. Your text is what the next build ships.");
+  }
+
+  function exportMarkdown() {
+    if (!article) return;
+    const blob = new Blob([`# ${article.title}\n\n${article.markdown}\n`], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${article.slug || "article"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
   // Rule 7: "Article missing" only counts after the ledger has hydrated.
   if (!hydrated) return <SkeletonRows rows={5} />;
   if (!article) return <Empty title="Article missing" body="It is not in this studio ledger." />;
@@ -594,6 +629,44 @@ export function ArticleDetail({ id }: { id: string }) {
               </li>
             ))}
           </ul>
+        </Card>
+        <Card className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-xl">Article text</h2>
+            <div className="flex items-center gap-1.5">
+              <Button variant="ghost" size="sm" onClick={exportMarkdown}>
+                Export .md
+              </Button>
+              {editing ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={saveEdit}>
+                    Save
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+                    Cancel
+                  </Button>
+                </>
+              ) : (
+                <Button variant="ghost" size="sm" onClick={startEdit}>
+                  Edit article
+                </Button>
+              )}
+            </div>
+          </div>
+          {editing ? (
+            <textarea
+              className={`${fieldClass} h-96 w-full font-mono text-xs`}
+              value={draftText}
+              onChange={(event) => setDraftText(event.target.value)}
+              aria-label="Article markdown"
+              spellCheck={false}
+            />
+          ) : (
+            <p className="text-xs leading-5 text-muted">
+              {article.markdown.trim().split(/\s+/).length} words of stored markdown. Edit it here and the next build ships your
+              text; export takes the file to Ghost's editor or anywhere else.
+            </p>
+          )}
         </Card>
         <Card className="p-4 text-sm">
           <h2 className="font-display text-xl">Ghost publish ledger</h2>
