@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { Card, PageIntro } from "@/components/ui";
+import { HELP_SECTIONS, findHelpTopic } from "@/lib/help-topics";
 
 const STAGES = [
   ["Intent & Blueprint", "Works out what the reader needs and plans the article."],
@@ -27,12 +29,18 @@ const PATH = [
 ];
 
 export function HelpPage() {
+  // One selected guide at a time, in place. A guide is a working note: the
+  // reader arrives with a problem, so the answer should not need a second page
+  // load to reach.
+  const [openSlug, setOpenSlug] = useState<string>("");
+  const open = findHelpTopic(openSlug);
+
   return (
     <div>
       <PageIntro
         eyebrow="Operator guide"
         title="First week, in order"
-        lede="This is the working path inside the studio. Ghost AI Writer does not invent rankings or bill you for AI — your own key is billed by your provider. It publishes to Ghost, or to the studio ledger when you are practising."
+        lede="This is the working path inside the studio, plus a guide for every area of it. Ghost AI Writer does not invent rankings or bill you for AI — your own key is billed by your provider. It publishes to Ghost, or to the studio ledger when you are practising."
       />
       <div className="grid gap-3">
         {PATH.map(([title, body, href], index) => (
@@ -47,6 +55,46 @@ export function HelpPage() {
           </Link>
         ))}
       </div>
+
+      <Card className="mt-4 p-5">
+        <h2 className="font-display text-2xl">Guides</h2>
+        <p className="mt-1 text-sm text-muted">
+          {HELP_SECTIONS.reduce((total, section) => total + section.topics.length, 0)} guides, grouped the way the work happens. Pick one and it opens here.
+        </p>
+        <div className="mt-4 grid gap-4">
+          {HELP_SECTIONS.map((section) => (
+            <section key={section.title}>
+              <h3 className="text-[13px] font-semibold text-fg">{section.title}</h3>
+              <ul className="mt-2 grid gap-1">
+                {section.topics.map((topic) => (
+                  <li key={topic.slug}>
+                    <button
+                      type="button"
+                      aria-expanded={openSlug === topic.slug}
+                      onClick={() => setOpenSlug(openSlug === topic.slug ? "" : topic.slug)}
+                      className="w-full rounded-md px-2 py-1.5 text-left text-sm text-muted transition-colors hover:bg-surface/70 hover:text-fg aria-expanded:text-fg"
+                    >
+                      <span className="font-medium">{topic.title}</span>
+                      <span className="ml-2 text-xs text-faint">{topic.lede}</span>
+                    </button>
+                    {openSlug === topic.slug ? (
+                      <div className="mb-2 ms-2 mt-1 border-s border-line ps-3">
+                        {topic.body.map((paragraph) => (
+                          <p key={paragraph.slice(0, 32)} className="mt-1 text-sm leading-6 text-muted">
+                            {paragraph}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+        {open ? null : <p className="mt-3 text-xs text-faint">Nothing open. The list above is complete without a selection.</p>}
+      </Card>
+
       <Card className="mt-4 p-5">
         <h2 className="font-display text-2xl">Six stages on every article</h2>
         <ol className="mt-3 space-y-2">
