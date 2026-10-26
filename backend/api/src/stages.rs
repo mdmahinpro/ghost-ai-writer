@@ -16,7 +16,6 @@ use crate::provider::{ChatRequest, Engine, EngineError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
-use std::collections::HashSet;
 
 pub const MAX_REPAIRS: usize = 1;
 
@@ -24,10 +23,12 @@ pub const MAX_REPAIRS: usize = 1;
 /// happens when the linter still finds High-severity slop after the first.
 pub const MAX_REVISION_PASSES: usize = 2;
 
-/// Every `mustCover` item must appear in the revised prose. A "must cover" that
-/// 20% of the article ignores is a missing section, not a rounding error — their
-/// own pipeline reports 0.99 coverage, so anything less is a rewrite.
-pub const MIN_COVERAGE: f64 = 1.0;
+/// The contract gate for stage 3, verbatim from the spec: `GOVERNOR §4` and
+/// `MASTER_SPEC.md` stage 3 both say "coverage ≥0.8 else one more pass".
+/// It was 1.0 — every must-cover item, no exceptions — which no real model output
+/// clears: one item phrased differently failed the stage after its single repair,
+/// and the run stalled there with every later stage left waiting.
+pub const MIN_COVERAGE: f64 = 0.8;
 
 /// How many of the six stages actually have implementations. All six now do
 /// (validation/release is the last), so a job that clears every stage is
@@ -210,53 +211,43 @@ pub struct Metadata {
     pub slug: Option<String>,
 }
 
-const STOPWORDS: [&str; 24] = [
-    "that", "this", "with", "from", "they", "what", "when", "your", "have", "will", "into",
-    "about", "there", "their", "which", "would", "should", "could", "after", "before", "then",
-    "than", "also", "just",
-];
-
-/// Crude stem so "decision"/"decisions" and "escalation"/"escalate" match. Without
-/// it a correct rewrite fails the coverage gate on morphology alone.
-fn stem(w: &str) -> String {
-    w.chars()
-        .take(if w.chars().count() > 6 {
-            6
-        } else {
-            w.chars().count()
-        })
-        .collect()
-}
-
-fn significant_tokens(s: &str) -> HashSet<String> {
-    s.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 4 && !STOPWORDS.contains(w))
-        .map(stem)
-        .collect()
-}
-
 /// Does the prose actually cover the blueprint? Their pipeline trusts the model's
 /// self-reported `coverage`; that number is recorded but never trusted, because a
 /// model that skimmed a section still reports 0.99.
+///
+/// Ported from `engine.ts::measureArticle`: an item counts as covered when at
+/// least `min(2, long words)` of its words longer than four characters appear
+/// anywhere in the prose, as substrings — so "payment" matches "payments" and an
+/// item phrased differently still counts. The old port demanded 60% of the item's
+/// *stemmed* tokens, which a paraphrase never satisfies: that measure plus a 1.0
+/// gate failed the stage on a single missed item.
 pub fn coverage_check(body: &str, must_cover: &[String]) -> (f64, Vec<String>) {
     if must_cover.is_empty() {
         return (1.0, Vec::new());
     }
-    let body_tokens = significant_tokens(body);
+    let text = body.to_lowercase();
     let mut missing = Vec::new();
     for item in must_cover {
-        let want = significant_tokens(item);
-        if want.is_empty() {
+        let wanted: Vec<String> = item
+            .to_lowercase()
+            .split_whitespace()
+            .filter(|w| w.chars().count() > 4)
+            .map(str::to_string)
+            .collect();
+        if wanted.is_empty() {
             // Nothing searchable in the item (e.g. "the first 72 hours"): fall
             // back to a substring test on the lowercased body.
-            if !body.to_lowercase().contains(&item.to_lowercase()) {
+            if !text.contains(&item.to_lowercase()) {
                 missing.push(item.clone());
             }
             continue;
         }
-        let hits = want.iter().filter(|w| body_tokens.contains(*w)).count();
-        if (hits as f64 / want.len() as f64) < 0.6 {
+        let need = wanted.len().min(2);
+        let hits = wanted
+            .iter()
+            .filter(|word| text.contains(word.as_str()))
+            .count();
+        if hits < need {
             missing.push(item.clone());
         }
     }
@@ -364,15 +355,17 @@ pub fn draft_prompt(keyword: &str, bp: &Blueprint) -> (String, String) {
 /// which makes at most one tolerant expansion call when the first draft lands
 /// under the floor (a failed call never fails the job).
 pub fn draft_prompt_kw(keyword: &str, bp: &Blueprint, expanded: bool) -> (String, String) {
-    let mut system = "You write the article body. You return only JSON.\n\
+    let mut system = format!(
+        "You write the article body. You return only JSON.\n\
         Rules that are enforced afterwards by a linter, so follow them:\n\
         - Vary sentence length. Cut filler openings ('In today's world', 'It is important to note').\n\
         - No 'not only X but Y', no 'it's not just X, it's Y'. Say the thing plainly.\n\
         - No em dash spam. No 'delve', 'leverage', 'robust', 'seamless', 'unlock', 'elevate'.\n\
+        - Do not start every paragraph the same way.\n\
         - Never invent statistics, studies, quotes, dates or names. If a claim needs proof \
-          you do not have, mark it OPINION or leave it out.\n\
-        - Do not start every paragraph the same way."
-        .to_string();
+          you do not have, mark it OPINION or leave it out.\n\n{}",
+        crate::lint::HUMANIZER_BRIEF
+    );
     let len_rule = format!(
         "- Length: the body must be at least {MIN_ARTICLE_WORDS} words, aim for {TARGET_ARTICLE_WORDS}. Give every section \
          several developed paragraphs of concrete, specific detail. Never pad with filler — \
@@ -423,14 +416,16 @@ pub fn revision_prompt(
     draft_json: &str,
     lint_note: &str,
 ) -> (String, String) {
-    let system = "You revise an article draft. You return only JSON.\n\
+    let system = format!(
+        "You revise an article draft. You return only JSON.\n\
         Fix, in this order: anything from the coverage contract that is missing, \
         then prose that a linter would flag, then repetition.\n\
         Keep every fact that was already there. Never add statistics, studies, quotes, \
         dates or names that were not in the draft. If a sentence cannot survive without \
         invented evidence, cut it.\n\
-        Do not add headings for the sake of it, do not pad, do not restate the intro."
-        .to_string();
+        Do not add headings for the sake of it, do not pad, do not restate the intro.\n\n{}",
+        crate::lint::HUMANIZER_BRIEF
+    );
     let covers = bp
         .must_cover
         .iter()
@@ -1222,9 +1217,142 @@ pub async fn run_metadata(
     Ok(outcome)
 }
 
+/// One internal link the stage-5 model chose. The anchor is a phrase already in
+/// the article (the server wraps it), the slug comes from the site's inventory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChosenLink {
+    pub anchor: String,
+    pub slug: String,
+}
+
+/// One image the stage-5 model asked for: a photo-search phrase, the alt text the
+/// reader should see, and whether it is the featured image or a section image.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichmentImageQuery {
+    pub query: String,
+    pub alt: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Enrichment {
+    #[serde(default)]
+    pub links: Vec<ChosenLink>,
+    #[serde(default, rename = "imageQueries")]
+    pub image_queries: Vec<EnrichmentImageQuery>,
+    /// Links the model proposed that were unusable (slug not in the inventory, or
+    /// an anchor that is not in the prose). Kept as a number so the payload can
+    /// show the work without a second lookup.
+    #[serde(default)]
+    pub dropped_links: usize,
+}
+
+/// The pages this site may link to: its own rows, never a slug the model made up.
+/// Published first — the producer's rule is "published inventory only" — and
+/// when nothing is published yet, every sibling that already has a slug, which is
+/// what stage 6 links against anyway.
+async fn site_inventory(
+    pool: &SqlitePool,
+    site_id: i64,
+    article_id: i64,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    let mut rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT title, slug FROM articles \
+         WHERE site_id = ? AND id != ? AND status = 'PUBLISHED' AND slug != '' \
+         ORDER BY id DESC",
+    )
+    .bind(site_id)
+    .bind(article_id)
+    .fetch_all(pool)
+    .await?;
+    if rows.is_empty() {
+        rows = sqlx::query_as(
+            "SELECT title, slug FROM articles \
+             WHERE site_id = ? AND id != ? AND slug != '' ORDER BY id DESC",
+        )
+        .bind(site_id)
+        .bind(article_id)
+        .fetch_all(pool)
+        .await?;
+    }
+    Ok(rows)
+}
+
+/// Stage 5's prompt, ported from `buildEnrichmentPrompt` in `stage-contracts.ts`.
+fn enrichment_prompt(
+    keyword: &str,
+    title: &str,
+    inventory: &[(String, String)],
+    body: &str,
+) -> (String, String) {
+    let pages = if inventory.is_empty() {
+        "none yet".to_string()
+    } else {
+        inventory
+            .iter()
+            .take(60)
+            .map(|(t, s)| format!("{t} — {s}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    let system = [
+        "You are Stage 5 (Site Enrichment) of a US editorial pipeline. Return valid JSON only — no markdown fences.",
+        "Return JSON matching {\"links\":[{\"anchor\":string,\"slug\":string}],\"imageQueries\":[{\"query\":string,\"alt\":string,\"role\":\"featured\"|\"section\"}]}.",
+        "links: 2-6 internal links. The slug MUST come from the published-pages list — never invent a slug. The anchor is the exact phrase already present in the article that the link should wrap.",
+        "imageQueries: one featured query plus one per major section, at most 4 total. Each query is a short photo-search phrase and its alt text is a plain description of the image the reader should see.",
+    ]
+    .join(" ");
+    let user = [
+        format!("Working title: {title}"),
+        format!("Keyword: {keyword}"),
+        format!("Published pages to link to (title — slug): {pages}"),
+        String::new(),
+        "Final article markdown:".to_string(),
+        body.chars().take(12_000).collect::<String>(),
+    ]
+    .join("\n");
+    (system, user)
+}
+
+/// Unusable links are *dropped and counted*, never a repair loop and never a
+/// failed stage: a link the model could not anchor to real prose is a missing
+/// nicety, and failing the stage for it would stall every later stage — the exact
+/// failure mode the coverage gate had.
+fn validate_enrichment(
+    v: &Value,
+    inventory: &[(String, String)],
+    body: &str,
+) -> Result<Enrichment, Vec<String>> {
+    let mut e: Enrichment = serde_json::from_value(v.clone())
+        .map_err(|err| vec![format!("enrichment shape: {err}")])?;
+    let prose = body.to_lowercase();
+    let proposed = e.links.len();
+    e.links.retain(|l| {
+        let anchor = l.anchor.trim();
+        let ok_anchor = !anchor.is_empty()
+            && anchor.chars().count() <= 80
+            && prose.contains(&anchor.to_lowercase());
+        let ok_slug = inventory.iter().any(|(_, slug)| slug == &l.slug);
+        ok_anchor && ok_slug
+    });
+    e.links.truncate(6);
+    e.dropped_links = proposed - e.links.len();
+    let mut kept = Vec::new();
+    for q in e.image_queries.into_iter().take(4) {
+        let ok_role = matches!(q.role.as_str(), "featured" | "section");
+        let ok_query = (2..=80).contains(&q.query.trim().chars().count());
+        let ok_alt = (2..=120).contains(&q.alt.trim().chars().count());
+        if ok_role && ok_query && ok_alt {
+            kept.push(q);
+        }
+    }
+    e.image_queries = kept;
+    Ok(e)
+}
+
 /// Stage 5 — Site Enrichment: the featured image, chosen with their Bing
-/// thumbnail technique and gated by vision. Internal links are still to come,
-/// and the payload says so rather than pretending the stage is complete.
+/// thumbnail technique and gated by vision, plus the model pass that picks the
+/// internal links and the image queries (GOVERNOR §4: "fast + vision").
 #[expect(
     clippy::too_many_arguments,
     reason = "a stage takes the pipeline's wiring explicitly: pool, engine, ids and clock are independent values a struct would only re-wrap"
@@ -1262,18 +1390,41 @@ pub async fn run_enrichment(
         .map(|l| l.trim_start_matches('#').trim().to_string());
     let scene = crate::image::scene_query(title, keyword, first_heading.as_deref());
 
+    // Stage 5's own model pass (GOVERNOR §4: "fast + vision"). Before this the
+    // stage spent nothing at all — the ledger showed a free step where the
+    // reference pipeline spends — and the internal links were never chosen: the
+    // payload said SKIPPED_NO_SITE_INDEX and stage 6 fell back to anchors built
+    // out of titles.
+    let inventory = site_inventory(pool, site_id, article_id).await?;
+    let (system, user) = enrichment_prompt(keyword, title, &inventory, body);
+    let (enrich, spend, _attempts) =
+        call_validated(pool, engine, "enrichment", &system, &user, |v| {
+            validate_enrichment(v, &inventory, body)
+        })
+        .await?;
+
+    // The featured query the model wrote for this article beats the derived
+    // scene: it is a photo-search phrase, not a keyword splice.
+    let featured_scene = enrich
+        .image_queries
+        .iter()
+        .find(|q| q.role == "featured")
+        .map(|q| q.query.clone())
+        .unwrap_or_else(|| scene.clone());
+
     // A vision provider is optional: without one the image is accepted
     // unchecked and the code says SKIPPED_VISION_UNAVAILABLE.
     let vision = crate::provider::load_vision(pool, workspace_id)
         .await
         .ok()
         .flatten();
-    let decision = crate::image::pick(vision.as_ref(), &scene, crate::image::FEATURED).await;
+    let decision =
+        crate::image::pick(vision.as_ref(), &featured_scene, crate::image::FEATURED).await;
 
     let outcome = StageOutcome {
-        tokens_in: decision.tokens_in,
-        tokens_out: decision.tokens_out,
-        cost_usd: decision.cost_usd,
+        tokens_in: spend.tokens_in + decision.tokens_in,
+        tokens_out: spend.tokens_out + decision.tokens_out,
+        cost_usd: spend.cost_usd + decision.cost_usd,
         repairs: 0,
     };
     record_stage(
@@ -1290,11 +1441,14 @@ pub async fn run_enrichment(
         },
         &json!({
             "image": crate::image::decision_json(&decision),
-            "scene_query": scene,
+            "scene_query": featured_scene,
             "links": {
-                "code": "SKIPPED_NO_SITE_INDEX",
-                "reason": "internal-link insert/verify is the next slice"
+                "code": if enrich.links.is_empty() { "NONE_SELECTED" } else { "SELECTED" },
+                "items": enrich.links,
+                "dropped": enrich.dropped_links,
+                "inventory_size": inventory.len(),
             },
+            "image_queries": enrich.image_queries,
             "provider": engine.provider(),
             "model": engine.model_id(),
         }),
@@ -1772,12 +1926,51 @@ pub async fn run_validation(
     }
     chosen.truncate(links_max);
 
-    // The anchor phrase is derived from the target title; the stored edge keeps
-    // both the phrase and the target's own title.
-    let link_targets: Vec<(String, String, String)> = chosen
-        .iter()
-        .map(|(_, t, s)| (crate::gate::anchor_phrase(t), s.clone(), t.clone()))
+    // The links stage 5's model picked, re-checked against the final prose: the
+    // anchor has to still be there after the last edit, and a stale one is
+    // dropped rather than inserted blindly.
+    let final_prose = markdown.to_lowercase();
+    let model_links: Vec<ChosenLink> = stage_payload(pool, job_id, 5)
+        .await?
+        .and_then(|p| p.get("links").and_then(|l| l.get("items")).cloned())
+        .and_then(|v| serde_json::from_value::<Vec<ChosenLink>>(v).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|l| final_prose.contains(&l.anchor.to_lowercase()))
         .collect();
+
+    // The model's phrase wins when there is one — it is prose from this article,
+    // not a phrase assembled out of a title. What it did not cover (or could not
+    // anchor) is filled from the deterministic ranking above.
+    let title_of = |slug: &str| -> Option<String> {
+        if let Some((_, t, _)) = chosen.iter().find(|(_, _, s)| s == slug) {
+            return Some(t.clone());
+        }
+        corpus_rows
+            .iter()
+            .find(|(_, _, _, s)| s == slug)
+            .map(|(_, t, _, _)| t.clone())
+    };
+    let mut link_targets: Vec<(String, String, String)> = Vec::new();
+    for link in model_links {
+        if link_targets.len() >= links_max {
+            break;
+        }
+        if link_targets.iter().any(|(_, slug, _)| slug == &link.slug) {
+            continue;
+        }
+        let title = title_of(&link.slug).unwrap_or_else(|| link.slug.clone());
+        link_targets.push((link.anchor, link.slug, title));
+    }
+    for (_, t, s) in &chosen {
+        if link_targets.len() >= links_max {
+            break;
+        }
+        if link_targets.iter().any(|(_, slug, _)| slug == s) {
+            continue;
+        }
+        link_targets.push((crate::gate::anchor_phrase(t), s.clone(), t.clone()));
+    }
 
     let mut linked_count = 0i64;
     for (anchor, slug, _title) in &link_targets {

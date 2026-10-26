@@ -32,7 +32,6 @@ export function CreatePage() {
   const [publishMode, setPublishMode] = useState<"default" | "draft" | "live">("draft");
   const [modelKeyId, setModelKeyId] = useState("default");
   const [variants, setVariants] = useState(false);
-  const [bulletproof, setBulletproof] = useState(false);
   const [research, setResearch] = useState("");
   const [niche, setNiche] = useState(site.nicheTag.replace(/-/g, " "));
   const [ideaCount, setIdeaCount] = useState(8);
@@ -104,7 +103,10 @@ export function CreatePage() {
                       publishMode,
                       modelKeyId,
                       allowVariants: variants,
-                      bulletproof,
+                      // Humanization is not optional in the pipeline: the draft
+                      // and revision prompts both carry the linter's tell list,
+                      // so every run is written humanized. There is no switch.
+                      bulletproof: true,
                       researchUrls: research.split("\n").map((line) => line.trim()).filter(Boolean),
                     });
                     if (runId) navigate({ to: "/runs/$id", params: { id: runId } });
@@ -152,13 +154,11 @@ export function CreatePage() {
                 <span className="text-muted">Leave this off. Exact matches are refused unless you deliberately want a second angle.</span>
               </span>
             </label>
-            <label className="flex items-start gap-3 text-sm">
-              <input type="checkbox" className="mt-1 size-4 accent-brass" checked={bulletproof} onChange={(e) => setBulletproof(e.target.checked)} />
-              <span>
-                <span className="block text-fg">Bulletproof humanization</span>
-                <span className="text-muted">After the draft, the native Blader humanizer rewrites it (deterministic pass, plus a two-pass surgical audit + rewrite on the AI Keys pool). The run still passes the duplicate gate.</span>
-              </span>
-            </label>
+            <p className="text-sm text-muted">
+              <span className="block text-fg">Humanization is automatic</span>
+              Every run is written against the Blader humanizer's tell list — the draft and the revision both carry it, and
+              the publish gate lints for the same patterns. There is no switch to turn it off.
+            </p>
             <Field label="Research URLs" hint="Optional. One https URL per line. When the web-search switch is Tavily, Firecrawl, or Auto-Fallback (Settings → AI Keys & Usage), these pages are fetched before the model writes.">
               <textarea className={fieldClass} rows={3} value={research} onChange={(e) => setResearch(e.target.value)} placeholder="https://example.com/source" />
             </Field>

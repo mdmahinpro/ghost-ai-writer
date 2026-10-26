@@ -445,6 +445,34 @@ impl MockEngine {
                     }
                 })
             }
+            "enrichment" => {
+                // The link has to name a slug from the inventory the prompt
+                // listed, so the fixture reads it back out of the prompt. The
+                // anchor is prose that is really in the mock revision. The second
+                // item is unusable on both counts — that is the drop path.
+                let page = req
+                    .user
+                    .split("link to (title — slug): ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(';').next())
+                    .and_then(|first| first.rsplit('—').next())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty() && s != "none yet");
+                let links = match page {
+                    Some(slug) => serde_json::json!([
+                        {"anchor": "department funding bridge", "slug": slug},
+                        {"anchor": "a phrase that is not in the article", "slug": "not-in-inventory"}
+                    ]),
+                    None => serde_json::json!([]),
+                };
+                serde_json::json!({
+                    "links": links,
+                    "imageQueries": [
+                        {"query": "graduate stipend paperwork on a desk", "alt": "funding paperwork and a laptop on a desk", "role": "featured"},
+                        {"query": "university financial aid office counter", "alt": "a financial aid office service counter", "role": "section"}
+                    ]
+                })
+            }
             "vision" => serde_json::json!({
                 "verdict": "RELEVANT",
                 "confidence": 0.9,

@@ -48,6 +48,30 @@ struct Rule {
     threshold: usize,
 }
 
+/// The AI tells the publish linter refuses, in the words of the rules above.
+///
+/// Every draft and every revision carries this, with no flag to turn it off:
+/// humanized prose is the house style, and a revision that writes past these
+/// tells stops bouncing off the gate. Each line names the rule id the linter
+/// reports, so the prompt and the gate cannot drift apart.
+pub const HUMANIZER_BRIEF: &str = "\
+Humanized prose is the house style. The publish gate lints for these tells and sends \
+the draft back when it finds them, so write past them from the start:\n\
+- not_x_but_y: 'not just X, it's Y'. State the thing once.\n\
+- one_line_closer: 'let that sink in', 'that's the real win', 'the part that matters'.\n\
+- deep_saying: 'at its core', 'what really matters', 'the real question is', 'fundamentally,'.\n\
+- staged_runup: 'let's dive in', 'here's what you need to know', 'let me be clear', 'without further ado'.\n\
+- ai_vocab: delve, underscore, testament, tapestry, vibrant, pivotal, intricate, showcase, garner, foster, enhance, 'landscape of' — three uses already fail.\n\
+- copula_avoidance: 'serves as', 'stands as', 'functions as', 'boasts', 'nestled in', 'represents a'.\n\
+- filler_closer: 'in conclusion', 'it is important to note', 'at the end of the day', 'when it comes to'.\n\
+- opener_tic: opening a paragraph with 'So,', 'Look,', 'Honestly,', 'Notably,', 'Ultimately,'.\n\
+- rhetorical_question: 'ever wondered', 'think about it', 'what makes a …?'.\n\
+- reassurance_kicker: 'and that's okay', 'you're not alone', 'it's completely normal'.\n\
+- persuasive_trope: 'a tempting approach', 'some might argue', 'it's tempting to'.\n\
+- hyphen_pair: third-party, cross-functional, data-driven, real-time, end-to-end, long-term — four uses already fail.\n\
+- Formatting tells: em dashes and bold runs in every paragraph, emoji, curly quotes, Title Case headings, one-sentence sections.\n\
+Vary sentence length. Concretes beat abstractions. No throat-clearing intro and no summary paragraph at the end.";
+
 fn rules() -> &'static [Rule] {
     static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
     RULES.get_or_init(|| {

@@ -1213,6 +1213,72 @@ mod tests {
         assert_eq!(post_id.as_deref(), Some("gh_1"));
     }
 
+    /// Stage 5 must spend, and the links its model picks must reach the article.
+    ///
+    /// The stage used to be free: no model call at all, a payload that said
+    /// SKIPPED_NO_SITE_INDEX, and stage 6 fell back to anchors assembled from
+    /// titles — the operator saw a step that never consumed a token.
+    #[tokio::test]
+    async fn site_enrichment_spends_and_its_links_land_in_the_article() {
+        let p = pool().await;
+        // An earlier, finished job that left a published page behind — the page the
+        // model is allowed to link to. Its title is deliberately unrelated to the
+        // article's, so the L2 gate has nothing to refuse. It carries its own job
+        // so the run under test cannot adopt the row as its own article.
+        sqlx::query(
+            "INSERT INTO jobs (workspace_id, site_id, website_id, keyword, stage, status, created_at) \
+             VALUES (1, 1, 1, 'campus parking', 'validation', 'COMPLETED', '2025-12-01T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO articles (job_id, site_id, title, slug, status, created_at) \
+             SELECT MAX(id), site_id, 'Campus Parking Rules That Matter', \
+             'campus-parking-rules', 'PUBLISHED', '2025-12-02T00:00:00Z' FROM jobs",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        enqueue(&p, 1).await;
+        let seeded: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM articles WHERE slug = 'campus-parking-rules'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(seeded, 1, "the sibling row must be visible to the worker");
+
+        run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap();
+
+        let stage5: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(tokens_in + tokens_out), 0) FROM usage_ledger \
+             WHERE stage = 'enrichment'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert!(stage5 > 0, "stage 5 must not be a free step");
+
+        let (slug, content): (String, String) = sqlx::query_as(
+            "SELECT slug, content_json FROM articles WHERE slug != 'campus-parking-rules'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert!(!slug.is_empty(), "the article should have finalized");
+        assert!(
+            content.contains("campus-parking-rules"),
+            "the model's link must be in the final markdown"
+        );
+        let edges: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM article_links WHERE target_slug = 'campus-parking-rules'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(edges, 1, "the chosen link must be recorded as an edge");
+    }
+
     /// A Ghost that answers and REFUSES the push must hold the article, not fail
     /// the stage. The body is sealed either way, so failing the run threw away a
     /// fully written, fully billed article and left the row with no content for
