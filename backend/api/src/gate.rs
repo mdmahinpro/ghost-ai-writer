@@ -16,6 +16,10 @@ use std::collections::HashMap;
 
 pub const L2: f64 = 0.85;
 pub const L3: f64 = 0.88;
+
+/// Two keywords this close are the same ask: the corpus already owns that
+/// article, and a second run would land on `…-2` with a sibling title.
+pub const SAME_KEYWORD: f64 = 0.9;
 pub const EMBED_DIM: usize = 48;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +167,22 @@ pub fn gate_text(title: &str, keyword: &str, corpus: &[CorpusItem]) -> GateResul
                 layer: "L1",
                 max_similarity: 1.0,
             };
+        }
+        // The same ask, worded differently — "…transition from academia…" against
+        // "…transition academia…". Exact normalization misses those, and they are
+        // what produced a second article on one keyword: the twins whose slug
+        // carries the -2 suffix and whose titles read like siblings.
+        let theirs = normalize_keyword(&item.keyword);
+        if !theirs.is_empty() && !norm.is_empty() {
+            let keyword_sim = lexical_similarity(&norm, &theirs);
+            if keyword_sim >= SAME_KEYWORD {
+                return GateResult {
+                    ok: false,
+                    reason: Some(format!("DUPLICATE REFUSED (L1-keyword {keyword_sim:.2})")),
+                    layer: "L1",
+                    max_similarity: keyword_sim,
+                };
+            }
         }
     }
     let mut max_sim: f64 = 0.0;
@@ -338,6 +358,43 @@ mod tests {
         let g = gate_text("Totally Different Title", "Stipend Cut Guidance!", &corpus);
         assert!(matches!(g.layer, "L1"));
         assert!(!g.ok);
+    }
+
+    #[test]
+    fn a_reworded_keyword_is_the_same_article() {
+        // The shape that produced the -2 twins on the live site: the same ask,
+        // entered again with a word added or dropped.
+        let corpus = [CorpusItem {
+            title: "From Academia to Industry R&D".into(),
+            keyword: "phd career transition from academia to industry r&d".into(),
+            slug: "phd-career-transition-academia-to-industry-rd".into(),
+        }];
+        let g = gate_text(
+            "Leaving Academia For Industry",
+            "PhD career transition academia to industry R&D",
+            &corpus,
+        );
+        assert_eq!(g.layer, "L1");
+        assert!(!g.ok, "a reworded keyword must be refused: {g:?}");
+        assert!(g.max_similarity >= SAME_KEYWORD);
+    }
+
+    #[test]
+    fn a_different_ask_in_the_same_niche_still_passes_l1() {
+        let corpus = [CorpusItem {
+            title: "From Academia to Industry R&D".into(),
+            keyword: "phd career transition academia to industry r&d".into(),
+            slug: "phd-career-transition-academia-to-industry-rd".into(),
+        }];
+        let g = gate_text(
+            "How To Respond To Peer Review Comments",
+            "how to respond to peer review comments",
+            &corpus,
+        );
+        assert_ne!(
+            g.layer, "L1",
+            "an unrelated keyword is not a duplicate: {g:?}"
+        );
     }
 
     #[test]
