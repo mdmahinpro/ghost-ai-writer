@@ -1788,6 +1788,11 @@ pub async fn run_validation(
     let mut ghost_post_url: Option<String> = None;
     // Both branches below assign the real value; there is no default.
     let mut push_mode: Option<&str> = None;
+    // Why a push did not happen. A finished article is never thrown away
+    // because the CMS refused it: the body is sealed either way, the static
+    // delivery can still ship it, and the reason has to reach the operator
+    // instead of a dead run with a wasted model bill.
+    let mut push_error: Option<String> = None;
     let article_status: String;
     if ghost_mode == "LIVE" {
         match crate::ghost::push_post(
@@ -1814,10 +1819,9 @@ pub async fn run_validation(
                 push_mode = Some("hold");
             }
             Err(e) => {
-                return Err(StageError::Validation(
-                    "validation".into(),
-                    vec![format!("ghost push failed: {e}")],
-                ));
+                article_status = "REVIEW_HELD".to_string();
+                push_mode = Some("hold");
+                push_error = Some(format!("ghost push failed: {e}"));
             }
         }
     } else {
@@ -1833,10 +1837,7 @@ pub async fn run_validation(
                     }
                     Err(crate::ghost::PushError::Unconfigured) => {}
                     Err(e) => {
-                        return Err(StageError::Validation(
-                            "validation".into(),
-                            vec![format!("ghost draft push failed: {e}")],
-                        ));
+                        push_error = Some(format!("ghost draft push failed: {e}"));
                     }
                 }
             }
@@ -1922,6 +1923,7 @@ pub async fn run_validation(
         &json!({
             "result": article_status,
             "push": push_mode,
+            "pushError": push_error,
             "ghost_post_id": ghost_post_id,
             "ghost_post_url": ghost_post_url,
             "uniqueness": uniqueness,

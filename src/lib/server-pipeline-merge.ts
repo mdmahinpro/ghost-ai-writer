@@ -82,8 +82,22 @@ function runStatus(raw: string): RunStatus {
   }
 }
 
-function articleStatus(raw: string): "draft" | "published" {
-  return raw.toUpperCase() === "PUBLISHED" ? "published" : "draft";
+/**
+ * A row is publishable once its content is finished.
+ *
+ * `PUBLISHED` means the pipeline pushed it to Ghost. `REVIEW_HELD` and the
+ * sandbox `DRAFT` are the pipeline's own "words written, push not made" states:
+ * no Ghost wired, or a push the CMS refused. The static build is a delivery
+ * channel of its own, and it is the operator who presses Build, so sealed
+ * content is publishable — refusing it is how finished articles became
+ * impossible to ship anywhere. A row still mid-pipeline has no `contentJson`
+ * yet, and `REFUSED` never publishes whatever it holds.
+ */
+function articleStatus(raw: string, hasContent: boolean): "draft" | "published" {
+  const status = raw.toUpperCase();
+  if (status === "PUBLISHED") return "published";
+  if (status === "REFUSED" || status === "DELETED") return "draft";
+  return hasContent ? "published" : "draft";
 }
 
 /**
@@ -213,7 +227,7 @@ export function toUiArticle(article: ServerArticle, siteUid: string, links: Serv
     sections: sectionsFromMarkdown(markdown),
     metaTitle: meta?.metaTitle,
     metaDescription: meta?.metaDescription,
-    status: articleStatus(article.status),
+    status: articleStatus(article.status, markdown.trim().length > 0),
     engine: article.engine === "fallback" ? "fallback" : "llm",
     words: wordCount(markdown),
     uniqueness: article.uniquenessScore ?? 0,

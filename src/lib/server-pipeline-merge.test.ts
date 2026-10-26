@@ -67,6 +67,23 @@ function serverArticle(over: Record<string, unknown> = {}) {
   } as never;
 }
 
+test("finished content is publishable even when Ghost never took the push", () => {
+  // REVIEW_HELD is the pipeline's "words written, push not made" state: a LIVE
+  // site with no Ghost wired, or a push the CMS refused. The static build is a
+  // delivery channel of its own, so a finished row must reach it — refusing
+  // every unwritten push is how 21 finished articles stayed unpublished.
+  assert.equal(toUiArticle(serverArticle({ status: "REVIEW_HELD" }), SITE).status, "published");
+  // A sandbox run stores the same sealed row as DRAFT.
+  assert.equal(toUiArticle(serverArticle({ status: "DRAFT" }), SITE).status, "published");
+  // Still mid-pipeline: no content sealed yet, so there is nothing to publish.
+  assert.equal(toUiArticle(serverArticle({ status: "REVIEW_HELD", contentJson: null }), SITE).status, "draft");
+  assert.equal(toUiArticle(serverArticle({ status: "DRAFTING", contentJson: null }), SITE).status, "draft");
+  // A refused page never publishes whatever it holds.
+  assert.equal(toUiArticle(serverArticle({ status: "REFUSED" }), SITE).status, "draft");
+  // And a real push stays published.
+  assert.equal(toUiArticle(serverArticle({ status: "PUBLISHED" }), SITE).status, "published");
+});
+
 test("a server article keeps its byline and its own outbound links", () => {
   const article = serverArticle({
     id: 4,

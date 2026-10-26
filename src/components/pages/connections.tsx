@@ -18,6 +18,7 @@ export function ConnectionsPage() {
   const failGhost = useApp((s) => s.failGhost);
   const beginStudioSync = useApp((s) => s.beginStudioSync);
   const applyLiveInventory = useApp((s) => s.applyLiveInventory);
+  const fallbackInventory = useApp((s) => s.fallbackInventory);
   const auditNow = useApp((s) => s.auditNow);
   const toggleProposal = useApp((s) => s.toggleProposal);
   const applyProposals = useApp((s) => s.applyProposals);
@@ -96,15 +97,21 @@ export function ConnectionsPage() {
       setBusy(true);
       try {
         const result = await syncGhostPosts({ data: { url: origin, adminKey: key } });
-        if (!result.ok) failGhost(result.error);
-        else {
+        if (!result.ok) {
+          // Keep the corpus usable: a sync that cannot reach Ghost must not
+          // leave every run refused behind an EMPTY corpus.
+          failGhost(result.error);
+          fallbackInventory(result.error);
+        } else {
           applyLiveInventory(
             result.posts.map((post) => ({ ...post, status: post.status === "PUBLISHED" ? ("PUBLISHED" as const) : ("DRAFT" as const) })),
             result.truncated ? `Ghost import stopped at the page cap · ${result.posts.length} posts. There are more pages on the site.` : undefined,
           );
         }
       } catch (error) {
-        failGhost(error instanceof Error ? error.message : "Sync failed.");
+        const message = error instanceof Error ? error.message : "Sync failed.";
+        failGhost(message);
+        fallbackInventory(message);
       } finally {
         setAdminKey("");
         setBusy(false);

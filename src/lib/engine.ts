@@ -238,7 +238,18 @@ function draftSample(title: string, keyword: string, sections?: { heading: strin
   return `${title}. ${heads}. ${lead || keyword}`;
 }
 
-export function corpusFor(data: Persisted, siteId: string, extra: CorpusItem[] = []): CorpusItem[] {
+/**
+ * Everything a gate must consider "already written" for one site.
+ *
+ * `excludePlanId` drops a plan's own pillar and clusters from the corpus. A
+ * plan is gated cluster by cluster as it is queued, and the plan's entries are
+ * part of the corpus, so without this every cluster is matched against ITSELF:
+ * `normalizeKeyword(cluster.title) === normalizeKeyword(cluster.title)` is an
+ * L1-exact hit, so every cluster of every plan was refused as a duplicate and
+ * no topic plan could ever queue. In-plan repeats are still caught — each
+ * accepted cluster goes into `extra` before the next one is gated.
+ */
+export function corpusFor(data: Persisted, siteId: string, extra: CorpusItem[] = [], opts: { excludePlanId?: string } = {}): CorpusItem[] {
   const articles = data.articles
     .filter((a) => a.siteId === siteId)
     .map((a) => ({ keyword: a.keyword, title: a.title, slug: a.slug }));
@@ -252,7 +263,7 @@ export function corpusFor(data: Persisted, siteId: string, extra: CorpusItem[] =
     permalink: post.slug,
   }));
   const plans = data.plans
-    .filter((plan) => plan.siteId === siteId && (plan.status === "review" || plan.status === "queued" || plan.status === "running"))
+    .filter((plan) => plan.id !== opts.excludePlanId && plan.siteId === siteId && (plan.status === "review" || plan.status === "queued" || plan.status === "running"))
     .flatMap((plan) => [
       { keyword: normalizeKeyword(plan.pillarTitle), title: plan.pillarTitle, slug: slugify(plan.pillarTitle) },
       ...plan.clusters.filter((cluster) => !cluster.excluded).map((cluster) => ({ keyword: normalizeKeyword(cluster.title), title: cluster.title, slug: slugify(cluster.title) })),
@@ -908,6 +919,27 @@ export function inventoryFromArticles(articles: Article[], siteId: string, now: 
     }));
 }
 
+/**
+ * The site's Ghost state after a sync that could not read Ghost.
+ *
+ * A failed read used to leave the corpus EMPTY — or stuck in SYNCING forever —
+ * and the run gates refuse everything behind it, so there was no way out of the
+ * UI at all. The studio's own articles are a usable inventory, so the corpus
+ * completes, the source says Ghost was not read, and the work continues.
+ */
+export function localInventoryGhost(ghost: Site["ghost"], articles: Article[], siteId: string, now: number): Site["ghost"] {
+  return {
+    ...ghost,
+    corpus: "COMPLETE",
+    syncReadyAt: undefined,
+    lastSyncAt: now,
+    inventory: inventoryFromArticles(articles, siteId, now),
+    inventorySource: "local-demo",
+    version: ghost.version === "studio-ledger" || !ghost.version ? "local-demo" : ghost.version,
+    keyHint: "local demo · Ghost was not read",
+  };
+}
+
 function makeJob(partial: Omit<Job, "stages" | "stageIndex" | "shots" | "tokens" | "costUsd" | "status"> & { status?: Job["status"] }): Job {
   return {
     ...partial,
@@ -938,7 +970,9 @@ export async function submitKeywords(
 ): Promise<{ data: Persisted; error?: string; runId?: string }> {
   const site = data.sites.find((s) => s.id === input.siteId);
   if (!site) return { data, error: "No website selected." };
-  if (site.ghost.status !== "connected") return { data, error: "Ghost is not connected. Connect the studio ledger or a live site first." };
+  // The corpus is the real dependency: a run needs something to check keywords
+  // against. A Ghost that is not connected only means the publish stage will
+  // hold the article instead of pushing it, so it must not block the writing.
   if (site.ghost.corpus === "EMPTY") return { data, error: "Corpus is EMPTY. Sync inventory before a run, even if the site has zero posts." };
   if (site.ghost.corpus === "SYNCING") return { data, error: "Inventory sync is still running." };
   const lines = input.lines
@@ -1325,7 +1359,7 @@ export async function queuePlan(
   if (plan.status !== "review") return { data, error: "This plan is already queued." };
   const site = data.sites.find((s) => s.id === plan.siteId);
   if (!site) return { data, error: "Website missing." };
-  if (site.ghost.status !== "connected") return { data, error: "Connect Ghost before queueing." };
+  // Queueing needs an inventory to gate the clusters against, not a live Ghost.
   if (site.ghost.corpus !== "COMPLETE") return { data, error: "Sync inventory first. Runs are refused while the corpus is EMPTY." };
   const included = plan.clusters.filter((c) => !c.excluded);
   if (included.length < 2) return { data, error: "Keep at least two clusters. The pillar needs real pages to link to." };
@@ -1343,7 +1377,7 @@ export async function queuePlan(
   const batchSeen: CorpusItem[] = [];
   for (const cluster of p.clusters.filter((c) => !c.excluded)) {
     const keyword = normalizeKeyword(cluster.title);
-    const gate = await gateText(keyword, cluster.title, corpusFor(next, p.siteId, batchSeen), false, opts?.provider);
+    const gate = await gateText(keyword, cluster.title, corpusFor(next, p.siteId, batchSeen, { excludePlanId: p.id }), false, opts?.provider);
     const job = makeJob({
       id: uid("job"),
       runId,

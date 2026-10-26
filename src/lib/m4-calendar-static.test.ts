@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_LIMITS, type AiKey, type Article, type Job, type Persisted, type Site } from "./types.ts";
+import { DEFAULT_LIMITS, type AiKey, type Article, type Job, type Persisted, type Site, type TopicPlan } from "./types.ts";
 import { AD_CODE_LIMIT, defaultAdSlots } from "./types.ts";
 import { buildCalendar, migrateCalendar, publishSlots } from "./operator.ts";
-import { manualBuild, packageDeploy, resolveRouteDiff, routeDiffFor } from "./engine.ts";
+import { localInventoryGhost, manualBuild, packageDeploy, queuePlan, resolveRouteDiff, routeDiffFor, submitKeywords } from "./engine.ts";
 import { adCodeWithinLimit, adSlotHtml, adsConfigHash, injectInlineAd, inlineAdTargetOk, staticFiles } from "./static-site.ts";
 import { reweaveDecision, reweavePutBody, withEdgeState } from "./reweave.ts";
+import { mergeSnapshot } from "./server-pipeline-merge.ts";
 
 function key(overrides: Partial<AiKey> = {}): AiKey {
   return {
@@ -373,4 +374,137 @@ test("a build blocked by a failed gate says so instead of blaming orphans", () =
   assert.equal(build.status, "failed");
   assert.match(build.detail ?? "", /held by a failed gate/);
   assert.equal(build.excluded[0]?.reason, "failed gate");
+});
+
+function topicPlan(patch: Partial<TopicPlan> = {}): TopicPlan {
+  return {
+    id: "p1",
+    siteId: "s1",
+    topic: "immigration clocks",
+    pillarTitle: "Pillar on immigration clocks",
+    pillarAngle: "cover the whole subject",
+    clusters: [
+      { id: "c1", title: "Cluster one explains alpha", angle: "a", excluded: false },
+      { id: "c2", title: "Cluster two explains beta", angle: "b", excluded: false },
+      { id: "c3", title: "Cluster three explains gamma", angle: "c", excluded: false },
+    ],
+    status: "review",
+    createdAt: 0,
+    ...patch,
+  };
+}
+
+test("a sync that cannot read Ghost still completes the corpus from the studio's own articles", () => {
+  // This is the state a failed sync used to leave behind: corpus stuck in
+  // SYNCING (or EMPTY) with an empty inventory, so every run was refused and
+  // the UI offered no way out.
+  const wedged = {
+    ...site().ghost,
+    status: "error" as const,
+    corpus: "SYNCING" as const,
+    inventory: [],
+    inventorySource: undefined,
+    lastError: "ghost http: connection refused",
+  };
+  const ghost = localInventoryGhost(wedged, [article("alpha"), article("beta")], "s1", 1000);
+  assert.equal(ghost.corpus, "COMPLETE", "runs are no longer refused behind a stuck sync");
+  assert.equal(ghost.inventorySource, "local-demo", "the UI says Ghost was not read");
+  assert.equal(ghost.inventory.length, 2, "the studio's own articles become the inventory");
+  assert.equal(ghost.lastError, "ghost http: connection refused", "the connection error is kept for the operator");
+});
+
+test("a held server row reaches a built page instead of being dropped as a draft", () => {
+  // The reported failure, end to end: the pipeline finished the article and the
+  // Ghost push never happened, so the row is REVIEW_HELD with sealed content.
+  // The merge used to call that "draft", the build refused every page, and the
+  // site could not be built at all.
+  const raw = {
+    id: 4,
+    jobId: 7,
+    siteId: 11,
+    title: "How to Descale an Espresso Machine",
+    slug: "descale-espresso-machine",
+    keyword: "descale espresso machine",
+    status: "REVIEW_HELD",
+    createdAt: null,
+    engine: "llm",
+    uniquenessScore: 0.92,
+    intentMatch: 0.88,
+    coverageScore: 0.9,
+    featuredImageUrl: null,
+    featuredAlt: null,
+    contentJson: JSON.stringify({ markdown: "## Why scale matters\n\nIt kills temperature stability in the group head.\n\n## How often\n\nEvery three months, more with hard water.", faq: [] }),
+    metaJson: JSON.stringify({ excerpt: "Scale ruins shots.", metaDescription: "A practical guide.", tags: ["espresso"] }),
+    authorName: "Elena Whitfield",
+    authorSlug: "elena-whitfield-espresso",
+    authorBeat: "espresso maintenance",
+    authorCity: "Portland",
+  };
+  const merged = mergeSnapshot(
+    "s1",
+    { jobs: [], articles: [raw as never], runs: [], stages: [], links: [], active: false },
+    { jobs: [], articles: [], runs: [] },
+  );
+  assert.equal(merged.articles.length, 1);
+  assert.equal(merged.articles[0]!.status, "published", "the held row is publishable");
+  const build = manualBuild({ ...fixture(), articles: merged.articles }, "s1", 1000).builds[0]!;
+  assert.equal(build.status, "succeeded", build.detail ?? "");
+  assert.equal(build.pages, 1, "the article reaches a built page");
+});
+
+test("a topic plan queues its clusters instead of refusing each one as a duplicate of itself", async () => {
+  // The plan's own pillar and clusters are part of the corpus a gate reads, so
+  // gating a cluster against the corpus it belongs to matched the cluster
+  // against itself — L1-exact — and every cluster of every plan was refused.
+  const broken = site({ ghost: { ...site().ghost, status: "error", url: "https://cms.example", lastError: "Ghost refused the Admin API key." } });
+  const data = fixture({ sites: [broken], plans: [topicPlan()] });
+  const queued = await queuePlan(data, "p1", 1000, { publishMode: "draft" });
+  assert.equal(queued.error, undefined, `queueing must not be refused: ${queued.error ?? ""}`);
+  const jobs = queued.data.jobs.filter((job) => job.runId === queued.runId);
+  assert.equal(jobs.length, 4, "three clusters and the pillar are queued");
+  assert.equal(jobs.filter((job) => job.status === "refused").length, 0, "no cluster is refused as its own duplicate");
+  assert.equal(queued.data.plans[0]!.status, "queued");
+});
+
+test("a plan cluster that matches a page the site already carries is still refused", async () => {
+  // The guard has to keep working: only the plan's own entries are dropped from
+  // the corpus, not the articles the site already published.
+  const data = fixture({
+    articles: [article("cluster-one-explains-alpha", { title: "Cluster one explains alpha", keyword: "cluster one explains alpha" })],
+    plans: [topicPlan()],
+  });
+  const queued = await queuePlan(data, "p1", 1000, { publishMode: "draft" });
+  assert.equal(queued.error, undefined);
+  const jobs = queued.data.jobs.filter((job) => job.runId === queued.runId);
+  assert.equal(jobs.length, 4, "all three clusters plus the pillar are on the run");
+  const refused = jobs.filter((job) => job.status === "refused");
+  assert.equal(refused.length, 1, "the cluster the site already carries is refused");
+  assert.equal(refused[0]!.keyword, "cluster one explains alpha");
+  assert.match(refused[0]!.refusalReason ?? "", /DUPLICATE REFUSED/);
+});
+
+test("a run is refused by an empty corpus, not by a Ghost that is merely disconnected", async () => {
+  const broken = { ...site().ghost, status: "error" as const, url: "https://cms.example", lastError: "Ghost refused the Admin API key." };
+  const ready = fixture({ sites: [site({ ghost: { ...broken, corpus: "COMPLETE" } })] });
+  const intake = await submitKeywords(ready, {
+    siteId: "s1",
+    lines: "how to keep research notes that survive week three",
+    publishMode: "draft",
+    modelKeyId: "default",
+    allowVariants: false,
+    now: 1_000_000,
+  });
+  assert.equal(intake.error, undefined, `a broken Ghost connection must not block writing: ${intake.error ?? ""}`);
+  assert.equal(intake.data.jobs.length, 1);
+
+  const empty = fixture({ sites: [site({ ghost: { ...broken, corpus: "EMPTY" } })] });
+  const refused = await submitKeywords(empty, {
+    siteId: "s1",
+    lines: "how to keep research notes that survive week three",
+    publishMode: "draft",
+    modelKeyId: "default",
+    allowVariants: false,
+    now: 1_000_000,
+  });
+  assert.match(refused.error ?? "", /Corpus is EMPTY/);
 });

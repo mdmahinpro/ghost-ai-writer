@@ -9,6 +9,7 @@ import {
   generatePlan,
   acceptModelPlan,
   inventoryFromArticles,
+  localInventoryGhost,
   manualBuild,
   needsWork,
   packageDeploy,
@@ -193,6 +194,13 @@ export type AppState = Persisted & {
   failGhost: (message: string) => void;
   beginStudioSync: () => void;
   applyLiveInventory: (posts: { id: string; title: string; slug: string; status: "PUBLISHED" | "DRAFT" }[], note?: string) => void;
+  /**
+   * Complete the corpus from the studio's own articles when Ghost cannot be
+   * read — no key, a rejected key, or an unreachable origin. Without it a
+   * failed sync left the corpus EMPTY (or stuck in SYNCING) and every run was
+   * refused behind it, with nothing the operator could do from the UI.
+   */
+  fallbackInventory: (reason: string) => void;
   auditNow: () => void;
   toggleProposal: (auditId: string, proposalId: string) => void;
   applyProposals: (auditId: string) => void;
@@ -908,8 +916,13 @@ export const useApp = create<AppState>()(
       beginStudioSync: () => {
         const s = get();
         const site = s.sites.find((item) => item.id === s.activeSiteId);
-        if (!site || site.ghost.status !== "connected") {
-          set({ notice: { tone: "danger", text: "Connect Ghost before syncing." } });
+        if (!site) return;
+        if (site.ghost.status !== "connected") {
+          // Nothing to read from — an errored or never-connected site used to
+          // answer "Connect Ghost before syncing." and leave the corpus EMPTY,
+          // which refuses every run with no way out of the UI. The studio's own
+          // articles complete the corpus instead.
+          get().fallbackInventory(site.ghost.lastError ?? "Ghost is not connected, so Ghost was not read.");
           return;
         }
         const key = site.ghost.adminKey;
@@ -922,43 +935,42 @@ export const useApp = create<AppState>()(
             ),
           });
           void (async () => {
-            const { syncGhostPosts } = await import("./ghost.functions");
-            const result = await syncGhostPosts({ data: { url: origin, adminKey: key } });
-            if (!result.ok) {
-              get().failGhost(result.error);
-              return;
+            try {
+              const { syncGhostPosts } = await import("./ghost.functions");
+              const result = await syncGhostPosts({ data: { url: origin, adminKey: key } });
+              if (!result.ok) {
+                // A rejected key or an unreachable origin used to leave the site
+                // in SYNCING with every run refused behind it, and no way out
+                // from the UI. Fall back, and keep the error on the connection.
+                get().failGhost(result.error);
+                get().fallbackInventory(result.error);
+                return;
+              }
+              get().applyLiveInventory(
+                result.posts.map((post) => ({ ...post, status: post.status === "PUBLISHED" ? ("PUBLISHED" as const) : ("DRAFT" as const) })),
+                result.truncated ? `Ghost import stopped at the page cap · ${result.posts.length} posts. There are more pages on the site.` : undefined,
+              );
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Sync failed.";
+              get().failGhost(message);
+              get().fallbackInventory(message);
             }
-            get().applyLiveInventory(
-              result.posts.map((post) => ({ ...post, status: post.status === "PUBLISHED" ? ("PUBLISHED" as const) : ("DRAFT" as const) })),
-              result.truncated ? `Ghost import stopped at the page cap · ${result.posts.length} posts. There are more pages on the site.` : undefined,
-            );
           })();
           return;
         }
-        const now = Date.now();
-        const inventory = inventoryFromArticles(s.articles, site.id, now);
+        get().fallbackInventory("No Ghost Admin key is saved, so Ghost was not read.");
+      },
+      fallbackInventory: (reason) => {
+        const s = get();
+        const site = s.sites.find((item) => item.id === s.activeSiteId);
+        if (!site) return;
+        const ghost = localInventoryGhost(site.ghost, s.articles, site.id, Date.now());
         set({
           notice: {
             tone: "warn",
-            text: "Local demo. No Ghost Admin key is saved, so this list is the studio's own articles. Ghost was not read.",
+            text: `${reason} The studio's own ${ghost.inventory.length} article${ghost.inventory.length === 1 ? "" : "s"} are the inventory for now, so runs are not blocked. Fix the connection and sync again for the full picture.`,
           },
-          sites: s.sites.map((item) =>
-            item.id !== site.id
-              ? item
-              : {
-                  ...item,
-                  ghost: {
-                    ...item.ghost,
-                    corpus: "COMPLETE",
-                    syncReadyAt: undefined,
-                    lastSyncAt: now,
-                    inventory,
-                    inventorySource: "local-demo",
-                    version: item.ghost.version === "studio-ledger" || !item.ghost.version ? "local-demo" : item.ghost.version,
-                    keyHint: "local demo · Ghost was not read",
-                  },
-                },
-          ),
+          sites: s.sites.map((item) => (item.id !== site.id ? item : { ...item, ghost })),
         });
       },
       applyLiveInventory: (posts, note) =>
