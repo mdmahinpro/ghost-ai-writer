@@ -10,17 +10,16 @@
 //! migration file and SQL stay portable; only the pool URL and driver change.
 
 use axum::{
-    extract::{Query, Request, State},
+    extract::{Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::net::SocketAddr;
-use std::time::Instant;
 
 mod byline;
 mod calendar;
@@ -49,7 +48,7 @@ mod worker;
 const API_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_LIMIT: i64 = 500;
 const DEFAULT_LIMIT: i64 = 50;
-const NOW: &str = "2026-10-22T00:00:00Z";
+pub(crate) const NOW: &str = "2026-10-22T00:00:00Z";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -89,686 +88,26 @@ async fn health() -> Json<Health> {
 
 // ---------------------------------------------------------------- pagination
 
-#[derive(Debug, Deserialize)]
-struct PageQuery {
-    cursor: Option<i64>,
-    limit: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-struct Page<T> {
-    items: Vec<T>,
-    next_cursor: Option<i64>,
-    total: i64,
-}
-
-fn clamp_limit(limit: Option<i64>) -> i64 {
+pub(crate) fn clamp_limit(limit: Option<i64>) -> i64 {
     limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
 }
 
 // ---------------------------------------------------------------- rows
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-struct WorkspaceRow {
-    id: i64,
-    name: String,
-    created_at: String,
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-struct JobRow {
-    id: i64,
-    workspace_id: i64,
-    site_id: i64,
-    keyword: String,
-    stage: String,
-    status: String,
-}
-
 // ---------------------------------------------------------------- handlers
-
-async fn list_workspaces(
-    State(st): State<AppState>,
-    Query(q): Query<PageQuery>,
-) -> Result<Json<Page<WorkspaceRow>>, ApiError> {
-    let cursor = q.cursor.unwrap_or(0);
-    let limit = clamp_limit(q.limit);
-    let items: Vec<WorkspaceRow> = sqlx::query_as(
-        "SELECT id, name, created_at FROM workspaces WHERE id > ? ORDER BY id LIMIT ?",
-    )
-    .bind(cursor)
-    .bind(limit)
-    .fetch_all(&st.pool)
-    .await
-    .map_err(ApiError::Db)?;
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
-        .fetch_one(&st.pool)
-        .await
-        .map_err(ApiError::Db)?;
-    let next_cursor = if items.len() as i64 == limit {
-        items.last().map(|r| r.id)
-    } else {
-        None
-    };
-    Ok(Json(Page {
-        items,
-        next_cursor,
-        total,
-    }))
-}
-
-async fn list_jobs(
-    State(st): State<AppState>,
-    Query(q): Query<PageQuery>,
-) -> Result<Json<Page<JobRow>>, ApiError> {
-    let cursor = q.cursor.unwrap_or(0);
-    let limit = clamp_limit(q.limit);
-    let items: Vec<JobRow> = sqlx::query_as(
-        "SELECT id, workspace_id, site_id, keyword, stage, status \
-         FROM jobs WHERE id > ? ORDER BY id LIMIT ?",
-    )
-    .bind(cursor)
-    .bind(limit)
-    .fetch_all(&st.pool)
-    .await
-    .map_err(ApiError::Db)?;
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
-        .fetch_one(&st.pool)
-        .await
-        .map_err(ApiError::Db)?;
-    let next_cursor = if items.len() as i64 == limit {
-        items.last().map(|r| r.id)
-    } else {
-        None
-    };
-    Ok(Json(Page {
-        items,
-        next_cursor,
-        total,
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-struct IntakeRequest {
-    workspace_id: i64,
-    site_id: i64,
-    keywords: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct IntakeResponse {
-    inserted: usize,
-    run_id: i64,
-    elapsed_ms: u128,
-}
-
-/// Keyword intake: one job row per keyword, single transaction, no cap.
-/// This is the Rule 1 scale path the browser implementation cannot prove.
-async fn intake_keywords(
-    State(st): State<AppState>,
-    Json(req): Json<IntakeRequest>,
-) -> Result<(StatusCode, Json<IntakeResponse>), ApiError> {
-    if req.keywords.is_empty() {
-        return Err(ApiError::BadRequest("keywords must not be empty"));
-    }
-    // Parents must exist: with foreign keys on, an unknown workspace/site would
-    // otherwise surface as an opaque 500.
-    let ws_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE id = ?")
-        .bind(req.workspace_id)
-        .fetch_one(&st.pool)
-        .await
-        .map_err(ApiError::Db)?;
-    if ws_exists == 0 {
-        return Err(ApiError::BadRequest("unknown workspace_id"));
-    }
-    let site_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE id = ?")
-        .bind(req.site_id)
-        .fetch_one(&st.pool)
-        .await
-        .map_err(ApiError::Db)?;
-    if site_exists == 0 {
-        return Err(ApiError::BadRequest("unknown site_id"));
-    }
-    let started = Instant::now();
-    // The website a job belongs to is the site's own link, not its id. Intake
-    // used to assume `website_id = site_id`, which only held because seeding
-    // numbered both tables identically; sites created through `sites/ensure`
-    // carry an explicit link, and a mismatch would attribute work to the wrong
-    // website (usage rollups and article visibility both key on it).
-    let website_id: i64 =
-        sqlx::query_scalar("SELECT COALESCE(website_id, id) FROM sites WHERE id = ?1")
-            .bind(req.site_id)
-            .fetch_one(&st.pool)
-            .await
-            .map_err(ApiError::Db)?;
-    let mut tx = st.pool.begin().await.map_err(ApiError::Db)?;
-    // One run per intake call. The UI groups its queue by run, and
-    // `runs::refresh_run` already rolls status up from the jobs, so creating it
-    // here is what makes a server-driven queue visible as a single run. Without
-    // it the jobs exist but nothing in the UI can group them.
-    let run_id: i64 = sqlx::query_scalar(
-        "INSERT INTO runs (website_id, type, source_label, status, publish_mode, created_at)
-         VALUES (?, 'keyword', 'keyword intake', 'RUNNING', 'default', ?)
-         RETURNING id",
-    )
-    .bind(website_id)
-    .bind(NOW)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(ApiError::Db)?;
-    for kw in &req.keywords {
-        sqlx::query(
-            "INSERT INTO jobs (workspace_id, site_id, website_id, run_id, keyword, stage, status, created_at) \
-             VALUES (?, ?, ?, ?, ?, 'blueprint', 'QUEUED', ?)",
-        )
-        .bind(req.workspace_id)
-        .bind(req.site_id)
-        .bind(website_id)
-        .bind(run_id)
-        .bind(kw)
-        .bind(NOW)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Db)?;
-    }
-    tx.commit().await.map_err(ApiError::Db)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(IntakeResponse {
-            inserted: req.keywords.len(),
-            run_id,
-            elapsed_ms: started.elapsed().as_millis(),
-        }),
-    ))
-}
 
 // ---------------------------------------------------------------- writing gate
 
-#[derive(Debug, Deserialize)]
-struct LintRequest {
-    text: String,
-}
-
-#[derive(Deserialize)]
-struct ImagePickRequest {
-    query: String,
-    #[serde(default)]
-    size: Option<String>,
-}
-
-/// Deterministic AI-tell linter (humanizer patterns). Blocks publish when
-/// `passed` is false. Pure function of the input text.
-async fn lint_text(Json(req): Json<LintRequest>) -> Json<lint::Report> {
-    Json(lint::lint(&req.text))
-}
-
 // ---------------------------------------------------------------- worker routes
-
-/// Heartbeat view: mirrors their `worker.alive` / `worker.lastTickAt` contract so
-/// the UI can prove the pipeline is running without polling a run.
-async fn process_metrics(State(st): State<AppState>) -> Json<metrics::Metrics> {
-    Json(metrics::collect(&st.pool).await)
-}
-
-async fn worker_status(State(st): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    let workers = worker::status(&st.pool).await.map_err(ApiError::Db)?;
-    let fresh = workers
-        .iter()
-        .any(|w| w.last_tick_at.as_str() > worker::iso_after(-60).as_str());
-    Ok(Json(
-        serde_json::json!({ "alive": fresh, "workers": workers }),
-    ))
-}
-
-/// Manual tick (dev + tests): claim and process at most one job.
-async fn worker_run_once(State(st): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    let job = worker::run_once(&st.pool, "manual", worker::DEFAULT_LEASE_SECS)
-        .await
-        .map_err(ApiError::Db)?;
-    Ok(Json(serde_json::json!({ "processed_job": job })))
-}
 
 // ---------------------------------------------------------------- email routes
 
-#[derive(Deserialize)]
-struct SendEmailRequest {
-    vendor: String,
-    /// The vendor API key. Never stored, never returned, never logged.
-    secret: String,
-    from: String,
-    to: String,
-    /// Required for a verification letter; the link the reader will click.
-    #[serde(default)]
-    verify_url: Option<String>,
-    /// Required for a digest.
-    #[serde(default)]
-    body: Option<String>,
-}
-
-/// Send a verification letter. The key is used for this one request and
-/// discarded; it is never written to the database.
-async fn send_email_verification(
-    Json(req): Json<SendEmailRequest>,
-) -> Result<Json<email::Sent>, ApiError> {
-    let verify_url = req
-        .verify_url
-        .as_deref()
-        .ok_or(ApiError::BadRequest("verify_url is required"))?;
-    Ok(Json(
-        email::send_verification(&req.vendor, &req.secret, &req.from, &req.to, verify_url).await,
-    ))
-}
-
-/// Send a notification digest.
-async fn send_email_digest(
-    Json(req): Json<SendEmailRequest>,
-) -> Result<Json<email::Sent>, ApiError> {
-    let body = req
-        .body
-        .as_deref()
-        .ok_or(ApiError::BadRequest("body is required"))?;
-    Ok(Json(
-        email::send_digest(&req.vendor, &req.secret, &req.from, &req.to, body).await,
-    ))
-}
-
 // ---------------------------------------------------------------- ghost routes
-
-#[derive(Deserialize)]
-struct GhostUrlRequest {
-    url: String,
-}
-
-/// Validate a Ghost URL before it is stored. Reports the same refusals the
-/// push path enforces, so a misconfiguration is caught at entry rather than at
-/// publish time.
-async fn check_ghost_url(Json(req): Json<GhostUrlRequest>) -> Json<serde_json::Value> {
-    match ghost::validate_ghost_url(&req.url) {
-        Ok(url) => Json(serde_json::json!({ "ok": true, "url": url })),
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
-    }
-}
 
 // ---------------------------------------------------------------- provider routes
 
-#[derive(Deserialize)]
-struct ProviderQuery {
-    workspace_id: Option<i64>,
-    /// Which capability's pool to report: `text` (default) or `vision`.
-    role: Option<String>,
-}
-
-/// List providers for a workspace. Keys are never returned — only `key_hint`.
-async fn ghost_test(Json(req): Json<ghost_api::GhostTarget>) -> Json<serde_json::Value> {
-    Json(ghost_api::test_connection(&req).await)
-}
-
-async fn ghost_sync(Json(req): Json<ghost_api::GhostTarget>) -> Json<serde_json::Value> {
-    Json(ghost_api::sync_posts(&req).await)
-}
-
-#[derive(Deserialize)]
-struct ProbeRequest {
-    #[serde(default)]
-    url: String,
-}
-
-async fn ghost_probe(Json(req): Json<ProbeRequest>) -> Json<serde_json::Value> {
-    Json(ghost_api::probe(&req.url).await)
-}
-
-async fn ghost_publish(Json(req): Json<ghost_api::PublishRequest>) -> Json<serde_json::Value> {
-    Json(ghost_api::publish(&req).await)
-}
-
-async fn ghost_reweave(Json(req): Json<ghost_api::ReWeaveRequest>) -> Json<serde_json::Value> {
-    Json(ghost_api::reweave(&req).await)
-}
-
-async fn deploy_cloudflare(Json(req): Json<deploy::CloudflareRequest>) -> Json<serde_json::Value> {
-    Json(deploy::deploy_cloudflare(&req).await)
-}
-
-async fn deploy_vercel(Json(req): Json<deploy::VercelRequest>) -> Json<serde_json::Value> {
-    Json(deploy::deploy_vercel(&req).await)
-}
-
-async fn deploy_github(Json(req): Json<deploy::GithubRequest>) -> Json<serde_json::Value> {
-    Json(deploy::deploy_github(&req).await)
-}
-
-async fn ftp_test(
-    State(st): State<AppState>,
-    Json(mut req): Json<ftp::LoginRequest>,
-) -> Json<serde_json::Value> {
-    // A blank password means "use the one on file": the browser no longer stores it,
-    // so the form can submit the other fields without ever holding the secret.
-    if req.target.password.trim().is_empty() {
-        let workspace = req.workspace_id.unwrap_or(1);
-        match ftp_creds::target(&st.pool, workspace, Some(req.target.clone())).await {
-            Ok(resolved) => req.target = resolved,
-            Err(error) => {
-                return Json(serde_json::json!({ "ok": false, "error": error }));
-            }
-        }
-    }
-    Json(ftp::test_login(&req).await)
-}
-
-#[derive(Deserialize)]
-struct FtpUploadRequest {
-    #[serde(flatten)]
-    target: ftp::FtpTarget,
-    #[serde(default)]
-    via: Option<String>,
-    #[serde(default)]
-    workspace_id: Option<i64>,
-    #[serde(default)]
-    files: Vec<ftp::UploadedFile>,
-}
-
-async fn ftp_upload(
-    State(st): State<AppState>,
-    Json(req): Json<FtpUploadRequest>,
-) -> Json<serde_json::Value> {
-    let target = match ftp_creds::target(
-        &st.pool,
-        req.workspace_id.unwrap_or(1),
-        Some(req.target.clone()),
-    )
-    .await
-    {
-        Ok(resolved) => resolved,
-        Err(error) => return Json(serde_json::json!({ "ok": false, "error": error })),
-    };
-    Json(ftp::upload_via(&target, req.via, &req.files).await)
-}
-
-async fn save_ftp_credentials(
-    State(st): State<AppState>,
-    Json(req): Json<ftp_creds::SaveRequest>,
-) -> Result<Json<ftp_creds::SavedFtp>, ApiError> {
-    ftp_creds::save(&st.pool, &req, NOW)
-        .await
-        .map(Json)
-        .map_err(ApiError::Invalid)
-}
-
-async fn load_ftp_credentials(
-    State(st): State<AppState>,
-    Query(params): Query<WorkspaceQuery>,
-) -> Result<Json<Option<ftp_creds::SavedFtp>>, ApiError> {
-    ftp_creds::load(&st.pool, params.workspace_id.unwrap_or(1))
-        .await
-        .map(Json)
-        .map_err(ApiError::Invalid)
-}
-
-async fn forget_ftp_credentials(
-    State(st): State<AppState>,
-    Query(params): Query<WorkspaceQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let removed = ftp_creds::forget(&st.pool, params.workspace_id.unwrap_or(1))
-        .await
-        .map_err(ApiError::Invalid)?;
-    Ok(Json(serde_json::json!({ "removed": removed })))
-}
-
-#[derive(Deserialize)]
-struct WorkspaceQuery {
-    #[serde(default)]
-    workspace_id: Option<i64>,
-}
-
-async fn index_now(Json(req): Json<ftp::IndexNowRequest>) -> Json<serde_json::Value> {
-    Json(ftp::submit_index_now(&req).await)
-}
-
-async fn test_model(Json(req): Json<providers::ModelRequest>) -> Json<serde_json::Value> {
-    Json(providers::test_model(&req).await)
-}
-
-async fn list_custom_models(Json(req): Json<providers::BaseKeyRequest>) -> Json<serde_json::Value> {
-    Json(providers::list_models(&req).await)
-}
-
-async fn get_embedding(
-    State(st): State<AppState>,
-    Json(req): Json<providers::EmbeddingRequest>,
-) -> Json<serde_json::Value> {
-    Json(providers::embedding(&st.pool, &req).await)
-}
-
-async fn scrape_page(Json(req): Json<providers::ScrapeRequest>) -> Json<serde_json::Value> {
-    Json(providers::scrape(&req).await)
-}
-
-async fn tavily_search(Json(req): Json<providers::SearchRequest>) -> Json<serde_json::Value> {
-    Json(providers::tavily_search(&req).await)
-}
-
-async fn firecrawl_search(Json(req): Json<providers::SearchRequest>) -> Json<serde_json::Value> {
-    Json(providers::firecrawl_search(&req).await)
-}
-
-async fn pick_image(
-    State(st): State<AppState>,
-    Json(req): Json<ImagePickRequest>,
-) -> Json<serde_json::Value> {
-    let size = match req.size.as_deref() {
-        Some("content") => crate::image::CONTENT,
-        _ => crate::image::FEATURED,
-    };
-    let vision = crate::provider::load_vision(&st.pool, 1)
-        .await
-        .ok()
-        .flatten();
-    let scene = crate::image::scene_query(&req.query, &req.query, None);
-    let decision = crate::image::pick(vision.as_ref(), &scene, size).await;
-    Json(serde_json::json!({
-        "image": crate::image::decision_json(&decision),
-        "scene_query": scene,
-        "size": [size.0, size.1]
-    }))
-}
-
-async fn place_images(Json(req): Json<images::PlaceRequest>) -> Json<serde_json::Value> {
-    Json(images::place(&req).await)
-}
-
-async fn read_media(Json(req): Json<images::ReadMediaRequest>) -> Json<serde_json::Value> {
-    Json(images::read_batch(&req).await)
-}
-
-/// Stored images are public: published posts embed these URLs. Names are
-/// hashes, so there is nothing to enumerate and nothing secret to leak.
-async fn serve_media(axum::extract::Path(name): axum::extract::Path<String>) -> Response {
-    match images::open(&name) {
-        Some((mime, bytes)) => (
-            [
-                (axum::http::header::CONTENT_TYPE, mime),
-                (
-                    axum::http::header::CACHE_CONTROL,
-                    "public, max-age=31536000, immutable".to_string(),
-                ),
-            ],
-            bytes,
-        )
-            .into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
-async fn list_provider_routes(
-    State(st): State<AppState>,
-    Query(q): Query<ProviderQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let ws = q.workspace_id.unwrap_or(1);
-    let items = provider::list_providers(&st.pool, ws)
-        .await
-        .map_err(ApiError::Db)?;
-    Ok(Json(serde_json::json!({ "items": items })))
-}
-
-/// Add any OpenAI-compatible provider. No cap on how many a workspace may add.
-async fn create_provider(
-    State(st): State<AppState>,
-    Json(req): Json<provider::NewProvider>,
-) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    if req.api_key.trim().is_empty() {
-        return Err(ApiError::BadRequest("api_key must not be empty"));
-    }
-    if req.model_id.trim().is_empty() {
-        return Err(ApiError::BadRequest("model_id must not be empty"));
-    }
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE id = ?")
-        .bind(req.workspace_id)
-        .fetch_one(&st.pool)
-        .await
-        .map_err(ApiError::Db)?;
-    if exists == 0 {
-        return Err(ApiError::BadRequest("unknown workspace_id"));
-    }
-    let id = provider::insert_provider(&st.pool, NOW, &req)
-        .await
-        .map_err(ApiError::Db)?;
-    let items = provider::list_providers(&st.pool, req.workspace_id)
-        .await
-        .map_err(ApiError::Db)?;
-    let created = items.into_iter().find(|p| p.id == id);
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::json!({ "id": id, "provider": created })),
-    ))
-}
-
-/// Update a saved key in place. A blank secret keeps the sealed credential on file.
-/// Returns the updated id. The browser re-binds its local row to this id, which is
-/// what lets an orphaned key (saved while the server was broken) be rescued by a
-/// single edit-and-save.
-async fn patch_provider(
-    State(st): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<i64>,
-    Json(req): Json<provider::UpdateProvider>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let updated = provider::update_provider(&st.pool, id, &req)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => ApiError::BadRequest("unknown key id"),
-            other => ApiError::Db(other),
-        })?;
-    Ok(Json(
-        serde_json::json!({ "id": updated, "workspace_id": req.workspace_id }),
-    ))
-}
-
-#[derive(Deserialize)]
-struct GenerateRequest {
-    #[serde(default = "default_workspace")]
-    workspace_id: i64,
-    /// `text` (default) or `vision`.
-    role: Option<String>,
-    /// Pin one configured key; omit to let the pool decide.
-    preferred_key_id: Option<i64>,
-    #[serde(default)]
-    system: String,
-    user: String,
-    /// Ask the provider for a JSON object response.
-    #[serde(default)]
-    json: bool,
-    /// Image URLs for a vision call. Empty for text.
-    #[serde(default)]
-    images: Vec<String>,
-    /// Recorded as the ledger stage; browser calls default to `ad-hoc`.
-    schema: Option<String>,
-}
-
-fn default_workspace() -> i64 {
+pub(crate) fn default_workspace() -> i64 {
     1
-}
-
-/// One chat completion on the server, through the workspace's key pool.
-///
-/// This is what lets the browser stop holding provider keys: it asks for text
-/// and never sees a credential. Spend is recorded in the usage ledger the same
-/// way a pipeline stage records it, so cost accounting stays complete.
-async fn generate(
-    State(st): State<AppState>,
-    Json(req): Json<GenerateRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    if req.user.trim().is_empty() {
-        return Err(ApiError::BadRequest("user must not be empty"));
-    }
-    let role = req.role.as_deref().unwrap_or("text");
-    let schema = req.schema.unwrap_or_else(|| "ad-hoc".to_string());
-    let chat = provider::ChatRequest {
-        schema: schema.clone(),
-        system: req.system,
-        user: req.user,
-        json: req.json,
-        images: req.images,
-    };
-
-    let out = provider::complete_chain(
-        &st.pool,
-        req.workspace_id,
-        role,
-        req.preferred_key_id,
-        &chat,
-    )
-    .await
-    .map_err(|e| {
-        // Error bodies can echo the request, so the detail stays in the
-        // log and only a bounded message reaches the client.
-        tracing::warn!("generate failed: {e}");
-        ApiError::Upstream(provider::safe_message(&e))
-    })?;
-
-    let spend = &out.completion;
-    if let Err(e) = sqlx::query(
-        "INSERT INTO usage_ledger (ai_key_id, website_id, article_id, stage, provider, model_id, \
-                tokens_in, tokens_out, cost_usd, at) \
-         VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(out.key_id)
-    .bind(&schema)
-    .bind(&out.provider)
-    .bind(&out.model)
-    .bind(spend.tokens_in)
-    .bind(spend.tokens_out)
-    .bind(spend.cost_usd)
-    .bind(NOW)
-    .execute(&st.pool)
-    .await
-    {
-        // The answer already succeeded; a failed ledger write must not turn a
-        // working generation into an error, but it should not be silent either.
-        tracing::warn!("usage ledger write failed: {e}");
-    }
-
-    Ok(Json(serde_json::json!({
-        "text": spend.text,
-        "tokens_in": spend.tokens_in,
-        "tokens_out": spend.tokens_out,
-        "cost_usd": spend.cost_usd,
-        "key_id": out.key_id,
-        "model": out.model,
-        "provider": out.provider,
-    })))
-}
-
-/// The failover pool in order: which key runs next, and why any are demoted.
-/// Reports the masked hint, never the key.
-async fn key_pool(
-    State(st): State<AppState>,
-    Query(q): Query<ProviderQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let ws = q.workspace_id.unwrap_or(1);
-    let role = q.role.as_deref().unwrap_or("text");
-    let items = provider::key_statuses(&st.pool, ws, role)
-        .await
-        .map_err(ApiError::Db)?;
-    Ok(Json(serde_json::json!({ "items": items })))
 }
 
 // ---------------------------------------------------------------- errors
@@ -820,16 +159,16 @@ impl IntoResponse for ApiError {
 /// serving.
 fn api_routes() -> Router<AppState> {
     Router::new()
-        .route("/v1/workspaces", get(list_workspaces))
-        .route("/v1/jobs", get(list_jobs))
-        .route("/v1/keywords", post(intake_keywords))
-        .route("/v1/lint", post(lint_text))
-        .route("/v1/worker", get(worker_status))
-        .route("/v1/metrics", get(process_metrics))
-        .route("/v1/worker/run-once", post(worker_run_once))
-        .route("/v1/image/pick", post(pick_image))
-        .route("/v1/images/place", post(place_images))
-        .route("/v1/images/read", post(read_media))
+        .route("/v1/workspaces", get(pipeline::list_workspaces))
+        .route("/v1/jobs", get(pipeline::list_jobs))
+        .route("/v1/keywords", post(pipeline::intake_keywords))
+        .route("/v1/lint", post(lint::lint_text))
+        .route("/v1/worker", get(worker::worker_status))
+        .route("/v1/metrics", get(metrics::process_metrics))
+        .route("/v1/worker/run-once", post(worker::worker_run_once))
+        .route("/v1/image/pick", post(images::pick_image))
+        .route("/v1/images/place", post(images::place_images))
+        .route("/v1/images/read", post(images::read_media))
         .route("/v1/lease/heartbeat", post(lease::heartbeat))
         .route("/v1/lease/claim", post(lease::claim_lease))
         .route("/v1/lease/release", post(lease::release_lease))
@@ -838,39 +177,51 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/pipeline/state", get(pipeline::pipeline_state))
         .route("/v1/pipeline/requeue", post(pipeline::requeue_job))
         .route("/v1/sites/ensure", post(sites::ensure_site))
-        .route("/v1/email/verification", post(send_email_verification))
-        .route("/v1/email/digest", post(send_email_digest))
-        .route("/v1/ghost/check-url", post(check_ghost_url))
-        .route("/v1/ghost/test", post(ghost_test))
-        .route("/v1/ghost/sync", post(ghost_sync))
-        .route("/v1/ghost/probe", post(ghost_probe))
-        .route("/v1/ghost/publish", post(ghost_publish))
-        .route("/v1/ghost/reweave", post(ghost_reweave))
-        .route("/v1/deploy/cloudflare", post(deploy_cloudflare))
-        .route("/v1/deploy/vercel", post(deploy_vercel))
-        .route("/v1/deploy/github", post(deploy_github))
-        .route("/v1/ftp/test", post(ftp_test))
+        .route(
+            "/v1/email/verification",
+            post(email::send_email_verification),
+        )
+        .route("/v1/email/digest", post(email::send_email_digest))
+        .route("/v1/ghost/check-url", post(ghost_api::check_ghost_url))
+        .route("/v1/ghost/test", post(ghost_api::ghost_test))
+        .route("/v1/ghost/sync", post(ghost_api::ghost_sync))
+        .route("/v1/ghost/probe", post(ghost_api::ghost_probe))
+        .route("/v1/ghost/publish", post(ghost_api::ghost_publish))
+        .route("/v1/ghost/reweave", post(ghost_api::ghost_reweave))
+        .route(
+            "/v1/deploy/cloudflare",
+            post(deploy::deploy_cloudflare_handler),
+        )
+        .route("/v1/deploy/vercel", post(deploy::deploy_vercel_handler))
+        .route("/v1/deploy/github", post(deploy::deploy_github_handler))
+        .route("/v1/ftp/test", post(ftp::ftp_test))
         .route(
             "/v1/ftp/credentials",
-            get(load_ftp_credentials)
-                .post(save_ftp_credentials)
-                .delete(forget_ftp_credentials),
+            get(ftp_creds::load_ftp_credentials)
+                .post(ftp_creds::save_ftp_credentials)
+                .delete(ftp_creds::forget_ftp_credentials),
         )
-        .route("/v1/ftp/upload", post(ftp_upload))
-        .route("/v1/indexnow", post(index_now))
-        .route("/v1/providers/test-model", post(test_model))
-        .route("/v1/providers/models", post(list_custom_models))
-        .route("/v1/embeddings", post(get_embedding))
-        .route("/v1/scrape", post(scrape_page))
-        .route("/v1/search/tavily", post(tavily_search))
-        .route("/v1/search/firecrawl", post(firecrawl_search))
-        .route("/v1/providers/keys", get(key_pool))
-        .route("/v1/generate", post(generate))
+        .route("/v1/ftp/upload", post(ftp::ftp_upload))
+        .route("/v1/indexnow", post(ftp::index_now))
+        .route(
+            "/v1/providers/test-model",
+            post(providers::test_model_handler),
+        )
+        .route("/v1/providers/models", post(providers::list_custom_models))
+        .route("/v1/embeddings", post(providers::get_embedding))
+        .route("/v1/scrape", post(providers::scrape_page))
+        .route("/v1/search/tavily", post(providers::tavily_search_handler))
+        .route(
+            "/v1/search/firecrawl",
+            post(providers::firecrawl_search_handler),
+        )
+        .route("/v1/providers/keys", get(providers::key_pool))
+        .route("/v1/generate", post(providers::generate))
         .route(
             "/v1/providers",
-            get(list_provider_routes).post(create_provider),
+            get(providers::list_provider_routes).post(providers::create_provider),
         )
-        .route("/v1/providers/{id}", patch(patch_provider))
+        .route("/v1/providers/{id}", patch(providers::patch_provider))
 }
 
 /// Split out from `app` so the layers below can be read on their own; the tests
@@ -879,7 +230,7 @@ fn routes() -> Router<AppState> {
     let api = api_routes().layer(middleware::from_fn_with_state(admin_token(), require_token));
     Router::new()
         .route("/health", get(health))
-        .route("/media/{name}", get(serve_media))
+        .route("/media/{name}", get(images::serve_media))
         .nest("/api", api)
 }
 
@@ -1218,6 +569,7 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     async fn memory_pool() -> SqlitePool {
         connect("sqlite::memory:").await.expect("memory db")

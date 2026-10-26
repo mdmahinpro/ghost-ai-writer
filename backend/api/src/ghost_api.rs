@@ -333,6 +333,52 @@ pub async fn probe(url: &str) -> Value {
     }
 }
 
+use axum::Json;
+
+/// Validate a Ghost URL before it is stored. Reports the same refusals the
+/// push path enforces, so a misconfiguration is caught at entry rather than at
+/// publish time.
+pub(crate) async fn check_ghost_url(Json(req): Json<GhostUrlRequest>) -> Json<serde_json::Value> {
+    match ghost::validate_ghost_url(&req.url) {
+        Ok(url) => Json(serde_json::json!({ "ok": true, "url": url })),
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
+    }
+}
+/// List providers for a workspace. Keys are never returned — only `key_hint`.
+pub(crate) async fn ghost_test(
+    Json(req): Json<crate::ghost_api::GhostTarget>,
+) -> Json<serde_json::Value> {
+    Json(crate::ghost_api::test_connection(&req).await)
+}
+pub(crate) async fn ghost_sync(
+    Json(req): Json<crate::ghost_api::GhostTarget>,
+) -> Json<serde_json::Value> {
+    Json(crate::ghost_api::sync_posts(&req).await)
+}
+pub(crate) async fn ghost_probe(Json(req): Json<ProbeRequest>) -> Json<serde_json::Value> {
+    Json(crate::ghost_api::probe(&req.url).await)
+}
+pub(crate) async fn ghost_publish(
+    Json(req): Json<crate::ghost_api::PublishRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::ghost_api::publish(&req).await)
+}
+pub(crate) async fn ghost_reweave(
+    Json(req): Json<crate::ghost_api::ReWeaveRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::ghost_api::reweave(&req).await)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GhostUrlRequest {
+    url: String,
+}
+#[derive(Deserialize)]
+pub(crate) struct ProbeRequest {
+    #[serde(default)]
+    url: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

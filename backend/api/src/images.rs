@@ -444,6 +444,72 @@ pub fn open(name: &str) -> Option<(String, Vec<u8>)> {
     None
 }
 
+use crate::AppState;
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+
+pub(crate) async fn pick_image(
+    State(st): State<AppState>,
+    Json(req): Json<ImagePickRequest>,
+) -> Json<serde_json::Value> {
+    let size = match req.size.as_deref() {
+        Some("content") => crate::image::CONTENT,
+        _ => crate::image::FEATURED,
+    };
+    let vision = crate::provider::load_vision(&st.pool, 1)
+        .await
+        .ok()
+        .flatten();
+    let scene = crate::image::scene_query(&req.query, &req.query, None);
+    let decision = crate::image::pick(vision.as_ref(), &scene, size).await;
+    Json(serde_json::json!({
+        "image": crate::image::decision_json(&decision),
+        "scene_query": scene,
+        "size": [size.0, size.1]
+    }))
+}
+pub(crate) async fn place_images(
+    Json(req): Json<crate::images::PlaceRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::images::place(&req).await)
+}
+pub(crate) async fn read_media(
+    Json(req): Json<crate::images::ReadMediaRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::images::read_batch(&req).await)
+}
+/// Stored images are public: published posts embed these URLs. Names are
+/// hashes, so there is nothing to enumerate and nothing secret to leak.
+pub(crate) async fn serve_media(
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Response {
+    match crate::images::open(&name) {
+        Some((mime, bytes)) => (
+            [
+                (axum::http::header::CONTENT_TYPE, mime),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "public, max-age=31536000, immutable".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ImagePickRequest {
+    query: String,
+    #[serde(default)]
+    size: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

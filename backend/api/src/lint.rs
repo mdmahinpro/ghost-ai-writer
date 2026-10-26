@@ -7,6 +7,8 @@
 //!
 //! Severity: `High` blocks publish. `Medium` is advisory but surfaced.
 
+use serde::Deserialize;
+
 use regex::Regex;
 use serde::Serialize;
 use std::sync::OnceLock;
@@ -284,6 +286,19 @@ pub fn lint(text: &str) -> Report {
         passed: high == 0,
         findings,
     }
+}
+
+use axum::Json;
+
+/// Deterministic AI-tell linter (humanizer patterns). Blocks publish when
+/// `passed` is false. Pure function of the input text.
+pub(crate) async fn lint_text(Json(req): Json<LintRequest>) -> Json<crate::lint::Report> {
+    Json(crate::lint::lint(&req.text))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LintRequest {
+    text: String,
 }
 
 #[cfg(test)]

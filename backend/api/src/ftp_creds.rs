@@ -221,6 +221,46 @@ pub async fn target(
     })
 }
 
+use crate::{ApiError, AppState, NOW};
+use axum::{
+    extract::{Query, State},
+    Json,
+};
+
+pub(crate) async fn save_ftp_credentials(
+    State(st): State<AppState>,
+    Json(req): Json<crate::ftp_creds::SaveRequest>,
+) -> Result<Json<crate::ftp_creds::SavedFtp>, ApiError> {
+    crate::ftp_creds::save(&st.pool, &req, NOW)
+        .await
+        .map(Json)
+        .map_err(ApiError::Invalid)
+}
+pub(crate) async fn load_ftp_credentials(
+    State(st): State<AppState>,
+    Query(params): Query<WorkspaceQuery>,
+) -> Result<Json<Option<crate::ftp_creds::SavedFtp>>, ApiError> {
+    crate::ftp_creds::load(&st.pool, params.workspace_id.unwrap_or(1))
+        .await
+        .map(Json)
+        .map_err(ApiError::Invalid)
+}
+pub(crate) async fn forget_ftp_credentials(
+    State(st): State<AppState>,
+    Query(params): Query<WorkspaceQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let removed = crate::ftp_creds::forget(&st.pool, params.workspace_id.unwrap_or(1))
+        .await
+        .map_err(ApiError::Invalid)?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WorkspaceQuery {
+    #[serde(default)]
+    workspace_id: Option<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

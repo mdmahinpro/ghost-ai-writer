@@ -372,6 +372,24 @@ pub async fn deploy_github(req: &GithubRequest) -> Value {
     })
 }
 
+use axum::Json;
+
+pub(crate) async fn deploy_cloudflare_handler(
+    Json(req): Json<crate::deploy::CloudflareRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::deploy::deploy_cloudflare(&req).await)
+}
+pub(crate) async fn deploy_vercel_handler(
+    Json(req): Json<crate::deploy::VercelRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::deploy::deploy_vercel(&req).await)
+}
+pub(crate) async fn deploy_github_handler(
+    Json(req): Json<crate::deploy::GithubRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::deploy::deploy_github(&req).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

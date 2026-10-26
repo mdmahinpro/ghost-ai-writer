@@ -101,6 +101,15 @@ pub async fn collect(pool: &SqlitePool) -> Metrics {
     }
 }
 
+use crate::AppState;
+use axum::{extract::State, Json};
+
+/// Heartbeat view: mirrors their `worker.alive` / `worker.lastTickAt` contract so
+/// the UI can prove the pipeline is running without polling a run.
+pub(crate) async fn process_metrics(State(st): State<AppState>) -> Json<crate::metrics::Metrics> {
+    Json(crate::metrics::collect(&st.pool).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

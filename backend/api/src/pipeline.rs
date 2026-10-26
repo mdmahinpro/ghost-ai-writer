@@ -14,9 +14,10 @@
 //! snapshot avoids the torn reads (jobs newer than their articles) that three
 //! independent requests would produce.
 
-use axum::{extract::Query, extract::State, Json};
+use axum::{extract::Query, extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::ApiError;
 
@@ -350,6 +351,186 @@ pub async fn requeue_job(
     Ok(Json(
         serde_json::json!({ "ok": true, "job_id": req.job_id }),
     ))
+}
+
+use crate::{clamp_limit, AppState, NOW};
+
+pub(crate) async fn list_workspaces(
+    State(st): State<AppState>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<Page<WorkspaceRow>>, ApiError> {
+    let cursor = q.cursor.unwrap_or(0);
+    let limit = clamp_limit(q.limit);
+    let items: Vec<WorkspaceRow> = sqlx::query_as(
+        "SELECT id, name, created_at FROM workspaces WHERE id > ? ORDER BY id LIMIT ?",
+    )
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
+        .fetch_one(&st.pool)
+        .await
+        .map_err(ApiError::Db)?;
+    let next_cursor = if items.len() as i64 == limit {
+        items.last().map(|r| r.id)
+    } else {
+        None
+    };
+    Ok(Json(Page {
+        items,
+        next_cursor,
+        total,
+    }))
+}
+pub(crate) async fn list_jobs(
+    State(st): State<AppState>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<Page<JobRow>>, ApiError> {
+    let cursor = q.cursor.unwrap_or(0);
+    let limit = clamp_limit(q.limit);
+    let items: Vec<JobRow> = sqlx::query_as(
+        "SELECT id, workspace_id, site_id, keyword, stage, status \
+         FROM jobs WHERE id > ? ORDER BY id LIMIT ?",
+    )
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+        .fetch_one(&st.pool)
+        .await
+        .map_err(ApiError::Db)?;
+    let next_cursor = if items.len() as i64 == limit {
+        items.last().map(|r| r.id)
+    } else {
+        None
+    };
+    Ok(Json(Page {
+        items,
+        next_cursor,
+        total,
+    }))
+}
+/// Keyword intake: one job row per keyword, single transaction, no cap.
+/// This is the Rule 1 scale path the browser implementation cannot prove.
+pub(crate) async fn intake_keywords(
+    State(st): State<AppState>,
+    Json(req): Json<IntakeRequest>,
+) -> Result<(StatusCode, Json<IntakeResponse>), ApiError> {
+    if req.keywords.is_empty() {
+        return Err(ApiError::BadRequest("keywords must not be empty"));
+    }
+    // Parents must exist: with foreign keys on, an unknown workspace/site would
+    // otherwise surface as an opaque 500.
+    let ws_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE id = ?")
+        .bind(req.workspace_id)
+        .fetch_one(&st.pool)
+        .await
+        .map_err(ApiError::Db)?;
+    if ws_exists == 0 {
+        return Err(ApiError::BadRequest("unknown workspace_id"));
+    }
+    let site_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE id = ?")
+        .bind(req.site_id)
+        .fetch_one(&st.pool)
+        .await
+        .map_err(ApiError::Db)?;
+    if site_exists == 0 {
+        return Err(ApiError::BadRequest("unknown site_id"));
+    }
+    let started = Instant::now();
+    // The website a job belongs to is the site's own link, not its id. Intake
+    // used to assume `website_id = site_id`, which only held because seeding
+    // numbered both tables identically; sites created through `sites/ensure`
+    // carry an explicit link, and a mismatch would attribute work to the wrong
+    // website (usage rollups and article visibility both key on it).
+    let website_id: i64 =
+        sqlx::query_scalar("SELECT COALESCE(website_id, id) FROM sites WHERE id = ?1")
+            .bind(req.site_id)
+            .fetch_one(&st.pool)
+            .await
+            .map_err(ApiError::Db)?;
+    let mut tx = st.pool.begin().await.map_err(ApiError::Db)?;
+    // One run per intake call. The UI groups its queue by run, and
+    // `runs::refresh_run` already rolls status up from the jobs, so creating it
+    // here is what makes a server-driven queue visible as a single run. Without
+    // it the jobs exist but nothing in the UI can group them.
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO runs (website_id, type, source_label, status, publish_mode, created_at)
+         VALUES (?, 'keyword', 'keyword intake', 'RUNNING', 'default', ?)
+         RETURNING id",
+    )
+    .bind(website_id)
+    .bind(NOW)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::Db)?;
+    for kw in &req.keywords {
+        sqlx::query(
+            "INSERT INTO jobs (workspace_id, site_id, website_id, run_id, keyword, stage, status, created_at) \
+             VALUES (?, ?, ?, ?, ?, 'blueprint', 'QUEUED', ?)",
+        )
+        .bind(req.workspace_id)
+        .bind(req.site_id)
+        .bind(website_id)
+        .bind(run_id)
+        .bind(kw)
+        .bind(NOW)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Db)?;
+    }
+    tx.commit().await.map_err(ApiError::Db)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(IntakeResponse {
+            inserted: req.keywords.len(),
+            run_id,
+            elapsed_ms: started.elapsed().as_millis(),
+        }),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PageQuery {
+    cursor: Option<i64>,
+    limit: Option<i64>,
+}
+#[derive(Debug, Serialize)]
+pub(crate) struct Page<T> {
+    items: Vec<T>,
+    next_cursor: Option<i64>,
+    total: i64,
+}
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct WorkspaceRow {
+    id: i64,
+    name: String,
+    created_at: String,
+}
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct JobRow {
+    id: i64,
+    workspace_id: i64,
+    site_id: i64,
+    keyword: String,
+    stage: String,
+    status: String,
+}
+#[derive(Debug, Deserialize)]
+pub(crate) struct IntakeRequest {
+    workspace_id: i64,
+    site_id: i64,
+    keywords: Vec<String>,
+}
+#[derive(Debug, Serialize)]
+pub(crate) struct IntakeResponse {
+    inserted: usize,
+    run_id: i64,
+    elapsed_ms: u128,
 }
 
 #[cfg(test)]

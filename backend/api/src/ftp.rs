@@ -641,6 +641,61 @@ pub async fn test_login(req: &LoginRequest) -> Value {
     }
 }
 
+use crate::ftp_creds;
+use crate::AppState;
+use axum::{extract::State, Json};
+
+pub(crate) async fn ftp_test(
+    State(st): State<AppState>,
+    Json(mut req): Json<crate::ftp::LoginRequest>,
+) -> Json<serde_json::Value> {
+    // A blank password means "use the one on file": the browser no longer stores it,
+    // so the form can submit the other fields without ever holding the secret.
+    if req.target.password.trim().is_empty() {
+        let workspace = req.workspace_id.unwrap_or(1);
+        match ftp_creds::target(&st.pool, workspace, Some(req.target.clone())).await {
+            Ok(resolved) => req.target = resolved,
+            Err(error) => {
+                return Json(serde_json::json!({ "ok": false, "error": error }));
+            }
+        }
+    }
+    Json(crate::ftp::test_login(&req).await)
+}
+pub(crate) async fn ftp_upload(
+    State(st): State<AppState>,
+    Json(req): Json<FtpUploadRequest>,
+) -> Json<serde_json::Value> {
+    let target = match ftp_creds::target(
+        &st.pool,
+        req.workspace_id.unwrap_or(1),
+        Some(req.target.clone()),
+    )
+    .await
+    {
+        Ok(resolved) => resolved,
+        Err(error) => return Json(serde_json::json!({ "ok": false, "error": error })),
+    };
+    Json(crate::ftp::upload_via(&target, req.via, &req.files).await)
+}
+pub(crate) async fn index_now(
+    Json(req): Json<crate::ftp::IndexNowRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::ftp::submit_index_now(&req).await)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FtpUploadRequest {
+    #[serde(flatten)]
+    target: crate::ftp::FtpTarget,
+    #[serde(default)]
+    via: Option<String>,
+    #[serde(default)]
+    workspace_id: Option<i64>,
+    #[serde(default)]
+    files: Vec<crate::ftp::UploadedFile>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

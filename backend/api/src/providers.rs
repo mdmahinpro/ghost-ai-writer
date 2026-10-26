@@ -567,6 +567,214 @@ pub async fn firecrawl_search(req: &SearchRequest) -> Value {
     json!({ "ok": true, "results": results })
 }
 
+use crate::{default_workspace, ApiError, AppState, NOW};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    Json,
+};
+
+pub(crate) async fn test_model_handler(
+    Json(req): Json<crate::providers::ModelRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::providers::test_model(&req).await)
+}
+pub(crate) async fn list_custom_models(
+    Json(req): Json<crate::providers::BaseKeyRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::providers::list_models(&req).await)
+}
+pub(crate) async fn get_embedding(
+    State(st): State<AppState>,
+    Json(req): Json<crate::providers::EmbeddingRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::providers::embedding(&st.pool, &req).await)
+}
+pub(crate) async fn scrape_page(
+    Json(req): Json<crate::providers::ScrapeRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::providers::scrape(&req).await)
+}
+pub(crate) async fn tavily_search_handler(
+    Json(req): Json<crate::providers::SearchRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::providers::tavily_search(&req).await)
+}
+pub(crate) async fn firecrawl_search_handler(
+    Json(req): Json<crate::providers::SearchRequest>,
+) -> Json<serde_json::Value> {
+    Json(crate::providers::firecrawl_search(&req).await)
+}
+pub(crate) async fn list_provider_routes(
+    State(st): State<AppState>,
+    Query(q): Query<ProviderQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ws = q.workspace_id.unwrap_or(1);
+    let items = crate::provider::list_providers(&st.pool, ws)
+        .await
+        .map_err(ApiError::Db)?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+/// Add any OpenAI-compatible provider. No cap on how many a workspace may add.
+pub(crate) async fn create_provider(
+    State(st): State<AppState>,
+    Json(req): Json<crate::provider::NewProvider>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    if req.api_key.trim().is_empty() {
+        return Err(ApiError::BadRequest("api_key must not be empty"));
+    }
+    if req.model_id.trim().is_empty() {
+        return Err(ApiError::BadRequest("model_id must not be empty"));
+    }
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE id = ?")
+        .bind(req.workspace_id)
+        .fetch_one(&st.pool)
+        .await
+        .map_err(ApiError::Db)?;
+    if exists == 0 {
+        return Err(ApiError::BadRequest("unknown workspace_id"));
+    }
+    let id = crate::provider::insert_provider(&st.pool, NOW, &req)
+        .await
+        .map_err(ApiError::Db)?;
+    let items = crate::provider::list_providers(&st.pool, req.workspace_id)
+        .await
+        .map_err(ApiError::Db)?;
+    let created = items.into_iter().find(|p| p.id == id);
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": id, "provider": created })),
+    ))
+}
+/// Update a saved key in place. A blank secret keeps the sealed credential on file.
+/// Returns the updated id. The browser re-binds its local row to this id, which is
+/// what lets an orphaned key (saved while the server was broken) be rescued by a
+/// single edit-and-save.
+pub(crate) async fn patch_provider(
+    State(st): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(req): Json<crate::provider::UpdateProvider>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let updated = crate::provider::update_provider(&st.pool, id, &req)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => ApiError::BadRequest("unknown key id"),
+            other => ApiError::Db(other),
+        })?;
+    Ok(Json(
+        serde_json::json!({ "id": updated, "workspace_id": req.workspace_id }),
+    ))
+}
+/// The failover pool in order: which key runs next, and why any are demoted.
+/// Reports the masked hint, never the key.
+pub(crate) async fn key_pool(
+    State(st): State<AppState>,
+    Query(q): Query<ProviderQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ws = q.workspace_id.unwrap_or(1);
+    let role = q.role.as_deref().unwrap_or("text");
+    let items = crate::provider::key_statuses(&st.pool, ws, role)
+        .await
+        .map_err(ApiError::Db)?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+/// One chat completion on the server, through the workspace's key pool.
+///
+/// This is what lets the browser stop holding provider keys: it asks for text
+/// and never sees a credential. Spend is recorded in the usage ledger the same
+/// way a pipeline stage records it, so cost accounting stays complete.
+pub(crate) async fn generate(
+    State(st): State<AppState>,
+    Json(req): Json<GenerateRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if req.user.trim().is_empty() {
+        return Err(ApiError::BadRequest("user must not be empty"));
+    }
+    let role = req.role.as_deref().unwrap_or("text");
+    let schema = req.schema.unwrap_or_else(|| "ad-hoc".to_string());
+    let chat = crate::provider::ChatRequest {
+        schema: schema.clone(),
+        system: req.system,
+        user: req.user,
+        json: req.json,
+        images: req.images,
+    };
+
+    let out = crate::provider::complete_chain(
+        &st.pool,
+        req.workspace_id,
+        role,
+        req.preferred_key_id,
+        &chat,
+    )
+    .await
+    .map_err(|e| {
+        // Error bodies can echo the request, so the detail stays in the
+        // log and only a bounded message reaches the client.
+        tracing::warn!("generate failed: {e}");
+        ApiError::Upstream(crate::provider::safe_message(&e))
+    })?;
+
+    let spend = &out.completion;
+    if let Err(e) = sqlx::query(
+        "INSERT INTO usage_ledger (ai_key_id, website_id, article_id, stage, provider, model_id, \
+                tokens_in, tokens_out, cost_usd, at) \
+         VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(out.key_id)
+    .bind(&schema)
+    .bind(&out.provider)
+    .bind(&out.model)
+    .bind(spend.tokens_in)
+    .bind(spend.tokens_out)
+    .bind(spend.cost_usd)
+    .bind(NOW)
+    .execute(&st.pool)
+    .await
+    {
+        // The answer already succeeded; a failed ledger write must not turn a
+        // working generation into an error, but it should not be silent either.
+        tracing::warn!("usage ledger write failed: {e}");
+    }
+
+    Ok(Json(serde_json::json!({
+        "text": spend.text,
+        "tokens_in": spend.tokens_in,
+        "tokens_out": spend.tokens_out,
+        "cost_usd": spend.cost_usd,
+        "key_id": out.key_id,
+        "model": out.model,
+        "provider": out.provider,
+    })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ProviderQuery {
+    workspace_id: Option<i64>,
+    /// Which capability's pool to report: `text` (default) or `vision`.
+    role: Option<String>,
+}
+#[derive(Deserialize)]
+pub(crate) struct GenerateRequest {
+    #[serde(default = "default_workspace")]
+    workspace_id: i64,
+    /// `text` (default) or `vision`.
+    role: Option<String>,
+    /// Pin one configured key; omit to let the pool decide.
+    preferred_key_id: Option<i64>,
+    #[serde(default)]
+    system: String,
+    user: String,
+    /// Ask the provider for a JSON object response.
+    #[serde(default)]
+    json: bool,
+    /// Image URLs for a vision call. Empty for text.
+    #[serde(default)]
+    images: Vec<String>,
+    /// Recorded as the ledger stage; browser calls default to `ad-hoc`.
+    schema: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

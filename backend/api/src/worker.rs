@@ -592,6 +592,32 @@ pub async fn run_once(
     }
 }
 
+use crate::{ApiError, AppState};
+use axum::{extract::State, Json};
+
+pub(crate) async fn worker_status(
+    State(st): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let workers = crate::worker::status(&st.pool)
+        .await
+        .map_err(ApiError::Db)?;
+    let fresh = workers
+        .iter()
+        .any(|w| w.last_tick_at.as_str() > crate::worker::iso_after(-60).as_str());
+    Ok(Json(
+        serde_json::json!({ "alive": fresh, "workers": workers }),
+    ))
+}
+/// Manual tick (dev + tests): claim and process at most one job.
+pub(crate) async fn worker_run_once(
+    State(st): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let job = crate::worker::run_once(&st.pool, "manual", crate::worker::DEFAULT_LEASE_SECS)
+        .await
+        .map_err(ApiError::Db)?;
+    Ok(Json(serde_json::json!({ "processed_job": job })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

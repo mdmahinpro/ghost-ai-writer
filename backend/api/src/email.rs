@@ -20,6 +20,8 @@
 //!    demo the flow with no vendor account. This is not a mock of the send
 //!    path — the real path is untouched; it merely never runs.
 
+use serde::Deserialize;
+
 use serde::Serialize;
 
 /// How long a vendor request may take before it is abandoned. Matches TS
@@ -367,6 +369,51 @@ pub async fn send_digest(vendor: &str, secret: &str, from: &str, to: &str, body:
         "digest",
     )
     .await
+}
+
+use crate::ApiError;
+use axum::Json;
+
+/// Send a verification letter. The key is used for this one request and
+/// discarded; it is never written to the database.
+pub(crate) async fn send_email_verification(
+    Json(req): Json<SendEmailRequest>,
+) -> Result<Json<crate::email::Sent>, ApiError> {
+    let verify_url = req
+        .verify_url
+        .as_deref()
+        .ok_or(ApiError::BadRequest("verify_url is required"))?;
+    Ok(Json(
+        crate::email::send_verification(&req.vendor, &req.secret, &req.from, &req.to, verify_url)
+            .await,
+    ))
+}
+/// Send a notification digest.
+pub(crate) async fn send_email_digest(
+    Json(req): Json<SendEmailRequest>,
+) -> Result<Json<crate::email::Sent>, ApiError> {
+    let body = req
+        .body
+        .as_deref()
+        .ok_or(ApiError::BadRequest("body is required"))?;
+    Ok(Json(
+        crate::email::send_digest(&req.vendor, &req.secret, &req.from, &req.to, body).await,
+    ))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SendEmailRequest {
+    vendor: String,
+    /// The vendor API key. Never stored, never returned, never logged.
+    secret: String,
+    from: String,
+    to: String,
+    /// Required for a verification letter; the link the reader will click.
+    #[serde(default)]
+    verify_url: Option<String>,
+    /// Required for a digest.
+    #[serde(default)]
+    body: Option<String>,
 }
 
 #[cfg(test)]
