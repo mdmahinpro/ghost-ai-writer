@@ -1,4 +1,5 @@
 import { readMediaBatch } from "./images.functions";
+import { WORKSPACE_ID } from "./ftp-credentials";
 import { uploadFtps } from "./ops.functions";
 import { staticMedia } from "./static-site";
 import type { Article, Site, StaticBuild } from "./types";
@@ -18,10 +19,15 @@ export async function uploadAutoBuild(
   build: StaticBuild,
   articles: Article[],
 ): Promise<{ ok: true; files: number; host: string; note?: string } | { ok: false; reason: string }> {
-  const ftp = site.providers.find((provider) => provider.id === "cpanel" && provider.status === "verified")?.ftp;
-  if (!ftp?.host || !ftp.user || !ftp.password) {
+  const provider = site.providers.find((item) => item.id === "cpanel");
+  if (!provider || provider.status !== "verified") {
     return { ok: false, reason: "Upload skipped. cPanel hosting is not verified, so the auto-rebuild was recorded and not sent." };
   }
+  // The password is sealed on the server now: the browser sends the host and user
+  // it knows and a blank password, and the API opens the connection saved for this
+  // workspace. Requiring `ftp.password` here made every real upload skip itself,
+  // which is why a succeeded build never reached the live site.
+  const ftp = provider.ftp;
   const textFiles = build.artifact.map((file) => ({
     name: file.name,
     base64: textBase64(file.text),
@@ -45,15 +51,17 @@ export async function uploadAutoBuild(
   }
   const result = await uploadFtps({
     data: {
-      host: ftp.host,
-      user: ftp.user,
-      password: ftp.password,
-      port: ftp.port || 21,
-      path: ftp.path || "/",
-      via: ftp.via || "ftps",
+      host: ftp?.host ?? "",
+      user: ftp?.user ?? "",
+      // Blank on purpose: the API opens the sealed password saved for this workspace.
+      password: "",
+      port: ftp?.port || 21,
+      path: ftp?.path || "/public_html",
+      via: ftp?.via || "ftps",
+      workspace_id: WORKSPACE_ID,
       files,
     },
   });
   if (!result.ok) return { ok: false, reason: `Upload failed. ${result.error}` };
-  return { ok: true, files: result.files, host: ftp.host, note: note || undefined };
+  return { ok: true, files: result.files, host: result.host, note: note || undefined };
 }

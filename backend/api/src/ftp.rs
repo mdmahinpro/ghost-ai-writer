@@ -440,7 +440,7 @@ pub async fn upload(target: &FtpTarget, files: &[UploadedFile]) -> Value {
     .await;
     let _ = send(&mut control, "QUIT").await;
     match result {
-        Ok(()) => json!({ "ok": true, "files": files.len() }),
+        Ok(()) => json!({ "ok": true, "files": files.len(), "host": target.host.clone() }),
         Err(error) => failure(error),
     }
 }

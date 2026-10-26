@@ -58,20 +58,26 @@ export async function testFtpLogin(input: {
 }
 
 export async function uploadFtps(input: {
-  data: FtpTarget & { files?: { name: string; base64: string }[] };
-}): Promise<{ ok: true; files: number } | { ok: false; error: string }> {
+  data: FtpTarget & { workspace_id?: number; files?: { name: string; base64: string }[] };
+}): Promise<{ ok: true; files: number; host: string } | { ok: false; error: string }> {
   const d = input?.data ?? {};
-  const res = await post<{ ok: boolean; files?: number; error?: string }>("/api/v1/ftp/upload", {
-    host: d.host ?? "",
-    port: d.port ?? 21,
-    user: d.user ?? "",
-    password: d.password ?? "",
-    path: d.path ?? "/",
-    files: d.files ?? [],
-  });
+  const res = await post<{ ok: boolean; files?: number; host?: string; error?: string }>(
+    "/api/v1/ftp/upload",
+    {
+      host: d.host ?? "",
+      port: d.port ?? 21,
+      user: d.user ?? "",
+      // Blank means "use the password saved on the server for this workspace".
+      password: d.password ?? "",
+      path: d.path ?? "/",
+      via: d.via ?? "ftps",
+      workspace_id: d.workspace_id,
+      files: d.files ?? [],
+    },
+  );
   if (!res.ok) return { ok: false, error: res.error };
   if (!res.data.ok) return { ok: false, error: res.data.error ?? "The upload failed." };
-  return { ok: true, files: res.data.files ?? 0 };
+  return { ok: true, files: res.data.files ?? 0, host: res.data.host ?? d.host ?? "" };
 }
 
 export async function submitIndexNow(input: {
