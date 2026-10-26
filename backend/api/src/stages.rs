@@ -1798,9 +1798,27 @@ pub(crate) async fn ghost_config(
 /// was used, so an empty result is diagnosable instead of silent.
 pub async fn mirror_to_ghost(
     pool: &SqlitePool,
-    site_id: i64,
+    site_ref: &str,
     website_id: Option<i64>,
 ) -> serde_json::Value {
+    // The browser's site id is the snapshot's string id, so resolve it the same
+    // way the stage reader does: `sites.client_uid` is the bridge, and a plain
+    // numeric id still works for a direct API call.
+    let found: Option<i64> = match sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM sites WHERE client_uid = ? OR CAST(id AS TEXT) = ? LIMIT 1",
+    )
+    .bind(site_ref)
+    .bind(site_ref)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(found) => found,
+        Err(error) => return json!({ "ok": false, "error": error.to_string() }),
+    };
+    let site_id = match found.or_else(|| site_ref.parse::<i64>().ok()) {
+        Some(site_id) => site_id,
+        None => return json!({ "ok": false, "error": format!("No site matches {site_ref}.") }),
+    };
     let (mode, url, key) = match ghost_config(pool, site_id, website_id).await {
         Ok(resolved) => resolved,
         Err(error) => return json!({ "ok": false, "error": error.to_string() }),
@@ -2536,7 +2554,7 @@ mod tests {
     #[tokio::test]
     async fn the_cms_mirror_reports_the_missing_connection_instead_of_succeeding() {
         let pool = test_pool().await;
-        let out = mirror_to_ghost(&pool, 1, None).await;
+        let out = mirror_to_ghost(&pool, "1", None).await;
         assert_eq!(out["ok"], serde_json::json!(false));
         assert_eq!(out["mode"], serde_json::json!("SANDBOX"));
         let reason = out["error"].as_str().unwrap_or_default();

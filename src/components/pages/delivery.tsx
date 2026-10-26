@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { probePublicUrl } from "@/lib/ghost.functions";
 import { readMediaBatch } from "@/lib/images.functions";
-import { deployCloudflarePages, deployGithubPages, deployVercel, submitIndexNow, uploadFtps } from "@/lib/ops.functions";
+import { deployCloudflarePages, deployGithubPages, deployVercel, mirrorArticlesToCms, submitIndexNow, uploadFtps } from "@/lib/ops.functions";
 import { loadFtpCredentials, WORKSPACE_ID } from "@/lib/ftp-credentials";
 import { adsConfigHash, adCodeWithinLimit, slotConfigs, staticMedia } from "@/lib/static-site";
 import { useApp, useHydrated } from "@/lib/store";
@@ -99,6 +99,27 @@ export function DeliveryPage() {
     } finally {
       setPacking(false);
     }
+  }
+
+  // Backfill the CMS: the server pushes the articles Ghost does not have yet.
+  // Stage 6 pushes only at the moment an article publishes, so anything finished
+  // before the connection was saved stayed off the CMS with no way to catch up.
+  const [mirroring, setMirroring] = useState(false);
+  const [mirrorNote, setMirrorNote] = useState("");
+
+  async function mirrorToCms() {
+    setMirroring(true);
+    setMirrorNote("Pushing the articles the CMS does not have yet…");
+    const res = await mirrorArticlesToCms({ data: { site_ref: site.id } });
+    setMirroring(false);
+    if (!res.ok) {
+      setMirrorNote(res.error);
+      return;
+    }
+    const failed = res.failed.length ? ` · ${res.failed.length} failed: ${res.failed[0]}` : "";
+    setMirrorNote(
+      `Drafts added to the CMS: ${res.pushed}${failed}${res.pushed === 0 && !failed ? " · already in sync" : ""}`,
+    );
   }
 
   async function uploadLive(buildId: string) {
@@ -358,6 +379,14 @@ export function DeliveryPage() {
                   <Button variant="ghost" disabled={packing} onClick={() => void uploadLive(build.id)}>
                     {packing ? "Uploading…" : "Upload live (cPanel)"}
                   </Button>
+                ) : null}
+                {build.status === "succeeded" ? (
+                  <>
+                    <Button variant="ghost" disabled={mirroring} onClick={() => void mirrorToCms()}>
+                      {mirroring ? "Mirroring…" : "Mirror articles to the CMS"}
+                    </Button>
+                    {mirrorNote ? <span className="text-xs text-muted">{mirrorNote}</span> : null}
+                  </>
                 ) : null}
                 {deploy ? (
                   <>

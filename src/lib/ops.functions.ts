@@ -156,6 +156,31 @@ type AdapterResult =
   | { ok: true; detail: string; url?: string; files: number }
   | { ok: false; error: string };
 
+export async function mirrorArticlesToCms(input: {
+  data: { site_ref: string; website_id?: number };
+}): Promise<
+  | { ok: true; mode: string; url: string; pushed: number; failed: string[] }
+  | { ok: false; error: string }
+> {
+  const res = await post<{
+    ok: boolean;
+    mode?: string;
+    url?: string;
+    pushed?: number;
+    failed?: string[];
+    error?: string;
+  }>("/api/v1/ghost/mirror", input.data, LONG_CALL_S);
+  if (!res.ok) return { ok: false, error: res.error };
+  if (!res.data.ok) return { ok: false, error: res.data.error ?? "The CMS refused the request." };
+  return {
+    ok: true,
+    mode: res.data.mode ?? "",
+    url: res.data.url ?? "",
+    pushed: res.data.pushed ?? 0,
+    failed: res.data.failed ?? [],
+  };
+}
+
 export async function deployCloudflarePages(input: {
   data: { accountId?: string; token?: string; projectName?: string; files?: DeployFile[] };
 }): Promise<AdapterResult> {

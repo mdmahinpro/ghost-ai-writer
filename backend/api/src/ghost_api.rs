@@ -375,12 +375,13 @@ pub(crate) async fn ghost_mirror(
     axum::extract::State(st): axum::extract::State<crate::AppState>,
     Json(req): Json<MirrorRequest>,
 ) -> Json<serde_json::Value> {
-    Json(crate::stages::mirror_to_ghost(&st.pool, req.site_id, req.website_id).await)
+    Json(crate::stages::mirror_to_ghost(&st.pool, &req.site_ref, req.website_id).await)
 }
 
 #[derive(Deserialize)]
 pub(crate) struct MirrorRequest {
-    site_id: i64,
+    /// The site as the studio names it (`sites.client_uid`), or a numeric id.
+    site_ref: String,
     #[serde(default)]
     website_id: Option<i64>,
 }
