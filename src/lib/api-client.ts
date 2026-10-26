@@ -110,6 +110,14 @@ function notifyTokenState(): void {
 /** Standard timeout for every API call (seconds). */
 const TIMEOUT_S = 30;
 
+/**
+ * Budget for a call that moves bulk data — the FTPS upload writes every page and
+ * image of a build to the host one file at a time, which a 30-second cap killed
+ * mid-transfer. The server keeps going after an abort, so a short cap reads as a
+ * failed upload while the site is actually being written.
+ */
+export const LONG_CALL_S = 300;
+
 /** The Rust backend returns errors shaped like this. */
 export type ApiErrorBody = { error?: string };
 
@@ -149,9 +157,10 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  timeoutS: number = TIMEOUT_S,
 ): Promise<ApiResponse<T>> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_S * 1000);
+  const timer = setTimeout(() => controller.abort(), timeoutS * 1000);
 
   try {
     const resp = await fetch(`${API_BASE}${path}`, {
@@ -212,8 +221,8 @@ export function get<T>(path: string): Promise<ApiResponse<T>> {
   return request<T>("GET", path);
 }
 
-export function post<T>(path: string, body?: unknown): Promise<ApiResponse<T>> {
-  return request<T>("POST", path, body);
+export function post<T>(path: string, body?: unknown, timeoutS?: number): Promise<ApiResponse<T>> {
+  return request<T>("POST", path, body, timeoutS);
 }
 
 export function del<T>(path: string): Promise<ApiResponse<T>> {

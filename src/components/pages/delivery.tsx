@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { probePublicUrl } from "@/lib/ghost.functions";
 import { readMediaBatch } from "@/lib/images.functions";
 import { deployCloudflarePages, deployGithubPages, deployVercel, submitIndexNow, uploadFtps } from "@/lib/ops.functions";
+import { loadFtpCredentials, WORKSPACE_ID } from "@/lib/ftp-credentials";
 import { adsConfigHash, adCodeWithinLimit, slotConfigs, staticMedia } from "@/lib/static-site";
 import { useApp, useHydrated } from "@/lib/store";
 import { zipStore } from "@/lib/zip";
@@ -55,6 +56,7 @@ export function DeliveryPage() {
   const acknowledgeRouteDiff = useApp((s) => s.acknowledgeRouteDiff);
   const rebuildForRouteDiff = useApp((s) => s.rebuildForRouteDiff);
   const saveProviderApi = useApp((s) => s.saveProviderApi);
+  const saveFtp = useApp((s) => s.saveFtp);
   const verifyProvider = useApp((s) => s.verifyProvider);
   const logEvent = useApp((s) => s.logEvent);
   const [packing, setPacking] = useState(false);
@@ -100,33 +102,61 @@ export function DeliveryPage() {
   }
 
   async function uploadLive(buildId: string) {
-    const ftp = site.providers.find((provider) => provider.id === "cpanel" && provider.status === "verified")?.ftp;
-    if (!ftp?.host || !ftp.user || !ftp.password) {
-      setUploadNote("No live copy yet. Verify cPanel on Connections first.");
+    // The connection is whatever the server holds for this workspace. The
+    // browser copy of the provider card is a leftover from when the password
+    // lived in localStorage, and it reads "not_connected" even after a verified
+    // test, so it must not be the thing that decides whether to upload.
+    const saved = await loadFtpCredentials();
+    if (!saved?.has_password) {
+      setUploadNote("No live copy yet. Save the cPanel connection on Connections first.");
       return;
     }
     setPacking(true);
-    setUploadNote("Uploading the static files. This finishes or fails within 30 seconds.");
+    setUploadNote("Uploading the static files. A full build writes tens of files, so give it up to five minutes.");
     let settled = false;
     const watchdog = window.setTimeout(() => {
       if (settled) return;
       settled = true;
       setPacking(false);
       setUploadNote("Upload did not finish. The host stopped answering. Check the cPanel hostname, port, and remote directory.");
-    }, 30000);
+    }, 300000);
     try {
       const files = await packedFiles();
       const result = await uploadFtps({
-        data: { host: ftp.host, user: ftp.user, password: ftp.password, port: ftp.port || 21, path: ftp.path || "/", via: ftp.via || "ftps", files },
+        data: {
+          host: saved.host,
+          user: saved.username,
+          // Blank on purpose: the API opens the password sealed for this workspace.
+          password: "",
+          port: saved.port || 21,
+          path: saved.remote_dir || "/public_html",
+          via: "ftps",
+          workspace_id: WORKSPACE_ID,
+          files,
+        },
       });
       if (settled) return;
       if (!result.ok) {
         setUploadNote(result.error);
         return;
       }
+      const host = result.host || saved.host;
+      // The provider card in this browser is a leftover from the localStorage
+      // era and still reads "not_connected"; sync it from the connection the
+      // server just used, or packageBuild refuses to record the deploy and the
+      // page keeps saying there is no live copy.
+      saveFtp("cpanel", {
+        host: saved.host,
+        user: saved.username,
+        path: saved.remote_dir || "/public_html",
+        password: "",
+        port: saved.port,
+        publicUrl: saved.public_url || undefined,
+        trust_cert: saved.trust_cert,
+      });
       const deployId = packageBuild(buildId, "cpanel");
       if (deployId) void probe(deployId);
-      setUploadNote(deployId ? `Uploaded ${result.files} files to ${ftp.host}. Run Live probe before calling the site live.` : `Uploaded ${result.files} files, but the deploy was held. Check the route-diff card.`);
+      setUploadNote(deployId ? `Uploaded ${result.files} files to ${host}. Run Live probe before calling the site live.` : `Uploaded ${result.files} files, but the deploy was held. Check the route-diff card.`);
     } catch (error) {
       if (!settled) setUploadNote(error instanceof Error ? error.message : "Upload failed.");
     } finally {

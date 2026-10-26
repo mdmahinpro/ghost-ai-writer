@@ -1,5 +1,5 @@
 import { readMediaBatch } from "./images.functions";
-import { WORKSPACE_ID } from "./ftp-credentials";
+import { loadFtpCredentials, WORKSPACE_ID } from "./ftp-credentials";
 import { uploadFtps } from "./ops.functions";
 import { staticMedia } from "./static-site";
 import type { Article, Site, StaticBuild } from "./types";
@@ -19,15 +19,13 @@ export async function uploadAutoBuild(
   build: StaticBuild,
   articles: Article[],
 ): Promise<{ ok: true; files: number; host: string; note?: string } | { ok: false; reason: string }> {
-  const provider = site.providers.find((item) => item.id === "cpanel");
-  if (!provider || provider.status !== "verified") {
-    return { ok: false, reason: "Upload skipped. cPanel hosting is not verified, so the auto-rebuild was recorded and not sent." };
+  // The connection is whatever the server holds for this workspace: the browser
+  // no longer has the password, and its provider card still reads "not_connected"
+  // after a verified test. Asking the API is the only check that means anything.
+  const saved = await loadFtpCredentials();
+  if (!saved?.has_password) {
+    return { ok: false, reason: "Upload skipped. No cPanel connection is saved for this workspace, so the auto-rebuild was recorded and not sent." };
   }
-  // The password is sealed on the server now: the browser sends the host and user
-  // it knows and a blank password, and the API opens the connection saved for this
-  // workspace. Requiring `ftp.password` here made every real upload skip itself,
-  // which is why a succeeded build never reached the live site.
-  const ftp = provider.ftp;
   const textFiles = build.artifact.map((file) => ({
     name: file.name,
     base64: textBase64(file.text),
@@ -51,13 +49,13 @@ export async function uploadAutoBuild(
   }
   const result = await uploadFtps({
     data: {
-      host: ftp?.host ?? "",
-      user: ftp?.user ?? "",
-      // Blank on purpose: the API opens the sealed password saved for this workspace.
+      host: saved.host,
+      user: saved.username,
+      // Blank on purpose: the API opens the password sealed for this workspace.
       password: "",
-      port: ftp?.port || 21,
-      path: ftp?.path || "/public_html",
-      via: ftp?.via || "ftps",
+      port: saved.port || 21,
+      path: saved.remote_dir || "/public_html",
+      via: "ftps",
       workspace_id: WORKSPACE_ID,
       files,
     },

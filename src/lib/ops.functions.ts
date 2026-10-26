@@ -6,7 +6,7 @@
  * pinned, session reuse), the IndexNow key-file proof, and the provider calls.
  * Credentials still travel per request from Connections and are never stored.
  */
-import { post } from "./api-client";
+import { LONG_CALL_S, post } from "./api-client";
 
 export type FtpStep = { name: string; ok: boolean; ms: number; detail: string };
 
@@ -74,6 +74,9 @@ export async function uploadFtps(input: {
       workspace_id: d.workspace_id,
       files: d.files ?? [],
     },
+    // A build is tens of files written one at a time; the standard 30-second cap
+    // aborted real uploads mid-transfer.
+    LONG_CALL_S,
   );
   if (!res.ok) return { ok: false, error: res.error };
   if (!res.data.ok) return { ok: false, error: res.data.error ?? "The upload failed." };
