@@ -1553,6 +1553,87 @@ fn word_count(text: &str) -> i64 {
     text.split_whitespace().count() as i64
 }
 
+/// The Ghost connection a publish actually uses.
+///
+/// `websites.ghost_*` is authoritative when it carries a connection. Nothing in
+/// this build writes those columns, so the fallback is the connection the
+/// operator saved in the studio: the browser keeps it on the site
+/// (`sites[].ghost`, admin key included) and that whole object travels with the
+/// synced snapshot. `sites.client_uid` is the bridge — it holds the snapshot's
+/// site id. Without this fallback every LIVE run resolved `Unconfigured` and
+/// held its article, so Ghost was never attempted at all.
+async fn ghost_config(
+    pool: &SqlitePool,
+    site_id: i64,
+    website_id: Option<i64>,
+) -> Result<(String, Option<String>, Option<String>), sqlx::Error> {
+    if let Some(wid) = website_id {
+        let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT ghost_mode, ghost_url, ghost_admin_key_enc FROM websites WHERE id = ?",
+        )
+        .bind(wid)
+        .fetch_optional(pool)
+        .await?;
+        if let Some((mode, url, key)) = row {
+            let url = url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
+            let key = key
+                .map(|k| {
+                    if crate::secrets::looks_sealed(&k) {
+                        crate::secrets::open_secret(&k).unwrap_or_default()
+                    } else {
+                        k.trim().to_string()
+                    }
+                })
+                .filter(|k| !k.is_empty());
+            if url.is_some() && key.is_some() {
+                return Ok((mode, url, key));
+            }
+        }
+    }
+    let Some((workspace_id, uid)) = sqlx::query_as::<_, (i64, Option<String>)>(
+        "SELECT workspace_id, client_uid FROM sites WHERE id = ?",
+    )
+    .bind(site_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(("SANDBOX".to_string(), None, None));
+    };
+    let payload: Option<String> =
+        sqlx::query_scalar("SELECT payload FROM app_state WHERE workspace_id = ?")
+            .bind(workspace_id)
+            .fetch_optional(pool)
+            .await?;
+    let state: Value = payload
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or_else(|| json!({}));
+    let ghost = state
+        .get("sites")
+        .and_then(Value::as_array)
+        .and_then(|sites| {
+            sites
+                .iter()
+                .find(|row| row.get("id").and_then(Value::as_str) == uid.as_deref())
+        })
+        .and_then(|row| row.get("ghost"));
+    let Some(ghost) = ghost else {
+        return Ok(("SANDBOX".to_string(), None, None));
+    };
+    let field = |key: &str| {
+        ghost
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let mode = if field("mode").as_deref() == Some("live") {
+        "LIVE"
+    } else {
+        "SANDBOX"
+    };
+    Ok((mode.to_string(), field("url"), field("adminKey")))
+}
+
 /// Stage 6 — the release gate and Ghost publish. Returns the article's final
 /// status so the e2e test can assert the exact outcome.
 pub async fn run_validation(
@@ -1757,18 +1838,9 @@ pub async fn run_validation(
     // it with the reason recorded instead of failing the stage: the content is
     // already paid for, and the static delivery can still ship it. The hold is
     // what stops a retry from double-publishing.
-    let (ghost_mode, ghost_url, ghost_key): (String, Option<String>, Option<String>) =
-        match website_id {
-            Some(wid) => {
-                sqlx::query_as(
-                    "SELECT ghost_mode, ghost_url, ghost_admin_key_enc FROM websites WHERE id = ?",
-                )
-                .bind(wid)
-                .fetch_one(pool)
-                .await?
-            }
-            None => ("SANDBOX".to_string(), None, None),
-        };
+    // The connection the operator saved: the website row when it carries one,
+    // otherwise the studio's synced snapshot (see `ghost_config`).
+    let (ghost_mode, ghost_url, ghost_key) = ghost_config(pool, site_id, website_id).await?;
     // Stage 4's packaged metadata (slug, excerpt, tags) — read before the slug
     // decision, because the packaged slug is what publish prefers.
     let meta_raw: Option<String> =

@@ -1116,6 +1116,77 @@ mod tests {
         assert_eq!(stage6_rows, 1, "stage 6 committed twice");
     }
 
+    /// The connection the operator saved in the studio must reach the worker.
+    ///
+    /// Nothing writes `websites.ghost_*`, so the publish stage resolves the
+    /// connection from the synced snapshot (`sites.client_uid` is the bridge).
+    /// Before that every LIVE run answered `Unconfigured` and held its article,
+    /// so Ghost was never attempted at all and this is the first proof that a
+    /// real push happens end to end.
+    #[tokio::test]
+    async fn a_ghost_connection_saved_in_the_studio_is_used_by_the_worker() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let p = pool().await;
+
+        // A stub Ghost that accepts the post.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stub = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let _ = sock.read(&mut buf).await.unwrap();
+            let body = r#"{"post":{"id":"gh_1","url":"https://cms.example/p/gh-1"}}"#;
+            let response = format!(
+                "HTTP/1.1 201 Created\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len(),
+            );
+            sock.write_all(response.as_bytes()).await.unwrap();
+            sock.flush().await.unwrap();
+        });
+
+        // The studio's saved connection, shaped exactly as the browser syncs it:
+        // the site carries `ghost` (admin key included) and `client_uid` is that
+        // site's id in the snapshot.
+        let state = serde_json::json!({
+            "sites": [{
+                "id": "s1",
+                "ghost": {
+                    "mode": "live",
+                    "status": "connected",
+                    "url": format!("http://127.0.0.1:{port}"),
+                    "adminKey": "64f1b2c3d4e5f607:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                }
+            }]
+        });
+        sqlx::query("UPDATE sites SET client_uid = 's1' WHERE id = 1")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO app_state (workspace_id, generation, payload, updated_at) VALUES (1, 1, ?, '2026-01-01T00:00:00Z')",
+        )
+        .bind(state.to_string())
+        .execute(&p)
+        .await
+        .unwrap();
+
+        enqueue(&p, 1).await;
+        run_once(&p, "w1", DEFAULT_LEASE_SECS).await.unwrap();
+        stub.await.unwrap();
+
+        let (status, post_id): (String, Option<String>) =
+            sqlx::query_as("SELECT status, ghost_post_id FROM articles WHERE site_id = 1")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "PUBLISHED",
+            "a connection saved in the studio must be pushed with"
+        );
+        assert_eq!(post_id.as_deref(), Some("gh_1"));
+    }
+
     /// A Ghost that answers and REFUSES the push must hold the article, not fail
     /// the stage. The body is sealed either way, so failing the run threw away a
     /// fully written, fully billed article and left the row with no content for
