@@ -6,7 +6,7 @@
  * pinned, session reuse), the IndexNow key-file proof, and the provider calls.
  * Credentials still travel per request from Connections and are never stored.
  */
-import { LONG_CALL_S, post } from "./api-client";
+import { LONG_CALL_S, post } from "./api-client.ts";
 
 export type FtpStep = { name: string; ok: boolean; ms: number; detail: string };
 

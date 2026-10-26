@@ -26,6 +26,7 @@ import type { BladerChat } from "./humanizer.ts";
 import { anchorPhrase, alreadyLinked, inboundCount, insertAnchor, linkEdge, linkSentence, postHref, retargetAnchor, unwrapAnchor } from "./link-graph.ts";
 import { cosine, embed, embedAllForL3, embedForL3, type L3EmbedSource } from "./l3-embed.ts";
 import { applyFetchedImages } from "./media-html.ts";
+import { submitIndexNow } from "./ops.functions.ts";
 import {
   MIN_ARTICLE_WORDS,
   STAGE_PROMPT_VERSIONS,
@@ -2823,13 +2824,30 @@ export function applyProbe(data: Persisted, deployId: string, ok: boolean, detai
   if (ok) {
     const build = next.builds.find((item) => item.id === dep.buildId);
     const site = next.sites.find((item) => item.id === dep.siteId);
-    const provider = site?.providers.find((item) => item.id === "cpanel" && item.status === "verified");
     const key = site?.indexNowKey;
-    if (build && site && provider?.ftp && key && build.includedIds.length) {
-      next.notice = { tone: "info", text: "Public probe passed. IndexNow submission is queued after confirming the key file." };
-      log(next, site.id, "info", `IndexNow ready · ${build.includedIds.length} changed URL(s) · ${key}.txt key confirmed by public probe`, now);
+    if (build && site && key && build.includedIds.length) {
+      // The server writes `<key>.txt` to the public root and calls Bing over its
+      // own sealed FTPS connection, so nothing here needs browser credentials.
+      // This used to also require the local cPanel provider card — which never
+      // reads "verified" now that the password lives server-side — so every
+      // submission was skipped and the notice blamed the key file.
+      const base = (site.publicUrl ?? "").replace(/\/+$/, "");
+      const mine = next.articles.filter((article) => article.siteId === site.id);
+      const urls = build.includedIds.flatMap((id) => {
+        const article = mine.find((item) => item.id === id);
+        return article ? [`${base}/post/${article.slug}/`] : [];
+      });
+      next.notice = { tone: "info", text: "Public probe passed. Submitting the changed URLs to IndexNow." };
+      log(next, site.id, "info", `IndexNow submission · ${urls.length} changed URL(s) · key file ${key}.txt`, now);
+      void submitIndexNow({ data: { publicUrl: site.publicUrl, key, urls, verified: true } }).then(
+        (res) => {
+          if (!res.ok) console.warn(`IndexNow submission failed: ${res.error}`);
+        },
+      );
+    } else if (key) {
+      next.notice = { tone: "warn", text: "Public probe passed, but IndexNow was skipped: this build changed no URLs." };
     } else {
-      next.notice = { tone: "warn", text: "Public probe passed, but IndexNow was skipped because the site has no verified key-file configuration." };
+      next.notice = { tone: "warn", text: "Public probe passed, but IndexNow was skipped: set an IndexNow key on Analytics first." };
     }
   }
   return next;
