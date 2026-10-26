@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { HumanizeBanner, HUMANIZER_MISSING } from "@/components/humanize-pipeline";
 import { AuthorAvatar } from "@/components/pages/authors";
 import { bingChecks, bingScore, alignKeywordToQuery, nearDuplicateSibling } from "@/lib/bing";
@@ -11,6 +11,7 @@ import { articleFromMarkdown, ensureMarkdownLinks } from "@/lib/rewrite";
 import { applyFetchedImages } from "@/lib/media-html";
 import { articleImageSrc } from "@/lib/image-urls";
 import { useApp, useHydrated } from "@/lib/store";
+import { forgetArticles } from "@/lib/ops.functions";
 import type { Article } from "@/lib/types";
 import { Badge, Button, Card, Empty, PageIntro, SkeletonRows, StateNote, StatusGlyph, statusTone, fieldClass, fieldCompact } from "@/components/ui";
 import { relTime } from "@/lib/utils";
@@ -24,6 +25,8 @@ export function ArticlesPage() {
   const [status, setStatus] = useState<"all" | "draft" | "published">("all");
   const [engine, setEngine] = useState<"all" | "llm" | "fallback">("all");
   const [picked, setPicked] = useState<string[]>([]);
+  // Deleting is two clicks: the first arms the button, the second drops the rows.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteArticles = useApp((s) => s.deleteArticles);
   const rows = useMemo(
     () =>
@@ -35,6 +38,17 @@ export function ArticlesPage() {
       }),
     [articles, q, status, engine],
   );
+
+  const allPicked = rows.length > 0 && rows.every((article) => picked.includes(article.id));
+  const toggleAll = () =>
+    setPicked((current) =>
+      rows.length > 0 && rows.every((article) => current.includes(article.id))
+        ? current.filter((id) => !rows.some((article) => article.id === id))
+        : [...new Set([...current, ...rows.map((article) => article.id)])],
+    );
+
+  // A new selection must not inherit the previous one's armed confirmation.
+  useEffect(() => setConfirmDelete(false), [picked.length]);
 
   function exportCsv() {
     const header = ["title", "slug", "engine", "status", "links", "images", "uniqueness", "published"];
@@ -105,6 +119,20 @@ export function ArticlesPage() {
           <option value="fallback">Fallback</option>
         </select>
         <div className="ml-auto flex items-center gap-1.5">
+          <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+            <input
+              type="checkbox"
+              aria-label={allPicked ? `Clear the selection of ${rows.length} articles` : `Select all ${rows.length} articles`}
+              checked={allPicked}
+              ref={(node) => {
+                if (node) node.indeterminate = picked.length > 0 && !allPicked;
+              }}
+              onChange={toggleAll}
+              disabled={!rows.length}
+              className="size-3.5 shrink-0 accent-[var(--color-accent)]"
+            />
+            {allPicked ? "Clear selection" : `Select all${rows.length ? ` (${rows.length})` : ""}`}
+          </label>
           <Button variant="ghost" size="sm" onClick={exportCsv} disabled={!rows.length}>
             Export CSV
           </Button>
@@ -113,11 +141,20 @@ export function ArticlesPage() {
             size="sm"
             disabled={!picked.length}
             onClick={() => {
+              if (!confirmDelete) {
+                setConfirmDelete(true);
+                return;
+              }
+              const slugs = articles.filter((article) => picked.includes(article.id)).map((article) => article.slug);
+              // The server keeps its own copy of every article, so tell it too —
+              // otherwise the CMS mirror keeps pushing rows the studio dropped.
+              if (siteId && slugs.length) void forgetArticles({ data: { site_ref: siteId, slugs } });
               deleteArticles(picked);
               setPicked([]);
+              setConfirmDelete(false);
             }}
           >
-            Delete{picked.length ? ` (${picked.length})` : ""}
+            {confirmDelete ? `Delete ${picked.length} for good` : `Delete${picked.length ? ` (${picked.length})` : ""}`}
           </Button>
         </div>
       </div>
@@ -146,6 +183,19 @@ export function ArticlesPage() {
             .map((group) => (
               <section key={group.key}>
                 <header className="sticky top-14 z-10 flex h-8 items-center gap-2 border-b border-line-strong/50 bg-surface-2/60 px-2.5 backdrop-blur">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select the ${group.count} ${group.label.toLowerCase()} article(s)`}
+                    checked={group.rows.every((article) => picked.includes(article.id))}
+                    onChange={(event) =>
+                      setPicked((current) =>
+                        event.target.checked
+                          ? [...new Set([...current, ...group.rows.map((article) => article.id)])]
+                          : current.filter((id) => !group.rows.some((article) => article.id === id)),
+                      )
+                    }
+                    className="size-3.5 shrink-0 accent-[var(--color-accent)]"
+                  />
                   <StatusGlyph status={group.key} />
                   <span className="text-[12px] font-medium text-fg">{group.label}</span>
                   <span className="num text-[11px] text-faint">{group.count}</span>
@@ -159,7 +209,7 @@ export function ArticlesPage() {
                       onChange={(event) =>
                         setPicked((current) => (event.target.checked ? [...current, article.id] : current.filter((id) => id !== article.id)))
                       }
-                      className="size-3.5 shrink-0 accent-[var(--color-accent)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100"
+                      className="size-3.5 shrink-0 accent-[var(--color-accent)] opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100 checked:opacity-100"
                     />
                     <span className="num hidden w-16 shrink-0 text-[11px] text-faint sm:inline">{article.id.replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase()}</span>
                     <StatusGlyph status={article.status} className="sm:hidden" />

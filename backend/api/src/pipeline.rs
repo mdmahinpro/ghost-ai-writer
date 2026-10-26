@@ -355,6 +355,61 @@ pub async fn requeue_job(
 
 use crate::{clamp_limit, AppState, NOW};
 
+#[derive(Deserialize)]
+pub(crate) struct ForgetArticlesRequest {
+    /// The site as the studio names it (`sites.client_uid`), or a numeric id.
+    site_ref: String,
+    slugs: Vec<String>,
+}
+
+/// Mark articles deleted, by site and slug.
+///
+/// The studio drops the rows locally first, so this is what keeps the server's
+/// copy honest: a row left alive here is a row the CMS mirror still pushes and a
+/// later snapshot still carries. Deletion is a status, not a DELETE, so the
+/// article's history stays inspectable.
+pub(crate) async fn forget_articles(
+    State(st): State<AppState>,
+    Json(req): Json<ForgetArticlesRequest>,
+) -> Json<serde_json::Value> {
+    let site_id: Option<i64> = match sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM sites WHERE client_uid = ? OR CAST(id AS TEXT) = ? LIMIT 1",
+    )
+    .bind(&req.site_ref)
+    .bind(&req.site_ref)
+    .fetch_optional(&st.pool)
+    .await
+    {
+        Ok(found) => found,
+        Err(error) => return Json(serde_json::json!({ "ok": false, "error": error.to_string() })),
+    };
+    let Some(site_id) = site_id else {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": format!("No site matches {}.", req.site_ref),
+        }));
+    };
+    let mut deleted = 0usize;
+    let mut missing: Vec<String> = Vec::new();
+    for slug in req.slugs.iter().filter(|slug| !slug.trim().is_empty()) {
+        match sqlx::query("UPDATE articles SET status = 'DELETED' WHERE site_id = ? AND slug = ?")
+            .bind(site_id)
+            .bind(slug)
+            .execute(&st.pool)
+            .await
+        {
+            Ok(done) if done.rows_affected() > 0 => deleted += 1,
+            Ok(_) => missing.push(slug.clone()),
+            Err(error) => missing.push(format!("{slug}: {error}")),
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "deleted": deleted,
+        "missing": missing,
+    }))
+}
+
 pub(crate) async fn list_workspaces(
     State(st): State<AppState>,
     Query(q): Query<PageQuery>,

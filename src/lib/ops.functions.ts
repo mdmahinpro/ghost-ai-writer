@@ -156,6 +156,24 @@ type AdapterResult =
   | { ok: true; detail: string; url?: string; files: number }
   | { ok: false; error: string };
 
+export function forgetArticles(input: {
+  data: { site_ref: string; slugs: string[] };
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Fire-and-forget from the article list: the studio drops the rows locally and
+  // this keeps the server's copy in step, so the CMS mirror stops pushing them.
+  return forgetArticlesRequest(input.data);
+}
+
+async function forgetArticlesRequest(payload: {
+  site_ref: string;
+  slugs: string[];
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await post<{ ok: boolean; error?: string }>("/api/v1/articles/forget", payload);
+  if (!res.ok) return { ok: false, error: res.error };
+  if (!res.data.ok) return { ok: false, error: res.data.error ?? "The server refused the delete." };
+  return { ok: true };
+}
+
 export async function mirrorArticlesToCms(input: {
   data: { site_ref: string; website_id?: number };
 }): Promise<
