@@ -44,7 +44,10 @@ export function CreatePage() {
   const { marks, kept } = classifyLines(lines, limits.keywordCap);
   const ideaOptions = useMemo(() => [8, 12, 16, 20, 50, 100].filter((count) => limits.ideaCap == null || count <= limits.ideaCap), [limits.ideaCap]);
   const effective = publishMode === "default" ? site.voice.publishAs : publishMode;
-  const chosen = keys.find((key) => key.id === (modelKeyId === "default" ? site.voice.modelKeyId : modelKeyId));
+  // Only this workspace's keys: a key saved in another workspace is not offered
+  // here, and a workspace that has none must have one added by hand.
+  const siteKeys = useMemo(() => keys.filter((key) => key.siteId === site.id), [keys, site.id]);
+  const chosen = siteKeys.find((key) => key.id === (modelKeyId === "default" ? site.voice.modelKeyId : modelKeyId));
   // A key saved on the server keeps no local `secret` by design — `addKey` seals it
   // there and drops it here, leaving `serverKeyId` as the proof it exists. Treating
   // "no secret" as "no key" disabled Start run for every server-saved key.
@@ -121,10 +124,19 @@ export function CreatePage() {
                   <option value="draft">Save as Ghost draft (review first)</option>
                 </select>
               </Field>
-              <Field label="AI model" hint={needsKey ? "This model needs a key." : "Account default uses the model on Content settings."}>
+              <Field
+                label="AI model"
+                hint={
+                  siteKeys.length === 0
+                    ? "No AI key is saved in this workspace yet. Add one on AI Keys."
+                    : needsKey
+                      ? "This model needs a key."
+                      : "This workspace's key uses the model on Content settings."
+                }
+              >
                 <select className={fieldClass} value={modelKeyId} onChange={(e) => setModelKeyId(e.target.value)}>
-                  <option value="default">Account default</option>
-                  {keys.map((key) => (
+                  <option value="default">This workspace’s key</option>
+                  {siteKeys.map((key) => (
                     <option key={key.id} value={key.id} disabled={key.disabled}>
                       {key.label} · {key.model}
                       {key.disabled ? " · needs a key" : ""}
@@ -287,7 +299,7 @@ export function CreatePage() {
                   try {
                     // Hotfix: only a credential-eligible key may propose a model plan.
                     // The studio ledger key has no secret/baseUrl — fall back to makePlan.
-                    const pool = keyPool(useApp.getState(), site.voice.modelKeyId, Date.now()).filter((key) => keyCallsModel(key));
+                    const pool = keyPool(useApp.getState(), site.voice.modelKeyId, Date.now(), site.id).filter((key) => keyCallsModel(key));
                     if (pool.length) {
                       const proposed = await proposePlan({ keys: pool, topic });
                       if (proposed) {

@@ -74,7 +74,7 @@ export function embeddingModelFor(key: Pick<AiKey, "providerKind" | "provider" |
 export const MODEL_CATALOG: CatalogModel[] = [
   // --- OpenAI (live catalog 2026-10-16) ---
   { id: "openai/gpt-4o-mini", provider: "openai", modelId: "gpt-4o-mini", label: "OpenAI GPT-4o mini", group: "fast", inputPricePerMillion: 0.15, outputPricePerMillion: 0.6, baseUrl: PROVIDER_BASE_URLS.openai },
-  { id: "openai/gpt-5.6-luna", provider: "openai", modelId: "gpt-5.6-luna", label: "OpenAI GPT-5.6 Luna", group: "fast", inputPricePerMillion: 0.2, outputPricePerMillion: 1.2, baseUrl: PROVIDER_BASE_URLS.openai, note: "Live account default" },
+  { id: "openai/gpt-5.6-luna", provider: "openai", modelId: "gpt-5.6-luna", label: "OpenAI GPT-5.6 Luna", group: "fast", inputPricePerMillion: 0.2, outputPricePerMillion: 1.2, baseUrl: PROVIDER_BASE_URLS.openai, note: "Live default" },
   { id: "openai/gpt-5-mini", provider: "openai", modelId: "gpt-5-mini", label: "OpenAI GPT-5 mini", group: "balanced", inputPricePerMillion: 0.25, outputPricePerMillion: 2, baseUrl: PROVIDER_BASE_URLS.openai, note: "Retires 2026-12-11" },
   { id: "openai/gpt-4.1-mini", provider: "openai", modelId: "gpt-4.1-mini", label: "OpenAI GPT-4.1 mini", group: "balanced", inputPricePerMillion: 0.4, outputPricePerMillion: 1.6, baseUrl: PROVIDER_BASE_URLS.openai },
   { id: "openai/gpt-5.4-mini", provider: "openai", modelId: "gpt-5.4-mini", label: "OpenAI GPT-5.4 Mini", group: "fast", inputPricePerMillion: 0.75, outputPricePerMillion: 4.5, baseUrl: PROVIDER_BASE_URLS.openai },

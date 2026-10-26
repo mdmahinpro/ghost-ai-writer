@@ -21,6 +21,8 @@ function key(overrides: Partial<AiKey> = {}): AiKey {
     allowanceUsd: 1000,
     disabled: false,
     pricePerM: 0.7,
+    // A saved key belongs to the workspace that saved it — and only that one.
+    siteId: "s1",
     baseUrl: "https://api.example/v1",
     secret: "sk-test",
     ...overrides,

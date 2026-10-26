@@ -873,10 +873,16 @@ export function titleFor(keyword: string, variant: boolean): string {
  * failover), never dropped. Entry 0 is the preferred key when it is healthy;
  * the rest are the auto-failover order by priority.
  */
-export function keyPool(data: Persisted, preferred: string | undefined, now: number): AiKey[] {
+export function keyPool(
+  data: Persisted,
+  preferred: string | undefined,
+  now: number,
+  siteId?: string,
+): AiKey[] {
   const demote = (k: AiKey): number => (k.disabled ? 2 : 0) + (k.cooldownUntil && k.cooldownUntil > now ? 1 : 0);
   return [...data.keys]
     .filter((k) => k.chat !== false)
+    .filter((k) => !siteId || keyBelongsTo(k, siteId))
     .sort((a, b) => {
       const ad = demote(a);
       const bd = demote(b);
@@ -890,8 +896,25 @@ export function keyPool(data: Persisted, preferred: string | undefined, now: num
     });
 }
 
-export function usableKey(data: Persisted, preferred: string | undefined, now: number): AiKey | null {
-  return keyPool(data, preferred, now)[0] ?? null;
+/**
+ * A saved key belongs to exactly one workspace.
+ *
+ * There is no account-wide key and no fallback pool: the only key a workspace
+ * may spend is one that was saved in it. A key stored before scoping existed
+ * (no owner) is claimed on load by `migratePersistedSnapshot`, so it is not
+ * shared between workspaces afterwards.
+ */
+export function keyBelongsTo(key: AiKey, siteId: string): boolean {
+  return key.siteId === siteId;
+}
+
+export function usableKey(
+  data: Persisted,
+  preferred: string | undefined,
+  now: number,
+  siteId?: string,
+): AiKey | null {
+  return keyPool(data, preferred, now, siteId)[0] ?? null;
 }
 
 function pushEvent(data: Persisted, event: UsageEvent) {
@@ -989,7 +1012,7 @@ export async function submitKeywords(
     return { data, error: "Live publish is off. This Ghost connection is not live. Save the run as a draft." };
   }
   const preferred = input.modelKeyId === "default" ? site.voice.modelKeyId : input.modelKeyId;
-  const key = usableKey(data, preferred, input.now);
+  const key = usableKey(data, preferred, input.now, site.id);
   if (!key) return { data, error: "NO_USABLE_KEY — no AI key is saved for this workspace. Add one on AI Keys." };
 
   const next: Persisted = structuredClone(data);
@@ -1200,9 +1223,9 @@ export function generatePlan(data: Persisted, siteId: string, topicRaw: string, 
   if (!site) return { data, error: "No website selected." };
   const topic = topicRaw.trim().replace(/\s+/g, " ");
   if (topic.length < 3) return { data, error: "Enter a topic of at least 3 characters." };
-  if (!usableKey(data, site.voice.modelKeyId, now)) return { data, error: "NO_USABLE_KEY — no AI key is saved for this website. Add one on AI Keys." };
+  if (!usableKey(data, site.voice.modelKeyId, now, site.id)) return { data, error: "NO_USABLE_KEY — no AI key is saved for this website. Add one on AI Keys." };
   const next = structuredClone(data);
-  const key = usableKey(next, site.voice.modelKeyId, now)!;
+  const key = usableKey(next, site.voice.modelKeyId, now, site.id)!;
   const clusters = clusterTitles(topic).map((frame) => ({
     id: uid("clu"),
     title: frame.title,
@@ -1292,7 +1315,7 @@ export function acceptModelPlan(
   if (!site) return { data, error: "No website selected." };
   const topic = topicRaw.trim().replace(/\s+/g, " ");
   if (topic.length < 3) return { data, error: "Enter a topic of at least 3 characters." };
-  if (!usableKey(data, site.voice.modelKeyId, now)) return { data, error: "NO_USABLE_KEY — no AI key is saved for this website. Add one on AI Keys." };
+  if (!usableKey(data, site.voice.modelKeyId, now, site.id)) return { data, error: "NO_USABLE_KEY — no AI key is saved for this website. Add one on AI Keys." };
   const kept: { title: string; blurb: string }[] = [];
   for (const row of proposed) {
     const title = row.title.replace(/\s+/g, " ").trim();
@@ -1321,7 +1344,7 @@ export function acceptModelPlan(
     return { data: failed, planId: failedId, error: failed.plans[0]!.error };
   }
   const next = structuredClone(data);
-  const key = usableKey(next, site.voice.modelKeyId, now)!;
+  const key = usableKey(next, site.voice.modelKeyId, now, site.id)!;
   const planId = uid("plan");
   next.plans.unshift({
     id: planId,
@@ -1364,7 +1387,7 @@ export async function queuePlan(
   const included = plan.clusters.filter((c) => !c.excluded);
   if (included.length < 2) return { data, error: "Keep at least two clusters. The pillar needs real pages to link to." };
   const preferred = opts?.modelKeyId && opts.modelKeyId !== "default" ? opts.modelKeyId : site.voice.modelKeyId;
-  const key = usableKey(data, preferred, now);
+  const key = usableKey(data, preferred, now, site.id);
   if (!key) return { data, error: "NO_USABLE_KEY — no AI key is saved for this plan. Add one on AI Keys." };
   const mode = !opts?.publishMode || opts.publishMode === "default" ? site.voice.publishAs : opts.publishMode;
   if (mode === "live" && site.ghost.mode !== "live") {
@@ -1467,7 +1490,7 @@ export async function suggestIdeas(
   if (niche.length < 3) return { data, error: "Name a niche first. Idea rounds are metered." };
   // Unlimited by default: the local daily ledger never blocks an idea round.
   // A key with real provider balance is always allowed to answer.
-  const key = usableKey(data, site.voice.modelKeyId, now);
+  const key = usableKey(data, site.voice.modelKeyId, now, site.id);
   const liveKey = key && keyCallsModel(key) ? key : undefined;
   const noun = shortSubject(niche);
   const frames: { keyword: string; intent: string }[] = [
@@ -1566,7 +1589,7 @@ export function rollup(jobs: Job[]): Persisted["runs"][number]["status"] {
   return "partial";
 }
 
-async function publishArticle(data: Persisted, site: Site, job: Job, runMode: "draft" | "live", _key: AiKey, now: number, provider?: EmbedFn) {
+async function publishArticle(data: Persisted, site: Site, job: Job, runMode: "draft" | "live", _key: AiKey | undefined, now: number, provider?: EmbedFn) {
   const corpus = data.articles
     .filter((a) => a.siteId === site.id)
     .map((a) => ({ keyword: a.keyword, title: a.title, slug: a.slug, sample: draftSample(a.title, a.keyword, a.sections) }));
@@ -2416,7 +2439,12 @@ async function runJobPipeline(data: Persisted, jobId: string, now: number, site:
         stage.startedAt = now;
       }
       const run = data.runs.find((item) => item.id === job.runId);
-      const key = data.keys.find((item) => item.id === (run?.modelKeyId || job.keyId)) ?? usableKey(data, run?.modelKeyId, now) ?? undefined;
+      // The key must belong to this job's workspace: a run never spends another
+      // workspace's key, even if it names an id that belongs to one.
+      const key =
+        data.keys.find((item) => item.id === (run?.modelKeyId || job.keyId) && keyBelongsTo(item, site.id)) ??
+        usableKey(data, run?.modelKeyId, now, site.id) ??
+        undefined;
       switch (stage.key) {
         case "intent":
         case "draft":
@@ -2444,7 +2472,7 @@ async function runJobPipeline(data: Persisted, jobId: string, now: number, site:
             host.commit?.(data);
             return;
           }
-          await publishArticle(data, site, job, run?.publishMode ?? "draft", key ?? data.keys[0]!, now, provider);
+          await publishArticle(data, site, job, run?.publishMode ?? "draft", key, now, provider);
           host.commit?.(data);
           return;
       }
@@ -2462,7 +2490,8 @@ async function runJobPipeline(data: Persisted, jobId: string, now: number, site:
 
 function startJob(data: Persisted, job: Job, now: number): boolean {
   const run = data.runs.find((r) => r.id === job.runId);
-  const key = usableKey(data, run?.modelKeyId, now);
+  const siteId = run?.siteId ?? job.siteId ?? data.activeSiteId;
+  const key = usableKey(data, run?.modelKeyId, now, siteId);
   if (!key) {
     job.status = "refused";
     job.refusalReason = "NO_USABLE_KEY";
@@ -3301,8 +3330,8 @@ export function goldenSteps(data: Persisted, site: Site): { label: string; done:
     { label: "Email verified", done: data.account.emailVerified, href: "/account", reason: data.account.emailVerified ? "Done" : "Unconfirmed" },
     { label: "Admin approved", done: data.account.adminApproved, href: "/account", reason: data.account.adminApproved ? "Done" : "Not started" },
     { label: "Website workspace created", done: true, href: "/settings/website", reason: "Done" },
-    { label: "AI model selected", done: data.keys.some((k) => k.id === site.voice.modelKeyId && !k.disabled), href: "/ai-keys", reason: "Not started" },
-    { label: "Daily allowance configured", done: data.keys.some((k) => k.allowanceUsd > 0), href: "/ai-keys", reason: "Not started" },
+    { label: "AI model selected", done: data.keys.some((k) => keyBelongsTo(k, site.id) && k.id === site.voice.modelKeyId && !k.disabled), href: "/ai-keys", reason: "Not started" },
+    { label: "Daily allowance configured", done: data.keys.some((k) => keyBelongsTo(k, site.id) && k.allowanceUsd > 0), href: "/ai-keys", reason: "Not started" },
     {
       label: "Ghost connected",
       done: site.ghost.status === "connected" && site.ghost.corpus === "COMPLETE",

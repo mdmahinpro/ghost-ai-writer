@@ -275,7 +275,7 @@ export function ArticleDetail({ id }: { id: string }) {
       const { humanizeWithBlader } = await import("@/lib/humanizer");
       const { keyPoolChat } = await import("@/lib/rewrite");
       const state = useApp.getState();
-      const pool = keyPool(state, site?.voice.modelKeyId, Date.now()).filter((key) => keyCallsModel(key));
+      const pool = keyPool(state, site?.voice.modelKeyId, Date.now(), site?.id).filter((key) => keyCallsModel(key));
       const result = await humanizeWithBlader({
         chat: keyPoolChat({ keys: pool, onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error) }),
         markdown: article!.markdown,

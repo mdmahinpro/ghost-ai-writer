@@ -5,7 +5,7 @@ import { DEFAULT_LIMITS, defaultAdSlots, type AiKey, type Article, type Persiste
 import { THEMES, THEME_TOKENS, THEME_TOKEN_KEYS, contrastRatio } from "./themes.ts";
 import { AREAS, PALETTE_ACTIONS, SHELL_GROUPS, routeFileCandidates } from "./areas.ts";
 import { packWorkspace } from "./backup.ts";
-import { advance, submitKeywords, packageDeploy, routeDiffFor } from "./engine.ts";
+import { advance, submitKeywords, packageDeploy, routeDiffFor, keyBelongsTo, keyPool, usableKey } from "./engine.ts";
 import { staticFiles } from "./static-site.ts";
 import { bannedPhraseScan, ROBOTIC_DEFAULTS, fallbackBlueprint, parseIntentStage } from "./stage-contracts.ts";
 
@@ -22,6 +22,8 @@ function key(overrides: Partial<AiKey> = {}): AiKey {
     allowanceUsd: 1000,
     disabled: false,
     pricePerM: 0.7,
+    // A saved key belongs to the workspace that saved it — and only that one.
+    siteId: "s1",
     // Empty credentials ⇒ simulated stages that complete by duration (no network).
     baseUrl: "",
     secret: "",
@@ -271,4 +273,30 @@ test("Security: backups never export credentials; avatars stay URLs, not files",
     const media = staticFiles(data.sites[0]!, [article], true, data.authors).filter((file) => /\.(png|jpe?g|webp)$/i.test(file.name));
     assert.equal(media.length, 0, "no image artifacts for avatars");
   }
+});
+
+test("a key belongs to one workspace: no account-wide key and no cross-workspace fallback", () => {
+  const mine = key({ id: "k_mine", siteId: "s1" });
+  const theirs = key({ id: "k_theirs", siteId: "s2" });
+  const data = { keys: [mine, theirs] } as unknown as Persisted;
+
+  assert.equal(usableKey(data, "k_mine", 0, "s1")?.id, "k_mine");
+  assert.equal(usableKey(data, "k_theirs", 0, "s1")?.id, "k_mine", "another workspace's preferred key is never offered");
+  assert.equal(usableKey(data, undefined, 0, "s2")?.id, "k_theirs");
+  assert.equal(usableKey(data, "k_mine", 0, "s2")?.id, "k_theirs");
+});
+
+test("a workspace with no key of its own has none to spend", () => {
+  const data = { keys: [key({ id: "k_mine", siteId: "s1" })] } as unknown as Persisted;
+  assert.equal(usableKey(data, undefined, 0, "s3"), null, "a fresh workspace must not borrow a key");
+  assert.equal(keyPool(data, undefined, 0, "s3").length, 0);
+});
+
+test("a key stored before scoping is not shared: it belongs to no workspace until one claims it", () => {
+  const legacy = key({ id: "k_legacy" });
+  delete (legacy as { siteId?: string }).siteId;
+  assert.equal(keyBelongsTo(legacy, "s1"), false);
+  const data = { keys: [legacy, key({ id: "k_mine", siteId: "s1" })] } as unknown as Persisted;
+  assert.equal(usableKey(data, undefined, 0, "s1")?.id, "k_mine");
+  assert.equal(usableKey(data, "k_legacy", 0, "s1")?.id, "k_mine", "naming a foreign key id must not widen the pool");
 });

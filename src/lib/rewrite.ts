@@ -35,7 +35,7 @@ export function keyPoolChat(input: { keys: AiKey[]; onPenalty?: (keyId: string, 
 export function siteChat(onPenalty?: (keyId: string, status: number, error?: string) => void): BladerChat {
   const state = useApp.getState();
   const site = state.sites.find((item) => item.id === state.activeSiteId);
-  const keys = keyPool(state, site?.voice.modelKeyId, Date.now()).filter((key) => keyCallsModel(key));
+  const keys = keyPool(state, site?.voice.modelKeyId, Date.now(), site?.id).filter((key) => keyCallsModel(key));
   return keyPoolChat({ keys, onPenalty });
 }
 

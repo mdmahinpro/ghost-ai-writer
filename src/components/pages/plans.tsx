@@ -41,6 +41,8 @@ export function PlanDetail({ id }: { id: string }) {
   const jobs = useApp((s) => s.jobs);
   const keys = useApp((s) => s.keys);
   const site = useApp((s) => s.sites.find((item) => item.id === s.activeSiteId) ?? s.sites[0]!);
+  // Keys are per workspace: only this workspace's own keys are offered here.
+  const siteKeys = keys.filter((key) => key.siteId === site.id);
   const updateCluster = useApp((s) => s.updateCluster);
   const moveCluster = useApp((s) => s.moveCluster);
   const removeCluster = useApp((s) => s.removeCluster);
@@ -82,10 +84,10 @@ export function PlanDetail({ id }: { id: string }) {
               <option value="draft">Save as Ghost draft</option>
             </select>
           </Field>
-          <Field label="AI model">
+          <Field label="AI model" hint={siteKeys.length === 0 ? "No AI key is saved in this workspace yet. Add one on AI Keys." : undefined}>
             <select className={fieldClass} value={modelKeyId} onChange={(e) => setModelKeyId(e.target.value)}>
-              <option value="default">Account default</option>
-              {keys.map((key) => (
+              <option value="default">This workspace’s key</option>
+              {siteKeys.map((key) => (
                 <option key={key.id} value={key.id}>
                   {key.label}
                 </option>

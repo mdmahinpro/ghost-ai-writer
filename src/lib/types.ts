@@ -312,6 +312,14 @@ export type AiKey = {
   pricePerM: number;
   /** OpenAI-compatible origin, including /v1 when the provider uses it. */
   baseUrl?: string;
+  /**
+   * The workspace (site) this key was saved in, and the only one allowed to use
+   * it. A key is never offered to another workspace: a new workspace starts
+   * with no key and needs one added by hand. Blank or missing means the key
+   * predates scoping — `migratePersistedSnapshot` claims those for the active
+   * workspace on load so nothing is silently shared.
+   */
+  siteId?: string;
   /** Stored only in this browser. Sent to your provider when you generate. */
   secret?: string;
   /**

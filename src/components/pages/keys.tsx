@@ -23,6 +23,10 @@ const SEARCH_MODES: { value: WebSearchMode; label: string; hint: string }[] = [
 
 export function KeysPage() {
   const keys = useApp((s) => s.keys);
+  const sites = useApp((s) => s.sites);
+  // Every key belongs to one workspace. The label below each key names it, so a
+  // key saved in another workspace can never look like an account-wide default.
+  const workspaceOf = (siteId?: string) => sites.find((site) => site.id === siteId)?.name ?? "no workspace";
   const events = useApp((s) => s.events);
   const webSearch = useApp((s) => s.webSearch);
   const addKey = useApp((s) => s.addKey);
@@ -169,6 +173,7 @@ export function KeysPage() {
                   <div className="num mt-0.5 truncate text-[11px] text-faint">
                     priority {key.priority} · {key.hint}
                     {key.baseUrl ? ` · ${key.baseUrl}` : ""}
+                    {` · workspace: ${workspaceOf(key.siteId)}`}
                   </div>
                 </div>
                 <Badge tone={key.disabled || (key.serverKeyId === undefined && !key.secret) ? "danger" : cooling ? "brass" : key.providerKind === "custom" ? "brass" : "ok"}>

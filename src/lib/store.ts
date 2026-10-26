@@ -222,6 +222,12 @@ export type AppState = Persisted & {
     pricePerM?: number;
     /** Semantic (embeddings) model id for the L3 duplicate gate; blank = provider family default. */
     embeddingModel?: string;
+    /**
+     * Workspace this key belongs to. Defaults to the active one. A key saved
+     * here is only ever offered to its own workspace — there is no account-wide
+     * key, so a new workspace needs one added by hand.
+     */
+    siteId?: string;
   }) => Promise<void>;
   toggleKey: (id: string) => void;
   /** Permanently remove a key/custom endpoint from this browser. Usage ledger rows are kept. */
@@ -661,7 +667,7 @@ export const useApp = create<AppState>()(
           const s = get();
           const site = s.sites.find((item) => item.id === s.activeSiteId);
           const snapshot = snap(s);
-          const key = usableKey(snapshot, site?.voice.modelKeyId, Date.now());
+          const key = usableKey(snapshot, site?.voice.modelKeyId, Date.now(), site?.id);
           let liveIdeas: { ideas: { keyword: string; why: string }[]; usage: { prompt: number; completion: number; total: number } } | undefined;
           if (key && keyCallsModel(key)) {
             const generated = await generateIdeas({
@@ -1117,6 +1123,8 @@ auditNow: () => {
           disabled: false,
           pricePerM,
           baseUrl: baseUrl || undefined,
+          // Bound to the workspace it was saved in: no other workspace may spend it.
+          siteId: input.siteId ?? get().activeSiteId,
           // No `secret`: it went to the server, which seals it at rest.
           serverKeyId,
           kind: custom ? "custom" : "studio",
@@ -2006,7 +2014,7 @@ auditNow: () => {
         if (!project || project.archived) return;
         const site = state.sites.find((item) => item.id === project.siteId) ?? siteOf(state);
         if (!site) return;
-        const pool = keyPool(state, site.voice.modelKeyId, Date.now()).filter((key) => keyCallsModel(key));
+        const pool = keyPool(state, site.voice.modelKeyId, Date.now(), site.id).filter((key) => keyCallsModel(key));
         const data = structuredClone(snap(get()));
         if (!data.research.find((item) => item.id === researchId)) return;
         const chat: ResearchChat | undefined = pool.length
@@ -2128,7 +2136,7 @@ auditNow: () => {
     }),
     {
       name: "gaw-v2",
-      version: 13,
+      version: 14,
       skipHydration: true,
       storage: createJSONStorage(() => durableStorage),
       migrate: (persisted, version) => migratePersistedSnapshot(persisted as Persisted, version),
@@ -2177,6 +2185,17 @@ function migratePersistedSnapshot(persisted: Persisted, version?: number): Persi
         // the article html/markdown from an old Ghost round-trip — into a valid
         // topic-matched Bing thumbnail.
         sanitizeArticleImages(data.articles);
+        // Persist v14: a key belongs to the workspace that saved it and to no
+        // other — there is no account-wide default key. Anything saved from now
+        // on is bound on save; a key stored before scoping shipped carries no
+        // owner, so the first workspace it is seen in claims it. A workspace
+        // created afterwards starts empty and needs a key added by hand.
+        const keyOwner = data.activeSiteId || data.sites?.[0]?.id || "";
+        if (keyOwner) {
+          for (const key of data.keys ?? []) {
+            if (!key.siteId) key.siteId = keyOwner;
+          }
+        }
         data.webSearch ??= { mode: "off", tavilyKeys: [], firecrawlKeys: [], tavilyCursor: 0, firecrawlCursor: 0 };
         data.webSearch.tavilyKeys ??= [];
         data.webSearch.firecrawlKeys ??= [];
