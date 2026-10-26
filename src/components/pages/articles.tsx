@@ -314,6 +314,12 @@ export function ArticleDetail({ id }: { id: string }) {
   // asked for different photos rather than the same ones once more.
   const [retrySalt, setRetrySalt] = useState(0);
   const [retrying, setRetrying] = useState<number[]>([]);
+  // A held article could only be released from the Runs page. The job that holds
+  // it is right here, so the button belongs here too.
+  const jobs = useApp((s) => s.jobs);
+  const retryJob = useApp((s) => s.retryJob);
+  const heldJob = article?.jobId ? jobs.find((job) => job.id === article.jobId) : undefined;
+  const holdReason = heldJob?.status === "review-held" || heldJob?.status === "publish-held" ? heldJob.status : "";
 
   async function retryImages(indexes: number[]) {
     if (!article || !indexes.length) return;
@@ -581,6 +587,21 @@ export function ArticleDetail({ id }: { id: string }) {
             {article.ghostPush === "error" ? (
               <Button variant="ghost" onClick={() => useApp.getState().patchArticle(article.id, { ghostPush: "pending", liveError: undefined })}>
                 Retry Ghost publish
+              </Button>
+            ) : null}
+            {holdReason ? (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  if (article.jobId) retryJob(article.jobId);
+                  setNote(
+                    holdReason === "review-held"
+                      ? "Queued for another attempt. Validation runs again and publishes if it clears."
+                      : "Queued. The publish stage re-runs against the saved Ghost connection.",
+                  );
+                }}
+              >
+                Release the hold and publish
               </Button>
             ) : null}
             <Link to="/preview/$slug" params={{ slug: article.slug }} className="inline-flex min-h-11 items-center text-sm text-brass">
