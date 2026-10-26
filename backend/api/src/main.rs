@@ -35,6 +35,7 @@ mod images;
 mod lease;
 mod lint;
 mod metrics;
+mod orders;
 mod pipeline;
 mod provider;
 mod providers;
@@ -176,6 +177,13 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/state/reset", post(state::reset_state))
         .route("/v1/pipeline/state", get(pipeline::pipeline_state))
         .route("/v1/articles/forget", post(pipeline::forget_articles))
+        // Orders: place, list, cancel. No payment provider lives here — the row
+        // is the record of what was bought and for how long.
+        .route(
+            "/v1/orders",
+            post(orders::place_order).get(orders::list_orders),
+        )
+        .route("/v1/orders/cancel", post(orders::cancel_order))
         .route("/v1/pipeline/requeue", post(pipeline::requeue_job))
         .route("/v1/sites/ensure", post(sites::ensure_site))
         .route(
