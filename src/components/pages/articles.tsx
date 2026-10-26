@@ -9,6 +9,7 @@ import { inboundCount } from "@/lib/link-graph";
 import { stripVerify } from "@/lib/markdown";
 import { articleFromMarkdown, ensureMarkdownLinks } from "@/lib/rewrite";
 import { applyFetchedImages } from "@/lib/media-html";
+import { placeImages } from "@/lib/images.functions";
 import { articleImageSrc } from "@/lib/image-urls";
 import { useApp, useHydrated } from "@/lib/store";
 import { forgetArticles } from "@/lib/ops.functions";
@@ -305,6 +306,45 @@ export function ArticleDetail({ id }: { id: string }) {
     a.download = `${article.slug || "article"}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // Image retry. A slot that resolved to a dead or off-topic photo was stuck that
+  // way: the fetch ran once during the run and nothing could ask again. Retrying
+  // bumps the salt and hands the current sources in as `avoid`, so the server is
+  // asked for different photos rather than the same ones once more.
+  const [retrySalt, setRetrySalt] = useState(0);
+  const [retrying, setRetrying] = useState<number[]>([]);
+
+  async function retryImages(indexes: number[]) {
+    if (!article || !indexes.length) return;
+    const slots = indexes
+      .map((index) => article.images[index])
+      .filter(Boolean)
+      .map((image) => ({ role: image.role, query: image.query, alt: image.alt }));
+    if (!slots.length) return;
+    setRetrying(indexes);
+    const avoid = article.images.map((image) => image.src).filter((src): src is string => Boolean(src));
+    const res = await placeImages({
+      data: { slots, provider: "bing", avoid, salt: (retrySalt + 1) % 10000 },
+    });
+    setRetrying([]);
+    if (!res.ok) {
+      setNote(res.error ?? "The image fetch failed.");
+      return;
+    }
+    if (!res.images.length) {
+      setNote("No replacement photo came back for that slot. Try again — the picker is salted, so it varies.");
+      return;
+    }
+    // Indexes arrived in order, so the nth result belongs to the nth retried slot.
+    const images = [...article.images];
+    indexes.forEach((index, position) => {
+      const replacement = res.images[position];
+      if (replacement && images[index]) images[index] = { ...images[index], ...replacement };
+    });
+    useApp.getState().patchArticle(article.id, { images });
+    setRetrySalt((current) => (current + 1) % 10000);
+    setNote(`Fetched ${res.images.length} replacement photo(s). Build again to ship them.`);
   }
   // Rule 7: "Article missing" only counts after the ledger has hydrated.
   if (!hydrated) return <SkeletonRows rows={5} />;
@@ -695,9 +735,19 @@ export function ArticleDetail({ id }: { id: string }) {
           </ul>
         </Card>
         <Card className="space-y-3 p-4">
-          <h2 className="font-display text-xl">Images</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-xl">Images</h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={Boolean(retrying.length) || !article.images.length}
+              onClick={() => void retryImages(article.images.map((_, index) => index))}
+            >
+              {retrying.length > 1 ? "Fetching…" : "Fetch images again"}
+            </Button>
+          </div>
           <p className="text-xs leading-5 text-muted">Every slot resolves a real, topic-matched Bing thumbnail URL (dynamic, zero disk). A downloaded copy is uploaded to Ghost only when Ghost is live; the exported static site keeps the Bing URL.</p>
-          {article.images.map((image) => (
+          {article.images.map((image, index) => (
             <div key={`${image.role}-${image.query}`}>
               <img
                 src={articleImageSrc(image, article.keyword || article.title)}
@@ -709,6 +759,17 @@ export function ArticleDetail({ id }: { id: string }) {
                 referrerPolicy="no-referrer"
                 className="aspect-video w-full rounded-lg object-cover"
               />
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={retrying.includes(index)}
+                  onClick={() => void retryImages([index])}
+                >
+                  {retrying.includes(index) ? "Fetching…" : "Retry this image"}
+                </Button>
+                <span className="text-xs text-faint">salt {retrySalt}</span>
+              </div>
               <div className="mt-1 text-xs text-muted">
                 {image.role} · {image.width || "…"}×{image.height || "…"} · c=7 · {image.selected ? "SELECTED" : "waiting"} · {image.license ?? "unknown-bing"}
               </div>
