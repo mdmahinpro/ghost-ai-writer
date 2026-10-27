@@ -6,7 +6,8 @@
  * pinned, session reuse), the IndexNow key-file proof, and the provider calls.
  * Credentials still travel per request from Connections and are never stored.
  */
-import { LONG_CALL_S, post } from "./api-client.ts";
+import { LONG_CALL_S, get, post } from "./api-client.ts";
+import { WORKSPACE_ID } from "./ftp-credentials.ts";
 
 export type FtpStep = { name: string; ok: boolean; ms: number; detail: string };
 
@@ -163,6 +164,46 @@ export function forgetArticles(input: {
   // this keeps the server's copy in step, so the CMS mirror stops pushing them.
   return forgetArticlesRequest(input.data);
 }
+
+/**
+ * What the calendar automation would do next, without doing any of it.
+ *
+ * The three switches live on the server (`calendar::pulse`), so the dry run has
+ * to as well: a client-side guess would eventually disagree with the thing it is
+ * describing, which is worse than no preview at all.
+ */
+export async function previewCalendar(): Promise<CalendarPreview> {
+  const res = await get<{
+    now_ms: number;
+    items: CalendarPlanItem[];
+    next_write_at: number | null;
+    next_publish_at: number | null;
+    skipped_no_site: number;
+    calendars: { id: string; autoGenerate: boolean; autoPublish: boolean; autoReweave: boolean }[];
+  }>(`/api/v1/calendar/preview?workspace_id=${WORKSPACE_ID}`);
+  if (!res.ok) return { ok: false, error: res.error ?? "The preview could not be read." };
+  return { ok: true, ...res.data };
+}
+
+export type CalendarPlanItem = {
+  calendar_id: string;
+  action: string;
+  item_id: string;
+  title: string;
+  due_at: number;
+};
+
+export type CalendarPreview =
+  | {
+      ok: true;
+      now_ms: number;
+      items: CalendarPlanItem[];
+      next_write_at: number | null;
+      next_publish_at: number | null;
+      skipped_no_site: number;
+      calendars: { id: string; autoGenerate: boolean; autoPublish: boolean; autoReweave: boolean }[];
+    }
+  | { ok: false; error: string };
 
 async function forgetArticlesRequest(payload: {
   site_ref: string;

@@ -29,8 +29,11 @@
 //! back exactly as found; only a throwaway copy is decrypted to read a site's
 //! Ghost admin key while publishing.
 
-use serde_json::Value;
+use axum::extract::State;
+use serde_json::{json, Value};
 use sqlx::SqlitePool;
+
+use crate::AppState;
 
 /// How often the loop looks for due items. A minute is well inside the
 /// scheduling granularity the calendar UI offers (minutes, not seconds).
@@ -147,6 +150,219 @@ pub fn due_publishes(calendar: &Value, now_ms: i64) -> Vec<DuePublish> {
         });
     }
     due
+}
+
+/// One thing the next pulse would do. Nothing here has happened yet.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PlanItem {
+    pub calendar_id: String,
+    /// `"write"` starts an article; `"publish"` pushes one that already exists.
+    pub action: &'static str,
+    pub item_id: String,
+    /// The item's own title, or empty when the row carries none.
+    pub title: String,
+    /// The moment the item's own clock named. In the past means overdue.
+    pub due_at: i64,
+}
+
+/// The next moment this calendar would act, for the two actions that have one.
+///
+/// A dry run that only lists what is due right now reads as broken to anyone
+/// whose next slot is tomorrow morning, so the plan answers with both.
+fn next_due(calendar: &Value, now_ms: i64) -> (Option<i64>, Option<i64>) {
+    let auto_generate = calendar.get("autoGenerate").and_then(Value::as_bool) == Some(true);
+    let auto_publish = calendar.get("autoPublish").and_then(Value::as_bool) == Some(true);
+    let mut write: Option<i64> = None;
+    let mut publish: Option<i64> = None;
+    let Some(items) = calendar.get("items").and_then(Value::as_array) else {
+        return (write, publish);
+    };
+    for item in items {
+        let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+        if auto_generate && status == "SCHEDULED" {
+            if let Some(at) = item.get("writeAt").and_then(Value::as_i64) {
+                if at > now_ms {
+                    write = Some(write.map_or(at, |current: i64| current.min(at)));
+                }
+            }
+        }
+        if auto_publish && status == "READY" && item.get("jobId").and_then(Value::as_str).is_some()
+        {
+            if let Some(at) = item.get("publishAt").and_then(Value::as_i64) {
+                if at > now_ms {
+                    publish = Some(publish.map_or(at, |current: i64| current.min(at)));
+                }
+            }
+        }
+    }
+    (write, publish)
+}
+
+fn item_title(calendar: &Value, item_id: &str) -> String {
+    calendar
+        .get("items")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("id").and_then(Value::as_str) == Some(item_id))
+        })
+        .and_then(|item| item.get("title").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+/// What the next pulse would do, computed from the saved state and nothing else.
+///
+/// This is a dry run in the strict sense: it borrows the two planners the pulse
+/// itself uses, so the preview cannot drift from the real thing, and it writes
+/// nothing — not even the `generation` counter.
+///
+/// `skipped` counts due items the pulse would decline because their calendar has
+/// no server site id yet. That is the one refusal that looks like a broken
+/// switch from the outside, so the preview names it here instead.
+pub fn plan(state: &Value, now_ms: i64) -> (Vec<PlanItem>, Option<i64>, Option<i64>, usize) {
+    let mut items = Vec::new();
+    let mut next_write: Option<i64> = None;
+    let mut next_publish: Option<i64> = None;
+    let mut skipped = 0;
+    let Some(calendars) = state.get("calendars").and_then(Value::as_array) else {
+        return (items, next_write, next_publish, skipped);
+    };
+    for calendar in calendars {
+        let calendar_id = calendar
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let has_site = server_site_id(state, calendar).is_some();
+        for due in due_writes(calendar, now_ms) {
+            if !has_site {
+                skipped += 1;
+                continue;
+            }
+            let due_at = calendar
+                .get("items")
+                .and_then(Value::as_array)
+                .and_then(|rows| {
+                    rows.iter().find(|row| {
+                        row.get("id").and_then(Value::as_str) == Some(due.item_id.as_str())
+                    })
+                })
+                .and_then(|row| row.get("writeAt").and_then(Value::as_i64))
+                .unwrap_or(now_ms);
+            items.push(PlanItem {
+                calendar_id: calendar_id.clone(),
+                action: "write",
+                item_id: due.item_id,
+                title: due.keyword,
+                due_at,
+            });
+        }
+        for due in due_publishes(calendar, now_ms) {
+            let due_at = calendar
+                .get("items")
+                .and_then(Value::as_array)
+                .and_then(|rows| {
+                    rows.iter().find(|row| {
+                        row.get("id").and_then(Value::as_str) == Some(due.item_id.as_str())
+                    })
+                })
+                .and_then(|row| row.get("publishAt").and_then(Value::as_i64))
+                .unwrap_or(now_ms);
+            items.push(PlanItem {
+                calendar_id: calendar_id.clone(),
+                action: "publish",
+                item_id: due.item_id.clone(),
+                title: item_title(calendar, &due.item_id),
+                due_at,
+            });
+        }
+        let (write, publish) = next_due(calendar, now_ms);
+        if let Some(at) = write {
+            next_write = Some(next_write.map_or(at, |current: i64| current.min(at)));
+        }
+        if let Some(at) = publish {
+            next_publish = Some(next_publish.map_or(at, |current: i64| current.min(at)));
+        }
+    }
+    (items, next_write, next_publish, skipped)
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct WorkspaceQuery {
+    workspace_id: i64,
+}
+
+/// `GET /v1/calendar/preview?workspace_id=` — the dry run, over HTTP.
+///
+/// The three automation switches live on the server, so the only honest place to
+/// ask what they would do next is here. The answer names the switches too, so an
+/// empty plan can say whether it is empty because nothing is due or because the
+/// switch is off.
+pub(crate) async fn calendar_preview(
+    State(st): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<WorkspaceQuery>,
+) -> axum::Json<Value> {
+    let row: Option<(String,)> =
+        match sqlx::query_as("SELECT payload FROM app_state WHERE workspace_id = ?")
+            .bind(query.workspace_id)
+            .fetch_optional(&st.pool)
+            .await
+        {
+            Ok(row) => row,
+            Err(error) => {
+                return axum::Json(json!({ "ok": false, "error": error.to_string() }));
+            }
+        };
+    let Some((payload,)) = row else {
+        return axum::Json(json!({
+            "ok": false,
+            "error": "This workspace has no saved state on the server yet.",
+        }));
+    };
+    let state: Value = match serde_json::from_str(&payload) {
+        Ok(value) => value,
+        Err(_) => {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "The saved state for this workspace is not readable.",
+            }));
+        }
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or(0);
+    let (items, next_write, next_publish, skipped) = plan(&state, now_ms);
+    let armed: Vec<Value> = state
+        .get("calendars")
+        .and_then(Value::as_array)
+        .map(|calendars| {
+            calendars
+                .iter()
+                .map(|calendar| {
+                    json!({
+                        "id": calendar.get("id").and_then(Value::as_str).unwrap_or(""),
+                        "autoGenerate": calendar.get("autoGenerate").and_then(Value::as_bool).unwrap_or(false),
+                        "autoPublish": calendar.get("autoPublish").and_then(Value::as_bool).unwrap_or(false),
+                        "autoReweave": calendar.get("autoReweave").and_then(Value::as_bool).unwrap_or(false),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    axum::Json(json!({
+        "ok": true,
+        "now_ms": now_ms,
+        "items": items,
+        "next_write_at": next_write,
+        "next_publish_at": next_publish,
+        "skipped_no_site": skipped,
+        "calendars": armed,
+        "dry_run": true,
+    }))
 }
 
 /// Record that `item_id` is now being written by `job_id`.
@@ -754,7 +970,6 @@ pub async fn pulse_all(pool: &SqlitePool, now_ms: i64) -> Result<Summary, sqlx::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn calendar(items: Value, auto_generate: bool) -> Value {
         json!({
@@ -1022,5 +1237,89 @@ mod tests {
             publish_request(&state, &publishable_calendar(), "p1").unwrap_err(),
             PublishBlock::Missing("site has no Ghost connection".into())
         );
+    }
+
+    /// A dry run that listed only what is due right now would read as broken to
+    /// anyone whose next slot is tomorrow, so the plan answers with both — and
+    /// it must not touch the state it was asked about.
+    #[test]
+    fn a_dry_run_plans_without_writing() {
+        let state = json!({
+            "sites": [{ "id": "site_1", "clientUid": "site_1", "serverId": 4, "server_id": 4 }],
+            "calendars": [{
+                "id": "cal_1",
+                "siteId": "site_1",
+                "autoGenerate": true,
+                "autoPublish": false,
+                "items": [
+                    { "id": "i1", "title": "phd funding", "status": "SCHEDULED", "writeAt": 1_000 },
+                    { "id": "i2", "title": "phd adviser", "status": "SCHEDULED", "writeAt": 9_000 },
+                    { "id": "i3", "title": "already written", "status": "READY", "writeAt": 0 }
+                ]
+            }]
+        });
+        let before = state.clone();
+        let (items, next_write, next_publish, skipped) = plan(&state, 5_000);
+        // Every due item is either planned or counted as skipped — never dropped.
+        assert_eq!(items.len() + skipped, 1, "the overdue item went missing");
+        if let Some(item) = items.first() {
+            assert_eq!(item.action, "write");
+            assert_eq!(item.item_id, "i1");
+            assert_eq!(item.title, "phd funding");
+            assert_eq!(item.due_at, 1_000);
+        }
+        assert_eq!(
+            next_write,
+            Some(9_000),
+            "the next write time is not reported"
+        );
+        assert_eq!(next_publish, None, "publishing is off on this calendar");
+        assert_eq!(state, before, "a dry run changed the state it was reading");
+    }
+
+    /// The refusal that looks like a broken switch from the outside: due items
+    /// whose calendar has no server site id yet. The preview must name them
+    /// instead of returning an empty list.
+    #[test]
+    fn due_items_without_a_site_are_counted_not_hidden() {
+        let state = json!({
+            "sites": [],
+            "calendars": [{
+                "id": "cal_1",
+                "siteId": "site_1",
+                "autoGenerate": true,
+                "autoPublish": false,
+                "items": [
+                    { "id": "i1", "title": "phd funding", "status": "SCHEDULED", "writeAt": 1_000 },
+                    { "id": "i2", "title": "phd adviser", "status": "SCHEDULED", "writeAt": 1_500 }
+                ]
+            }]
+        });
+        let (items, _, _, skipped) = plan(&state, 5_000);
+        assert!(items.is_empty());
+        assert_eq!(skipped, 2);
+    }
+
+    /// Nothing armed, nothing planned — but the plan still says when the next
+    /// slot is, so the switch being off is visible rather than silent.
+    #[test]
+    fn a_calendar_with_automation_off_plans_nothing() {
+        let state = json!({
+            "sites": [{ "id": "site_1", "clientUid": "site_1", "serverId": 4 }],
+            "calendars": [{
+                "id": "cal_1",
+                "siteId": "site_1",
+                "autoGenerate": false,
+                "autoPublish": false,
+                "items": [
+                    { "id": "i1", "title": "phd funding", "status": "SCHEDULED", "writeAt": 1_000 }
+                ]
+            }]
+        });
+        let (items, next_write, next_publish, skipped) = plan(&state, 5_000);
+        assert!(items.is_empty());
+        assert_eq!(next_write, None);
+        assert_eq!(next_publish, None);
+        assert_eq!(skipped, 0);
     }
 }

@@ -1,6 +1,7 @@
 ﻿import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { automationLabel, publishModeLabel } from "@/lib/operator";
+import { previewCalendar, type CalendarPreview } from "@/lib/ops.functions";
 import { useApp, useHydrated } from "@/lib/store";
 import type { CalendarEntry, ContentCalendar } from "@/lib/types";
 import { Badge, Button, Card, Empty, Field, PageIntro, SkeletonRows, StateNote, fieldClass } from "@/components/ui";
@@ -30,6 +31,11 @@ const ENTRY_LABEL: Record<CalendarEntry["status"], string> = {
 
 function Switches({ calendar }: { calendar: ContentCalendar }) {
   const patchCalendar = useApp((s) => s.patchCalendar);
+  // The switches are the server's. This asks the server what they would do —
+  // a client-side guess would drift from the pulse it claims to describe.
+  const [preview, setPreview] = useState<CalendarPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const stamp = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
   return (
     <Card className="mb-4 space-y-3 p-4 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -63,6 +69,56 @@ function Switches({ calendar }: { calendar: ContentCalendar }) {
         </span>
       </label>
       <p className="text-xs text-faint">{calendar.automation}</p>
+      <div className="rounded-lg border border-line p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-faint">
+            A dry run: it asks the server what the switches would do next and writes nothing.
+          </span>
+          <Button
+            variant="ghost"
+            disabled={previewing}
+            onClick={() => {
+              setPreviewing(true);
+              void previewCalendar().then((res) => {
+                setPreview(res);
+                setPreviewing(false);
+              });
+            }}
+          >
+            {previewing ? "Asking the server…" : "Preview what automation would queue"}
+          </Button>
+        </div>
+        {preview ? (
+          preview.ok ? (
+            <div className="mt-2 space-y-1 text-xs">
+              {preview.items.length ? (
+                preview.items.map((item) => (
+                  <p key={`${item.action}-${item.item_id}`}>
+                    <span className="font-mono text-brass">{item.action === "write" ? "WRITE" : "PUBLISH"}</span>{" "}
+                    <span className="text-fg">{item.title || item.item_id}</span>{" "}
+                    <span className="text-faint">· due {stamp(item.due_at)} UTC</span>
+                  </p>
+                ))
+              ) : (
+                <p className="text-faint">Nothing is due right now, so the next pulse would queue nothing.</p>
+              )}
+              {preview.next_write_at ? <p className="text-faint">Next write: {stamp(preview.next_write_at)} UTC</p> : null}
+              {preview.next_publish_at ? <p className="text-faint">Next publish: {stamp(preview.next_publish_at)} UTC</p> : null}
+              {preview.skipped_no_site ? (
+                <p className="text-danger">
+                  {preview.skipped_no_site} due item{preview.skipped_no_site === 1 ? "" : "s"} would be skipped: this calendar has no
+                  server site id yet. Queue one article by hand and the rest follow.
+                </p>
+              ) : null}
+              {!calendar.autoGenerate && !calendar.autoPublish ? (
+                <p className="text-faint">Both action switches are off, so nothing will be queued until you turn them on.</p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-danger">{preview.error}</p>
+          )
+        ) : null}
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <Field label="Publish mode">
           <select className={fieldClass} value={calendar.publishMode} onChange={(e) => patchCalendar(calendar.id, { publishMode: e.target.value as ContentCalendar["publishMode"] })}>
