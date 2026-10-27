@@ -633,7 +633,7 @@ function buildSections(angle: string, subject: string, count: number): { heading
       ["How the pages relate", `This page owns the alternative. It should link to the cost page and the time page only when those URLs already exist.`, `It should not repeat them.`],
     ],
     daily: [
-      ["A Tuesday on this path", `Describe one Tuesday if you take ${phrase}: where you are, what you produce, and what you cancel.`, `If the Tuesday is identical to your current Tuesday, the page has no decision in it.`],
+      ["A Tuesday on this path", `Describe one ordinary Tuesday on this path: where you are, what you produce, and what you cancel.`, `If the Tuesday is identical to your current Tuesday, the page has no decision in it.`],
       ["What gets dropped", `Name two recurring things that lose their slot. A lab meeting, a shift, a family dinner. ${phrase} has to take the hours from somewhere.`, `Leaving this blank is how the plan becomes a fantasy.`],
       ["The artifact of the week", `By Friday you should be able to hold one thing: a page of notes, a method someone else can run, or a draft section.`, `If the week produces only a mood, it was not a week of work.`],
       ["Who is in the room", `Name the person you would see. A supervisor, a manager, a classmate. ${phrase} is partly a relationship, not only a syllabus.`, `Write what you owe them that week in one sentence.`],
