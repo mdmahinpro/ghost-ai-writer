@@ -10,7 +10,7 @@ import {
   modelsForProvider,
   type ModelProvider,
 } from "@/lib/model-catalog";
-import { Badge, Button, Card, Field, PageIntro, fieldClass, statusTone } from "@/components/ui";
+import { Button, Field, PageIntro, fieldClass, statusTone } from "@/components/ui";
 import { money, nextUtcResetLabel, relTime, utcDay } from "@/lib/utils";
 import type { WebSearchMode } from "@/lib/types";
 
@@ -20,6 +20,19 @@ const SEARCH_MODES: { value: WebSearchMode; label: string; hint: string }[] = [
   { value: "firecrawl", label: "Firecrawl", hint: "Firecrawl search and page scraping." },
   { value: "auto-fallback", label: "Auto-Fallback", hint: "Tavily first; Firecrawl catches failures." },
 ];
+
+function pillClass(tone: "ok" | "danger" | "warn" | "brass" | "muted") {
+  if (tone === "ok") return "border-ok/30 bg-ok/10 text-ok";
+  if (tone === "danger") return "border-danger/30 bg-danger/10 text-danger";
+  if (tone === "warn") return "border-warn/30 bg-warn/10 text-warn";
+  if (tone === "brass") return "border-brass/30 bg-brass/10 text-brass";
+  return "border-line bg-surface text-muted";
+}
+
+const pillBase = "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium";
+
+const compactField =
+  "h-8 w-24 rounded-md border border-line bg-surface px-2 text-right font-mono text-[12px] text-fg outline-none transition-colors duration-150 placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-accent/20";
 
 export function KeysPage() {
   const keys = useApp((s) => s.keys);
@@ -136,25 +149,32 @@ export function KeysPage() {
   }
 
   return (
-    <div className="stagger space-y-4">
+    <div className="stagger space-y-5">
       <PageIntro
         eyebrow="Settings"
         title="AI keys and usage"
         lede="Build a multi-key pool with auto-failover. Add OpenAI, OpenRouter, or any OpenAI-compatible endpoint (custom base URL + model id). When the primary key is busy, rate-limited, or out of allowance, the next key finishes the job and still publishes to Ghost."
       />
 
-      <Card className="space-y-3 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-[13px] font-semibold text-fg">Failover pool</h2>
-          <Badge tone={orderedKeys.length ? "ok" : "muted"}>{orderedKeys.length} key{orderedKeys.length === 1 ? "" : "s"} · tried top-down</Badge>
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Failover pool</h2>
+            <p className="mt-1 max-w-3xl text-[13px] leading-5 text-muted">
+              Higher priority is tried first. 401/403 disables a key; 429 cools it for 12 seconds; config errors (400/404) and transient 5xx never cool the key. Remaining keys carry the run.
+            </p>
+          </div>
+          <span className={`${pillBase} ${pillClass(orderedKeys.length ? "ok" : "muted")}`}>
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+            {orderedKeys.length} key{orderedKeys.length === 1 ? "" : "s"} · tried top-down
+          </span>
         </div>
-        <p className="text-[12px] leading-5 text-faint">Higher priority is tried first. 401/403 disables a key; 429 cools it for 12 seconds; config errors (400/404) and transient 5xx never cool the key. Remaining keys carry the run.</p>
-        <div>
-          <Button variant="ghost" onClick={() => clearCooldowns()}>
+        <div className="flex justify-end px-5 py-3">
+          <Button variant="ghost" size="sm" onClick={() => clearCooldowns()}>
             Clear cooldown & retry all pending jobs
           </Button>
         </div>
-      </Card>
+      </section>
 
       <div className="grid gap-3 lg:grid-cols-2">
         {orderedKeys.map((key, index) => {
@@ -164,19 +184,22 @@ export function KeysPage() {
             .reduce((sum, event) => sum + event.usd, 0);
           const cooling = key.cooldownUntil && key.cooldownUntil > Date.now();
           return (
-            <Card key={key.id} className="min-w-0 p-3.5">
-              <div className="flex min-w-0 items-start justify-between gap-2">
+            <section key={key.id} className="min-w-0 overflow-hidden rounded-xl border border-line bg-elev">
+              <div className="flex min-w-0 items-start justify-between gap-3 border-b border-line px-4 py-3">
                 <div className="min-w-0">
-                  <div className="text-[13px] font-medium text-fg">
+                  <h3 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-fg">
                     #{index + 1} · {key.provider} · {key.model}
-                  </div>
-                  <div className="num mt-0.5 truncate text-[11px] text-faint">
+                  </h3>
+                  <div className="num mt-0.5 truncate text-[10px] uppercase tracking-[0.04em] text-faint">
                     priority {key.priority} · {key.hint}
                     {key.baseUrl ? ` · ${key.baseUrl}` : ""}
                     {` · workspace: ${workspaceOf(key.siteId)}`}
                   </div>
                 </div>
-                <Badge tone={key.disabled || (key.serverKeyId === undefined && !key.secret) ? "danger" : cooling ? "brass" : key.providerKind === "custom" ? "brass" : "ok"}>
+                <span
+                  className={`${pillBase} ${pillClass(key.disabled || (key.serverKeyId === undefined && !key.secret) ? "danger" : cooling ? "brass" : key.providerKind === "custom" ? "brass" : "ok")}`}
+                >
+                  <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
                   {key.disabled
                     ? "disabled"
                     : key.serverKeyId === undefined && !key.secret
@@ -188,24 +211,24 @@ export function KeysPage() {
                         : key.providerKind === "custom"
                           ? "custom"
                           : "active"}
-                </Badge>
+                </span>
               </div>
-              <dl className="mt-3 min-w-0 space-y-1 text-[12px]">
-                <div className="flex justify-between gap-3">
-                  <dt className="text-muted">Capabilities</dt>
-                  <dd className="min-w-0 break-words text-right">
+              <dl className="min-w-0 divide-y divide-line px-4 text-[12px]">
+                <div className="flex items-center justify-between gap-4 py-2">
+                  <dt className="shrink-0 text-muted">Capabilities</dt>
+                  <dd className="min-w-0 break-words text-right text-fg">
                     {[key.chat ? "Chat" : "", embeddingModelFor(key) ? `Semantic (${embeddingModelFor(key)})` : "Semantic: hash fallback", key.serverKeyId !== undefined || key.secret ? "Live key" : "No key saved"].filter(Boolean).join(" + ")}
                   </dd>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex items-center justify-between gap-4 py-2">
                   <dt className="text-muted">Today settled</dt>
-                  <dd className="font-mono">{money(spent)}</dd>
+                  <dd className="num text-fg">{money(spent)}</dd>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex items-center justify-between gap-4 py-2">
                   <dt className="text-muted">Allowance</dt>
-                  <dd className="flex items-center gap-2 font-mono">
+                  <dd className="flex items-center gap-2">
                     <input
-                      className={`${fieldClass} h-8 w-24 py-1`}
+                      className={compactField}
                       type="number"
                       min={0}
                       step={0.5}
@@ -215,26 +238,26 @@ export function KeysPage() {
                     />
                   </dd>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex items-center justify-between gap-4 py-2">
                   <dt className="text-muted">Reserved</dt>
-                  <dd className="font-mono">{money(open)}</dd>
+                  <dd className="num text-fg">{money(open)}</dd>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex items-center justify-between gap-4 py-2">
                   <dt className="text-muted">Last used</dt>
-                  <dd className="text-muted">{key.lastUsedAt ? relTime(key.lastUsedAt) : "Never"}</dd>
+                  <dd className="text-faint">{key.lastUsedAt ? relTime(key.lastUsedAt) : "Never"}</dd>
                 </div>
               </dl>
               {key.lastError ? (
-                <p className="mt-2 rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5 font-mono text-xs break-words text-danger">
+                <p className="mx-4 mt-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-2 font-mono text-[11px] leading-5 break-words text-danger">
                   {key.lastError}
                   {key.lastErrorAt ? <span className="block text-faint">{relTime(key.lastErrorAt)}</span> : null}
                 </p>
               ) : null}
-              <div className="mt-2.5 flex flex-wrap gap-1.5">
+              <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line px-4 py-3">
                 <Button variant="ghost" size="sm" onClick={() => toggleKey(key.id)}>
                   {key.disabled ? "Enable" : "Disable"}
                 </Button>
-                <Button variant="ghost" onClick={() => startEdit(key)}>
+                <Button variant="ghost" size="sm" onClick={() => startEdit(key)}>
                   {editingId === key.id ? "Editing…" : "Edit"}
                 </Button>
                 {key.cooldownUntil ? (
@@ -255,94 +278,103 @@ export function KeysPage() {
                   Delete key
                 </Button>
               </div>
-            </Card>
+            </section>
           );
         })}
       </div>
 
-      <Card className="grid gap-3 p-5 md:grid-cols-2">
-        <div className="md:col-span-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-semibold tracking-tight">{editingId ? "Edit custom endpoint" : "Add a key to the pool"}</h2>
-            {editingId ? <Badge tone="brass">editing a saved key</Badge> : null}
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">{editingId ? "Edit custom endpoint" : "Add a key to the pool"}</h2>
+            <p className="mt-1 max-w-3xl text-[13px] leading-5 text-muted">
+              OpenAI and OpenRouter use their catalogs. Custom points at any OpenAI-compatible gateway (GLM, DeepSeek, Groq, xAI, your own proxy). Enter the base URL and key, then Fetch Models to pick the exact model id.
+            </p>
           </div>
-          <p className="mt-1 text-sm text-muted">OpenAI and OpenRouter use their catalogs. Custom points at any OpenAI-compatible gateway (GLM, DeepSeek, Groq, xAI, your own proxy). Enter the base URL and key, then Fetch Models to pick the exact model id.</p>
+          {editingId ? (
+            <span className={`${pillBase} ${pillClass("brass")}`}>
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+              editing a saved key
+            </span>
+          ) : null}
         </div>
-        <Field label="Provider">
-          <select className={fieldClass} value={providerKind} onChange={(e) => pickProvider(e.target.value as ModelProvider)}>
-            {(Object.keys(PROVIDER_LABELS) as ModelProvider[]).map((value) => (
-              <option key={value} value={value}>
-                {PROVIDER_LABELS[value]}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {providerKind === "custom" ? (
-          <Field label="Custom model id" hint="Pick a fetched model or type the exact model string your gateway expects.">
-            <input
-              className={`${fieldClass} font-mono`}
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              placeholder="glm-5.3-flash"
-              list={fetchedModels.length ? "custom-model-options" : undefined}
-              autoComplete="off"
-            />
-            {fetchedModels.length ? (
-              <datalist id="custom-model-options">
-                {fetchedModels.map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
-            ) : null}
-          </Field>
-        ) : (
-          <Field label="Model" hint={catalog?.note ?? "Prices are blended input/output per 1M tokens."}>
-            <select className={fieldClass} value={catalogId} onChange={(e) => setCatalogId(e.target.value)}>
-              {providerModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.label} · ${model.inputPricePerMillion}/${model.outputPricePerMillion}
+        <div className="grid gap-4 px-5 py-5 md:grid-cols-2">
+          <Field label="Provider">
+            <select className={fieldClass} value={providerKind} onChange={(e) => pickProvider(e.target.value as ModelProvider)}>
+              {(Object.keys(PROVIDER_LABELS) as ModelProvider[]).map((value) => (
+                <option key={value} value={value}>
+                  {PROVIDER_LABELS[value]}
                 </option>
               ))}
             </select>
           </Field>
-        )}
-        <Field label="Label" hint="Shown on the key card and in usage events.">
-          <input className={fieldClass} value={label} onChange={(e) => setLabel(e.target.value)} placeholder={`${PROVIDER_LABELS[providerKind]} ${effectiveModel || "key"}`} />
-        </Field>
-        <Field label="API base URL" hint={providerKind === "custom" ? "Include /v1 when the gateway expects it. Do not paste the key here." : "Defaults to the provider endpoint."}>
-          <input className={`${fieldClass} font-mono`} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
-        </Field>
-        <Field label="API key">
-          <input className={`${fieldClass} font-mono`} type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="off" placeholder="sk-…" />
-        </Field>
-        {providerKind === "custom" ? (
-          <div className="flex flex-wrap items-center gap-2 md:col-span-2">
-            <Button variant="ghost" disabled={fetchingModels || !baseUrl.trim() || !secret.trim()} onClick={fetchModels}>
-              {fetchingModels ? "Fetching…" : "Fetch Models"}
-            </Button>
-            <span className="text-xs text-faint">Calls {baseUrl.trim() || "your base URL"}/models with your key, then fills a searchable model list. Manual typing still works.</span>
-            {fetchNote ? <span className="w-full text-sm text-muted">{fetchNote}</span> : null}
-          </div>
-        ) : null}
-        <Field label="Daily allowance ($)" hint="Leave generous for unlimited-scale runs; per-key caps still apply.">
-          <input className={`${fieldClass} font-mono`} type="number" min={0.5} step={0.5} value={allowance} onChange={(e) => setAllowance(Number(e.target.value))} />
-        </Field>
-        <Field label="Priority" hint="Higher runs first. Give backups a lower number.">
-          <input className={`${fieldClass} font-mono`} type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
-        </Field>
-        <Field
-          label="Semantic model (embeddings)"
-          hint="The L3 duplicate gate calls /embeddings with this model — never your chat model. Blank = provider default; a family with no embeddings route keeps the local hash fallback."
-        >
-          <input
-            className={`${fieldClass} font-mono`}
-            value={embeddingModel}
-            onChange={(e) => setEmbeddingModel(e.target.value)}
-            placeholder={providerKind === "openai" ? DEFAULT_EMBEDDING_MODEL : "text-embedding-3-small"}
-            autoComplete="off"
-          />
-        </Field>
-        <div className="flex flex-wrap gap-2 md:col-span-2">
+          {providerKind === "custom" ? (
+            <Field label="Custom model id" hint="Pick a fetched model or type the exact model string your gateway expects.">
+              <input
+                className={`${fieldClass} font-mono`}
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="glm-5.3-flash"
+                list={fetchedModels.length ? "custom-model-options" : undefined}
+                autoComplete="off"
+              />
+              {fetchedModels.length ? (
+                <datalist id="custom-model-options">
+                  {fetchedModels.map((model) => (
+                    <option key={model} value={model} />
+                  ))}
+                </datalist>
+              ) : null}
+            </Field>
+          ) : (
+            <Field label="Model" hint={catalog?.note ?? "Prices are blended input/output per 1M tokens."}>
+              <select className={fieldClass} value={catalogId} onChange={(e) => setCatalogId(e.target.value)}>
+                {providerModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label} · ${model.inputPricePerMillion}/${model.outputPricePerMillion}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field label="Label" hint="Shown on the key card and in usage events.">
+            <input className={fieldClass} value={label} onChange={(e) => setLabel(e.target.value)} placeholder={`${PROVIDER_LABELS[providerKind]} ${effectiveModel || "key"}`} />
+          </Field>
+          <Field label="API base URL" hint={providerKind === "custom" ? "Include /v1 when the gateway expects it. Do not paste the key here." : "Defaults to the provider endpoint."}>
+            <input className={`${fieldClass} font-mono`} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
+          </Field>
+          <Field label="API key">
+            <input className={`${fieldClass} font-mono`} type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="off" placeholder="sk-…" />
+          </Field>
+          {providerKind === "custom" ? (
+            <div className="flex flex-wrap items-center gap-2 md:col-span-2">
+              <Button variant="secondary" size="sm" className="bg-surface" disabled={fetchingModels || !baseUrl.trim() || !secret.trim()} onClick={fetchModels}>
+                {fetchingModels ? "Fetching…" : "Fetch Models"}
+              </Button>
+              <span className="text-[12px] text-faint">Calls {baseUrl.trim() || "your base URL"}/models with your key, then fills a searchable model list. Manual typing still works.</span>
+              {fetchNote ? <span className="w-full text-[13px] text-muted">{fetchNote}</span> : null}
+            </div>
+          ) : null}
+          <Field label="Daily allowance ($)" hint="Leave generous for unlimited-scale runs; per-key caps still apply.">
+            <input className={`${fieldClass} font-mono`} type="number" min={0.5} step={0.5} value={allowance} onChange={(e) => setAllowance(Number(e.target.value))} />
+          </Field>
+          <Field label="Priority" hint="Higher runs first. Give backups a lower number.">
+            <input className={`${fieldClass} font-mono`} type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
+          </Field>
+          <Field
+            label="Semantic model (embeddings)"
+            hint="The L3 duplicate gate calls /embeddings with this model — never your chat model. Blank = provider default; a family with no embeddings route keeps the local hash fallback."
+          >
+            <input
+              className={`${fieldClass} font-mono`}
+              value={embeddingModel}
+              onChange={(e) => setEmbeddingModel(e.target.value)}
+              placeholder={providerKind === "openai" ? DEFAULT_EMBEDDING_MODEL : "text-embedding-3-small"}
+              autoComplete="off"
+            />
+          </Field>
+        </div>
+        <div className="flex flex-wrap gap-2 border-t border-line px-5 py-4">
           <Button
             onClick={() => {
               if (!effectiveModel) return;
@@ -390,7 +422,8 @@ export function KeysPage() {
             </Button>
           ) : null}
           <Button
-            variant="ghost"
+            variant="secondary"
+            className="bg-surface"
             disabled={testing || !secret || !baseUrl || !effectiveModel}
             onClick={() => {
               setTesting(true);
@@ -404,129 +437,145 @@ export function KeysPage() {
             {testing ? "Testing…" : "Test connection"}
           </Button>
         </div>
-        {testNote ? <p className="text-sm text-muted md:col-span-2">{testNote}</p> : null}
-      </Card>
+        {testNote ? <p className="border-t border-line px-5 py-3 text-[13px] text-muted">{testNote}</p> : null}
+      </section>
 
-      <Card className="space-y-3 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <h2 className="text-base font-semibold tracking-tight">Web search switch</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Web search switch</h2>
+            <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">
               Powers live research: source scraping for runs and web context for the niche research engine. Each provider keeps its own key pool with failover.
             </p>
           </div>
-          <Badge tone={webSearch.mode === "off" ? "muted" : "ok"}>{webSearch.mode}</Badge>
+          <span className={`${pillBase} ${pillClass(webSearch.mode === "off" ? "muted" : "ok")}`}>
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+            {webSearch.mode}
+          </span>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="Web search mode">
-          {SEARCH_MODES.map((mode) => (
-            <button
-               key={mode.value}
-               type="button"
-               aria-pressed={webSearch.mode === mode.value}
-               onClick={() => setWebSearchMode(mode.value)}
-               className={`rounded-md border p-2.5 text-left text-[13px] transition-colors ${webSearch.mode === mode.value ? "border-accent/60 bg-accent/10" : "border-line bg-surface/40 hover:border-line-strong"}`}
-            >
-              <span className="block font-medium text-fg">{mode.label}</span>
-              <span className="mt-0.5 block text-[11px] leading-4 text-faint">{mode.hint}</span>
-            </button>
-          ))}
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-2 rounded-md border border-line p-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-medium">Tavily keys</span>
-              <Badge tone={webSearch.tavilyKeys.length ? "ok" : "muted"}>{webSearch.tavilyKeys.filter((key) => !key.disabled).length}/{webSearch.tavilyKeys.length} ready</Badge>
-            </div>
-            <textarea className={`${fieldClass} font-mono`} rows={3} value={tavilyPool} onChange={(e) => setTavilyPool(e.target.value)} placeholder="tvly-… one per line" />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={!tavilyPool.trim()}
-                onClick={() => {
-                  importWebSearchKeys("tavily", tavilyPool);
-                  setTavilyPool("");
-                }}
+        <div className="space-y-5 px-5 py-5">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="Web search mode">
+            {SEARCH_MODES.map((mode) => (
+              <button
+                key={mode.value}
+                type="button"
+                aria-pressed={webSearch.mode === mode.value}
+                onClick={() => setWebSearchMode(mode.value)}
+                className={`rounded-md border p-3 text-left transition-colors duration-150 ${
+                  webSearch.mode === mode.value ? "border-accent/50 bg-accent/10" : "border-line bg-surface hover:border-line-strong hover:bg-surface-2/60"
+                }`}
               >
-                Add Tavily keys
-              </Button>
-              <Button variant="danger" disabled={!webSearch.tavilyKeys.length} onClick={() => clearWebSearchKeys("tavily")}>
-                Clear
-              </Button>
-            </div>
-          </div>
-          <div className="space-y-2 rounded-md border border-line p-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-medium">Firecrawl keys</span>
-              <Badge tone={webSearch.firecrawlKeys.length ? "ok" : "muted"}>{webSearch.firecrawlKeys.filter((key) => !key.disabled).length}/{webSearch.firecrawlKeys.length} ready</Badge>
-            </div>
-            <textarea className={`${fieldClass} font-mono`} rows={3} value={firecrawlPool} onChange={(e) => setFirecrawlPool(e.target.value)} placeholder="fc-… one per line" />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={!firecrawlPool.trim()}
-                onClick={() => {
-                  importWebSearchKeys("firecrawl", firecrawlPool);
-                  setFirecrawlPool("");
-                }}
-              >
-                Add Firecrawl keys
-              </Button>
-              <Button variant="danger" disabled={!webSearch.firecrawlKeys.length} onClick={() => clearWebSearchKeys("firecrawl")}>
-                Clear
-              </Button>
-            </div>
-          </div>
-        </div>
-        {webSearch.tavilyKeys.length || webSearch.firecrawlKeys.length ? (
-          <ul className="flex flex-wrap gap-2 text-xs">
-            {[...webSearch.tavilyKeys.map((key) => ({ ...key, provider: "tavily" })), ...webSearch.firecrawlKeys.map((key) => ({ ...key, provider: "firecrawl" }))].map((key) => (
-              <li key={key.id} className="rounded-lg border border-line px-2 py-1 font-mono">
-                {key.provider} {key.hint} · {key.disabled ? "paused" : key.cooldownUntil && key.cooldownUntil > Date.now() ? "cooling" : "ready"}
-                {key.lastError ? ` · ${key.lastError}` : ""}
-              </li>
+                <span className="block text-[13px] font-medium text-fg">{mode.label}</span>
+                <span className="mt-0.5 block text-[11px] leading-4 text-faint">{mode.hint}</span>
+              </button>
             ))}
-          </ul>
-        ) : null}
-      </Card>
-      <Card className="space-y-3 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold tracking-tight">Blader humanizer (native)</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
+          </div>
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
+                <span className="text-[13px] font-semibold text-fg">Tavily keys</span>
+                <span className={`${pillBase} ${pillClass(webSearch.tavilyKeys.length ? "ok" : "muted")}`}>{webSearch.tavilyKeys.filter((key) => !key.disabled).length}/{webSearch.tavilyKeys.length} ready</span>
+              </div>
+              <textarea className={`${fieldClass} font-mono`} rows={3} value={tavilyPool} onChange={(e) => setTavilyPool(e.target.value)} placeholder="tvly-… one per line" />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  disabled={!tavilyPool.trim()}
+                  onClick={() => {
+                    importWebSearchKeys("tavily", tavilyPool);
+                    setTavilyPool("");
+                  }}
+                >
+                  Add Tavily keys
+                </Button>
+                <Button variant="danger" size="sm" disabled={!webSearch.tavilyKeys.length} onClick={() => clearWebSearchKeys("tavily")}>
+                  Clear
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
+                <span className="text-[13px] font-semibold text-fg">Firecrawl keys</span>
+                <span className={`${pillBase} ${pillClass(webSearch.firecrawlKeys.length ? "ok" : "muted")}`}>{webSearch.firecrawlKeys.filter((key) => !key.disabled).length}/{webSearch.firecrawlKeys.length} ready</span>
+              </div>
+              <textarea className={`${fieldClass} font-mono`} rows={3} value={firecrawlPool} onChange={(e) => setFirecrawlPool(e.target.value)} placeholder="fc-… one per line" />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  disabled={!firecrawlPool.trim()}
+                  onClick={() => {
+                    importWebSearchKeys("firecrawl", firecrawlPool);
+                    setFirecrawlPool("");
+                  }}
+                >
+                  Add Firecrawl keys
+                </Button>
+                <Button variant="danger" size="sm" disabled={!webSearch.firecrawlKeys.length} onClick={() => clearWebSearchKeys("firecrawl")}>
+                  Clear
+                </Button>
+              </div>
+            </div>
+          </div>
+          {webSearch.tavilyKeys.length || webSearch.firecrawlKeys.length ? (
+            <ul className="flex flex-wrap gap-1.5 border-t border-line pt-4">
+              {[...webSearch.tavilyKeys.map((key) => ({ ...key, provider: "tavily" })), ...webSearch.firecrawlKeys.map((key) => ({ ...key, provider: "firecrawl" }))].map((key) => (
+                <li key={key.id} className="num rounded-full border border-line bg-surface px-2 py-0.5 text-[10px] text-faint">
+                  {key.provider} {key.hint} · {key.disabled ? "paused" : key.cooldownUntil && key.cooldownUntil > Date.now() ? "cooling" : "ready"}
+                  {key.lastError ? ` · ${key.lastError}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Blader humanizer (native)</h2>
+            <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">
               The external Metric37 API is gone. Humanization runs in-app on the blader/humanizer ruleset (26 Wikipedia "Signs of AI writing" patterns): a deterministic pass always runs, and every usable model key on this page powers the two-pass surgical audit + rewrite in the assigned US author's voice.
             </p>
           </div>
-          <Badge tone="ok">engine on</Badge>
+          <span className={`${pillBase} ${pillClass("ok")}`}>
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+            engine on
+          </span>
         </div>
-        <ul className="grid gap-2 text-xs text-muted">
-          <li>Pass 1 (audit): deterministic + LLM scan for staging contrasts, one-line closers, forced triads, dash chaining, banned vocabulary, inflated significance, sales language, formatting tells, and chatbot residue.</li>
-          <li>Pass 2 (rewrite): surgical rewrite that preserves the Bing skeleton — H1/H2/H3, markdown tables, internal links, and the direct-answer opening.</li>
-          <li>The humanization score and the stripped-pattern list land on each article; the revision stage records the same on the job.</li>
+        <ul className="divide-y divide-line text-[13px] leading-5 text-muted">
+          <li className="px-5 py-3">Pass 1 (audit): deterministic + LLM scan for staging contrasts, one-line closers, forced triads, dash chaining, banned vocabulary, inflated significance, sales language, formatting tells, and chatbot residue.</li>
+          <li className="px-5 py-3">Pass 2 (rewrite): surgical rewrite that preserves the Bing skeleton — H1/H2/H3, markdown tables, internal links, and the direct-answer opening.</li>
+          <li className="px-5 py-3">The humanization score and the stripped-pattern list land on each article; the revision stage records the same on the job.</li>
         </ul>
-      </Card>
+      </section>
 
-      <Card className="p-5">
-        <div className="flex flex-wrap gap-4 font-mono text-sm">
-          <span>SETTLED today {settled.length}</span>
-          <span>RESERVED today {reserved.length}</span>
-          <span className="text-muted">RELEASED today {released.length}</span>
-          <span className="text-muted">UTC reset {nextUtcResetLabel()}</span>
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 border-b border-line px-5 py-4">
+          <span className="num text-[12px] text-fg">SETTLED today {settled.length}</span>
+          <span className="num text-[12px] text-fg">RESERVED today {reserved.length}</span>
+          <span className="num text-[12px] text-muted">RELEASED today {released.length}</span>
+          <span className="num ml-auto text-[12px] text-muted">UTC reset {nextUtcResetLabel()}</span>
         </div>
-        <ul className="mt-3 divide-y divide-line text-sm">
+        <ul className="divide-y divide-line text-[13px]">
           {events.slice(0, 12).map((event) => (
-            <li key={event.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-              <span className="flex items-center gap-2">
-                <Badge tone={statusTone(event.state === "SETTLED" ? "completed" : event.state === "RELEASED" ? "cancelled" : "queued")}>{event.state}</Badge>
-                <span>
+            <li key={event.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 transition-colors duration-150 hover:bg-surface-2/60">
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className={`${pillBase} ${pillClass(statusTone(event.state === "SETTLED" ? "completed" : event.state === "RELEASED" ? "cancelled" : "queued"))}`}>
+                  <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+                  {event.state}
+                </span>
+                <span className="text-fg">
                   {event.provider} / {event.model}
                 </span>
                 <span className="text-muted">{event.stage}</span>
               </span>
-              <span className="font-mono text-xs text-faint">
+              <span className="num shrink-0 text-[11px] text-faint">
                 {event.tokens} tok · {money(event.usd)} · {relTime(event.at)}
               </span>
             </li>
           ))}
         </ul>
-      </Card>
+      </section>
     </div>
   );
 }

@@ -7,62 +7,61 @@
    * numbers so columns of figures line up.
    */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --font-display: "Sora", "Inter", -apple-system, sans-serif;
   --font-editorial: "Instrument Serif", Georgia, "Times New Roman", serif;
   --font-serif: Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --tracking-tight: -0.02em;
-  --tracking-caption: 0.08em;
+  --tracking-caption: 0.14em;
 
   /*
-   * Base ramp: Paper (light) — the default. The `html[data-theme="…"]` blocks
-   * below override this per mode; radii, motion and shell geometry live here
-   * and never change.
+   * Base ramp: Paper (light) — overridden per mode below. Vault OS keeps the
+   * ink neutrals cool and the accent green; the canvas is never pure white.
    */
-  --color-bg: #ffffff;
-  --color-elev: #f7f7f7;
-  --color-surface: #ffffff;
-  --color-surface-2: #f7f7f7;
-  --color-line: #e5e5e5;
-  --color-line-strong: #d4d4d4;
+  --color-bg: #F5F7FA;
+  --color-elev: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F0F3F7;
+  --color-line: #E3E7EE;
+  --color-line-strong: #CBD3DF;
 
   /* --- text ---------------------------------------------------------- */
-  --color-fg: #1a1a1a;
-  --color-muted: #666666;
-  --color-faint: #6f6f6f;
+  --color-fg: #0B1220;
+  --color-muted: #4B5462;
+  --color-faint: #67707E;
 
-  /* --- accent (black ink; inverts to white in midnight) --------------- */
-  --color-accent: #111111;
-  --color-accent-hover: #000000;
-  --color-on-accent: #ffffff;
+  /* --- accent (Vault OS green; re-tuned per mode) --------------------- */
+  --color-accent: #047857;
+  --color-accent-hover: #065F46;
+  --color-on-accent: #FFFFFF;
   /* legacy aliases: older screens reference brass / brass-2 / ink */
-  --color-brass: #111111;
-  --color-brass-2: #000000;
-  --color-ink: #ffffff;
+  --color-brass: #047857;
+  --color-brass-2: #065F46;
+  --color-ink: #FFFFFF;
 
   /* --- semantic ------------------------------------------------------ */
-  --color-ok: #15803d;
-  --color-warn: #b45309;
-  --color-danger: #b91c1c;
-  --color-paper: #ffffff;
-  --color-paper-ink: #1a1a1a;
-  --color-paper-muted: #666666;
+  --color-ok: #047857;
+  --color-warn: #B45309;
+  --color-danger: #B91C1C;
+  --color-paper: #FFFFFF;
+  --color-paper-ink: #0B1220;
+  --color-paper-muted: #4B5462;
 
   /* --- radii, elevation, motion --------------------------------------
-   * Midday's scale: 12px cards, 8px controls, 6px chips. Elevation is a
-   * whisper — hairlines do the structural work.
+   * Vault OS scale: 16px cards, 12px panels, 10px controls, 8px chips.
+   * Elevation is a hairline plus one soft ambient shadow.
    */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.625rem;
-  --radius-xl: 0.75rem;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.1);
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --shadow-xs: 0 1px 2px rgb(11 18 32 / 0.05);
+  --shadow-sm: 0 10px 30px -18px rgb(11 18 32 / 0.22);
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   /* --- app shell geometry (one source of truth for every breakpoint) -- */
   --shell-rail: 4.5rem; /* md–xl: icon rail */
-  --shell-panel: 15rem; /* xl+: full sidebar */
+  --shell-panel: 16.5rem; /* xl+: full 264px sidebar */
   --tabbar-h: 3.875rem; /* <md: bottom tab bar row, before safe-area */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -76,29 +75,29 @@
  * inverts its own black accent.
  */
 html[data-theme="midnight"] {
-  --color-bg: #0a0a0a;
-  --color-elev: #111111;
-  --color-surface: #161616;
-  --color-surface-2: #1f1f1f;
-  --color-line: #262626;
-  --color-line-strong: #3a3a3a;
-  --color-fg: #f5f5f5;
-  --color-muted: #a3a3a3;
-  --color-faint: #7a7a7a;
-  --color-accent: #f5f5f5;
-  --color-accent-hover: #ffffff;
-  --color-on-accent: #0a0a0a;
-  --color-brass: #f5f5f5;
-  --color-brass-2: #ffffff;
-  --color-ink: #0a0a0a;
-  --color-ok: #4ade80;
-  --color-warn: #fbbf24;
-  --color-danger: #f87171;
-  --color-paper: #0a0a0a;
-  --color-paper-ink: #f5f5f5;
-  --color-paper-muted: #a3a3a3;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.6);
+  --color-bg: #07080B;
+  --color-elev: #0D0F14;
+  --color-surface: #0B0D12;
+  --color-surface-2: #141821;
+  --color-line: #232B38;
+  --color-line-strong: #38424F;
+  --color-fg: #E9EDF5;
+  --color-muted: #9AA3B4;
+  --color-faint: #7B8698;
+  --color-accent: #34D399;
+  --color-accent-hover: #6EE7B7;
+  --color-on-accent: #07080B;
+  --color-brass: #34D399;
+  --color-brass-2: #6EE7B7;
+  --color-ink: #07080B;
+  --color-ok: #10B981;
+  --color-warn: #F59E0B;
+  --color-danger: #F87171;
+  --color-paper: #0D0F14;
+  --color-paper-ink: #E9EDF5;
+  --color-paper-muted: #9AA3B4;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-sm: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 14px 34px -20px rgb(0 0 0 / 0.95);
   color-scheme: dark;
 }
 
@@ -108,29 +107,29 @@ html[data-theme="midnight"] {
  * tint, no brand colour in the chrome — the accent is the ink itself.
  */
 html[data-theme="paper"] {
-  --color-bg: #ffffff;
-  --color-elev: #f7f7f7;
-  --color-surface: #ffffff;
-  --color-surface-2: #f7f7f7;
-  --color-line: #e5e5e5;
-  --color-line-strong: #d4d4d4;
-  --color-fg: #1a1a1a;
-  --color-muted: #666666;
-  --color-faint: #6f6f6f;
-  --color-accent: #111111;
-  --color-accent-hover: #000000;
-  --color-on-accent: #ffffff;
-  --color-brass: #111111;
-  --color-brass-2: #000000;
-  --color-ink: #ffffff;
-  --color-ok: #15803d;
-  --color-warn: #b45309;
-  --color-danger: #b91c1c;
-  --color-paper: #ffffff;
-  --color-paper-ink: #1a1a1a;
-  --color-paper-muted: #666666;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.1);
+  --color-bg: #F5F7FA;
+  --color-elev: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F0F3F7;
+  --color-line: #E3E7EE;
+  --color-line-strong: #CBD3DF;
+  --color-fg: #0B1220;
+  --color-muted: #4B5462;
+  --color-faint: #67707E;
+  --color-accent: #047857;
+  --color-accent-hover: #065F46;
+  --color-on-accent: #FFFFFF;
+  --color-brass: #047857;
+  --color-brass-2: #065F46;
+  --color-ink: #FFFFFF;
+  --color-ok: #047857;
+  --color-warn: #B45309;
+  --color-danger: #B91C1C;
+  --color-paper: #FFFFFF;
+  --color-paper-ink: #0B1220;
+  --color-paper-muted: #4B5462;
+  --shadow-xs: 0 1px 2px rgb(11 18 32 / 0.05);
+  --shadow-sm: 0 10px 30px -18px rgb(11 18 32 / 0.22);
   color-scheme: light;
 }
 
@@ -168,8 +167,8 @@ html[data-theme="paper"] {
   }
 
   h1 {
-    font-family: var(--font-sans);
-    font-weight: 700;
+    font-family: var(--font-display);
+    font-weight: 600;
     letter-spacing: -0.025em;
   }
 
@@ -294,11 +293,11 @@ html[data-theme="paper"] {
   /* Page titles: sans, semibold, tight — the serif is reserved for
      .display-serif moments and article prose. */
   .display {
-    font-family: var(--font-sans);
+    font-family: var(--font-display);
     font-weight: 600;
-    font-size: clamp(1.25rem, 1.1rem + 0.35vw, 1.375rem);
-    line-height: 1.2;
-    letter-spacing: -0.02em;
+    font-size: clamp(1.5rem, 1.3rem + 0.6vw, 1.875rem);
+    line-height: 1.15;
+    letter-spacing: -0.025em;
     text-wrap: balance;
   }
 

@@ -1,26 +1,15 @@
-/**
- * The four bento KPIs at the top of the desk.
- *
- * Each card carries its own tint applied with `color-mix` against the
- * mode's surface token rather than a hardcoded pastel, so the same card
- * reads as a warm tint in Paper and a subtly bordered tile in Midnight —
- * one implementation, both modes, no per-mode branching.
- */
-
 export type BentoCard = {
   label: string;
   value: string;
   hint: string;
-  /** One of the four reference accents. */
   accent: string;
-  /** Optional hero delta, e.g. "+100%". */
   delta?: { text: string; positive: boolean };
 };
 
-export const BENTO_CORAL = "#f4b8a4";
-export const BENTO_BUTTER = "#f7dc86";
-export const BENTO_PINK = "#f5c6d6";
-export const BENTO_SKY = "#b6d7f2";
+export const BENTO_CORAL = "var(--color-brass)";
+export const BENTO_BUTTER = "var(--color-warn)";
+export const BENTO_PINK = "var(--color-brass-2)";
+export const BENTO_SKY = "var(--color-faint)";
 
 export function KpiBento({ cards }: { cards: BentoCard[] }) {
   return (
@@ -29,24 +18,26 @@ export function KpiBento({ cards }: { cards: BentoCard[] }) {
         <section
           key={card.label}
           data-surface="card"
-          className="rounded-lg border border-line p-4 sm:p-5"
-          style={{ background: `color-mix(in oklab, ${card.accent} 16%, var(--color-surface))` }}
+          className="flex min-w-0 flex-col justify-between rounded-xl border border-line bg-elev p-4 sm:p-5"
         >
-          <div className="text-[10px] font-medium uppercase leading-4 tracking-[0.14em] text-muted sm:text-xs sm:tracking-[0.16em]">
-            {card.label}
-          </div>
-          <div className="mt-2 flex items-baseline gap-2 sm:mt-3">
-            <span className="text-2xl font-semibold tracking-tight tabular-nums sm:text-4xl">{card.value}</span>
+          <div className="eyebrow">{card.label}</div>
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 sm:mt-4">
+            <span className="font-display text-[30px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg sm:text-[34px]">
+              {card.value}
+            </span>
             {card.delta ? (
               <span
-                className="text-sm font-semibold tabular-nums"
-                style={{ color: card.delta.positive ? "var(--color-ok)" : "var(--color-danger)" }}
+                className={
+                  card.delta.positive
+                    ? "num text-[12px] font-medium text-ok"
+                    : "num text-[12px] font-medium text-danger"
+                }
               >
                 {card.delta.text}
               </span>
             ) : null}
           </div>
-          <div className="mt-1.5 text-xs text-muted sm:mt-2 sm:text-sm">{card.hint}</div>
+          <div className="mt-3 border-t border-line pt-2.5 text-[12px] leading-5 text-muted sm:mt-4">{card.hint}</div>
         </section>
       ))}
     </div>

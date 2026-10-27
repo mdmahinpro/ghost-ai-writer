@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { Card, PageIntro } from "@/components/ui";
+import { ArrowUpRight } from "lucide-react";
+import { PageIntro } from "@/components/ui";
 import { HELP_SECTIONS, findHelpTopic } from "@/lib/help-topics";
 
 const STAGES = [
@@ -36,51 +37,56 @@ export function HelpPage() {
   const open = findHelpTopic(openSlug);
 
   return (
-    <div>
+    <div className="space-y-5">
       <PageIntro
         eyebrow="Operator guide"
         title="First week, in order"
         lede="This is the working path inside the studio, plus a guide for every area of it. Ghost AI Writer does not invent rankings or bill you for AI — your own key is billed by your provider. It publishes to Ghost, or to the studio ledger when you are practising."
       />
-      <div className="grid gap-3">
-        {PATH.map(([title, body, href], index) => (
-          <Link key={href} to={href} className="block">
-            <Card className="flex gap-4 p-4">
-              <span className="grid size-8 shrink-0 place-items-center rounded-full border border-line font-mono text-xs text-brass">{index + 1}</span>
-              <span>
-                <span className="block font-medium">{title}</span>
-                <span className="mt-1 block text-sm leading-6 text-muted">{body}</span>
-              </span>
-            </Card>
-          </Link>
-        ))}
-      </div>
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <ol className="divide-y divide-line">
+          {PATH.map(([title, body, href], index) => (
+            <li key={href}>
+              <Link to={href} className="group flex items-start gap-3 px-5 py-3.5 transition-colors duration-150 hover:bg-surface-2/60">
+                <span className="num mt-0.5 grid size-7 shrink-0 place-items-center rounded-md border border-line bg-surface text-[11px] text-faint">{index + 1}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-semibold text-fg">{title}</span>
+                  <span className="mt-0.5 block text-[13px] leading-5 text-muted">{body}</span>
+                </span>
+                <ArrowUpRight aria-hidden="true" className="mt-1 size-3.5 shrink-0 text-faint opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </section>
 
-      <Card className="mt-4 p-5">
-        <h2 className="font-display text-2xl">Guides</h2>
-        <p className="mt-1 text-sm text-muted">
-          {HELP_SECTIONS.reduce((total, section) => total + section.topics.length, 0)} guides, grouped the way the work happens. Pick one and it opens here.
-        </p>
-        <div className="mt-4 grid gap-4">
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Guides</h2>
+          <p className="mt-1 max-w-3xl text-[13px] leading-5 text-muted">
+            {HELP_SECTIONS.reduce((total, section) => total + section.topics.length, 0)} guides, grouped the way the work happens. Pick one and it opens here.
+          </p>
+        </div>
+        <div className="divide-y divide-line">
           {HELP_SECTIONS.map((section) => (
-            <section key={section.title}>
-              <h3 className="text-[13px] font-semibold text-fg">{section.title}</h3>
-              <ul className="mt-2 grid gap-1">
+            <section key={section.title} className="px-5 py-4">
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">{section.title}</h3>
+              <ul className="mt-2">
                 {section.topics.map((topic) => (
                   <li key={topic.slug}>
                     <button
                       type="button"
                       aria-expanded={openSlug === topic.slug}
                       onClick={() => setOpenSlug(openSlug === topic.slug ? "" : topic.slug)}
-                      className="w-full rounded-md px-2 py-1.5 text-left text-sm text-muted transition-colors hover:bg-surface/70 hover:text-fg aria-expanded:text-fg"
+                      className="w-full rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-surface-2/60 aria-expanded:bg-surface-2"
                     >
-                      <span className="font-medium">{topic.title}</span>
-                      <span className="ml-2 text-xs text-faint">{topic.lede}</span>
+                      <span className="text-[13px] font-medium text-fg">{topic.title}</span>
+                      <span className="ml-2 text-[12px] text-faint">{topic.lede}</span>
                     </button>
                     {openSlug === topic.slug ? (
                       <div className="mb-2 ms-2 mt-1 border-s border-line ps-3">
                         {topic.body.map((paragraph) => (
-                          <p key={paragraph.slice(0, 32)} className="mt-1 text-sm leading-6 text-muted">
+                          <p key={paragraph.slice(0, 32)} className="mt-1 text-[13px] leading-6 text-muted">
                             {paragraph}
                           </p>
                         ))}
@@ -92,29 +98,35 @@ export function HelpPage() {
             </section>
           ))}
         </div>
-        {open ? null : <p className="mt-3 text-xs text-faint">Nothing open. The list above is complete without a selection.</p>}
-      </Card>
+        {open ? null : <p className="border-t border-line px-5 py-3 text-[11px] text-faint">Nothing open. The list above is complete without a selection.</p>}
+      </section>
 
-      <Card className="mt-4 p-5">
-        <h2 className="font-display text-2xl">Six stages on every article</h2>
-        <ol className="mt-3 space-y-2">
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Six stages on every article</h2>
+        </div>
+        <ol className="divide-y divide-line">
           {STAGES.map(([name, body], index) => (
-            <li key={name} className="text-sm leading-6">
-              <span className="text-brass">{index + 1}. {name}. </span>
+            <li key={name} className="px-5 py-3 text-[13px] leading-6">
+              <span className="font-medium text-fg">
+                {index + 1}. {name}.{" "}
+              </span>
               <span className="text-muted">{body}</span>
             </li>
           ))}
         </ol>
-      </Card>
-      <Card className="mt-4 p-5 text-sm leading-6 text-muted">
-        <h2 className="font-display text-2xl text-fg">What this studio will not pretend</h2>
-        <ul className="mt-3 list-disc space-y-1 pl-5">
-          <li>No search volume, keyword difficulty, or traffic charts.</li>
-          <li>A provider marked CONFIGURED is not deployable until Test marks it VERIFIED. Upload still happens with your host.</li>
-          <li>The worker badge is real for this panel. Offline keeps the queue and does not write.</li>
-          <li>Duplicate protection runs at submit and again before publish. Review held means you decide.</li>
+      </section>
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">What this studio will not pretend</h2>
+        </div>
+        <ul className="divide-y divide-line">
+          <li className="px-5 py-2.5 text-[13px] leading-5 text-muted">No search volume, keyword difficulty, or traffic charts.</li>
+          <li className="px-5 py-2.5 text-[13px] leading-5 text-muted">A provider marked CONFIGURED is not deployable until Test marks it VERIFIED. Upload still happens with your host.</li>
+          <li className="px-5 py-2.5 text-[13px] leading-5 text-muted">The worker badge is real for this panel. Offline keeps the queue and does not write.</li>
+          <li className="px-5 py-2.5 text-[13px] leading-5 text-muted">Duplicate protection runs at submit and again before publish. Review held means you decide.</li>
         </ul>
-      </Card>
+      </section>
     </div>
   );
 }

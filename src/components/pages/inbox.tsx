@@ -1,8 +1,28 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { Inbox as InboxIcon } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, Empty, PageIntro, statusTone } from "@/components/ui";
+import { Button, Card, PageIntro } from "@/components/ui";
 import { sendDigestEmail } from "@/lib/email.functions";
 import { relTime } from "@/lib/utils";
+
+function Pill({ tone = "muted", children }: { tone?: "ok" | "danger" | "warn" | "muted"; children: ReactNode }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 ${
+        tone === "ok"
+          ? "border-ok/30 bg-ok/10 text-ok"
+          : tone === "danger"
+            ? "border-danger/30 bg-danger/10 text-danger"
+            : tone === "warn"
+              ? "border-warn/30 bg-warn/10 text-warn"
+              : "border-line bg-surface text-muted"
+      }`}
+    >
+      <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+      {children}
+    </span>
+  );
+}
 
 export function InboxPage() {
   const activity = useApp((s) => s.activity);
@@ -56,56 +76,81 @@ export function InboxPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <PageIntro
         eyebrow="Account"
         title="Notifications"
         lede="Notes the studio writes for this website. Nothing arrives here by email. A saved email key can send a digest out."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => markActivityReadAll(siteId)}>
+              Mark all read
+            </Button>
+            <Button disabled={!hasKey || sending} onClick={() => void sendDigest()}>
+              {sending ? "Sending…" : "Email digest"}
+            </Button>
+          </div>
+        }
       />
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1 rounded-full border border-line bg-surface p-1">
         {(["all", "unread", "ok", "info", "warn", "danger"] as const).map((item) => (
           <button
             key={item}
             onClick={() => setTone(item)}
-            className={`min-h-11 rounded-full px-4 text-sm ${tone === item ? "bg-brass text-ink" : "border border-line text-muted"}`}
+            className={`h-7 rounded-full border px-3 text-[12px] font-medium transition-colors duration-150 ${
+              tone === item
+                ? "border-brass/30 bg-brass/10 text-fg"
+                : "border-transparent text-muted hover:bg-surface-2 hover:text-fg"
+            }`}
           >
             {item}
             {item === "unread" ? ` ${unread.length}` : ""}
           </button>
         ))}
-        <Button variant="ghost" onClick={() => markActivityReadAll(siteId)}>
-          Mark all read
-        </Button>
-        <Button disabled={!hasKey || sending} onClick={() => void sendDigest()}>
-          {sending ? "Sending…" : "Email digest"}
-        </Button>
       </div>
-      {!hasKey ? <p className="text-sm text-muted">Add an email key on Account to send a digest.</p> : null}
-      {note ? <p className="text-sm text-muted">{note}</p> : null}
+      {!hasKey ? (
+        <p className="rounded-lg border border-line bg-surface px-4 py-2.5 text-[13px] text-muted">Add an email key on Account to send a digest.</p>
+      ) : null}
+      {note ? <p className="rounded-lg border border-line bg-surface px-4 py-2.5 text-[13px] text-muted">{note}</p> : null}
       {digest ? (
-        <Card className="p-4 text-sm leading-6">
-          <p className="font-medium">To {account.email}</p>
-          <p className="text-muted">Subject: Studio notification digest</p>
-          <pre className="mt-3 whitespace-pre-wrap font-sans">{digest}</pre>
+        <Card className="rounded-xl p-0">
+          <div className="border-b border-line px-5 py-3.5">
+            <div className="text-[13px] font-medium text-fg">To {account.email}</div>
+            <div className="mt-0.5 text-[12px] text-faint">Subject: Studio notification digest</div>
+          </div>
+          <pre className="whitespace-pre-wrap px-5 py-4 font-mono text-[11px] leading-6 text-muted">{digest}</pre>
         </Card>
       ) : null}
       {!rows.length ? (
-        <Empty title="No notifications" body="Runs, syncs, and link passes land here. They are not incoming mail." />
+        <div className="rounded-xl border border-line bg-elev px-6 py-16 text-center">
+          <span className="mx-auto grid size-11 place-items-center rounded-lg bg-surface-2 text-faint">
+            <InboxIcon aria-hidden="true" strokeWidth={1.6} className="size-5" />
+          </span>
+          <h2 className="mt-4 font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">No notifications</h2>
+          <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-6 text-muted">
+            Runs, syncs, and link passes land here. They are not incoming mail.
+          </p>
+        </div>
       ) : (
-        <Card>
+        <Card className="overflow-hidden rounded-xl p-0">
           <ul className="divide-y divide-line">
             {rows.map((item) => (
-              <li key={item.id} className="flex items-start justify-between gap-3 px-4 py-3 text-sm">
-                <span className="flex items-start gap-2">
-                  <Badge tone={statusTone(item.tone === "ok" ? "completed" : item.tone === "danger" ? "failed" : item.tone === "warn" ? "queued" : "draft")}>
-                    {item.tone}
-                  </Badge>
-                  <button type="button" className="text-left" onClick={() => markActivityRead(item.id)}>
-                    <span className={item.read ? "text-muted" : "text-fg"}>{item.message}</span>
-                    <span className="mt-1 block text-xs text-faint">{item.read ? "Read" : "Unread"} · click to mark read</span>
-                  </button>
-                </span>
-                <span className="shrink-0 text-xs text-faint">{relTime(item.at)}</span>
+              <li
+                key={item.id}
+                className={`flex items-start gap-3 px-5 py-3.5 text-[13px] transition-colors duration-150 hover:bg-surface-2/60 ${
+                  item.read ? "" : "bg-surface-2/40"
+                }`}
+              >
+                <Pill
+                  tone={item.tone === "ok" ? "ok" : item.tone === "danger" ? "danger" : item.tone === "warn" ? "warn" : "muted"}
+                >
+                  {item.tone}
+                </Pill>
+                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => markActivityRead(item.id)}>
+                  <span className={item.read ? "text-muted" : "text-fg"}>{item.message}</span>
+                  <span className="mt-0.5 block text-[11px] text-faint">{item.read ? "Read" : "Unread"} · click to mark read</span>
+                </button>
+                <span className="num shrink-0 text-[11px] text-faint">{relTime(item.at)}</span>
               </li>
             ))}
           </ul>

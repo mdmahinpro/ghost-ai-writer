@@ -42,104 +42,60 @@ export function TokenGate({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        display: "grid",
-        placeItems: "center",
-        padding: 24,
-        background: "var(--background, #f2f4f1)",
-        color: "var(--foreground, #1c2420)",
-        zIndex: 1000,
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 420,
-          background: "var(--card, #ffffff)",
-          border: "1px solid var(--border, #d7ddd8)",
-          borderRadius: 16,
-          padding: 28,
-          boxShadow: "0 20px 60px rgba(0,0,0,.12)",
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: 20, letterSpacing: "-0.01em" }}>Backend token</h1>
-        <p style={{ margin: "10px 0 18px", fontSize: 14, lineHeight: 1.55, opacity: 0.75 }}>
+    <div className="fixed inset-0 z-[1000] grid place-items-center bg-bg px-6 py-10 text-fg">
+      <div className="w-full max-w-[440px] rounded-xl border border-line bg-elev p-7 shadow-sm">
+        <p className="eyebrow">Access</p>
+        <h1 className="display mt-2">Backend token</h1>
+        <p className="mt-3 text-sm leading-relaxed text-muted">
           {rejected
             ? "That token was rejected by the server. Paste a valid one to continue."
             : "This app talks to your Rust backend, which is locked with an admin token. Paste it once — it is kept for this browser session only and is never baked into the page."}
         </p>
-        <label
-          htmlFor="gaw-token"
-          style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6, opacity: 0.7 }}
-        >
-          Admin token
-        </label>
-        <input
-          id="gaw-token"
-          type={reveal ? "text" : "password"}
-          autoComplete="off"
-          spellCheck={false}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") save();
-          }}
-          placeholder="GAW_ADMIN_TOKEN"
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            padding: "10px 12px",
-            fontSize: 14,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            color: "inherit",
-            background: "transparent",
-            border: "1px solid var(--border, #d7ddd8)",
-            borderRadius: 10,
-            outline: "none",
-          }}
-        />
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+
+        <div className="mt-6">
+          <label
+            htmlFor="gaw-token"
+            className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.14em] text-faint"
+          >
+            Admin token
+          </label>
+          <input
+            id="gaw-token"
+            type={reveal ? "text" : "password"}
+            autoComplete="off"
+            spellCheck={false}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") save();
+            }}
+            placeholder="GAW_ADMIN_TOKEN"
+            className="w-full rounded-md border border-line bg-surface px-3 py-2.5 font-mono text-sm text-fg placeholder:text-faint focus:border-brass/60 focus:outline-none focus:ring-2 focus:ring-brass/20"
+          />
+        </div>
+
+        <div className="mt-4 flex items-center gap-3">
           <button
             type="button"
             onClick={save}
             disabled={!value.trim()}
-            style={{
-              flex: 1,
-              padding: "10px 14px",
-              fontSize: 14,
-              fontWeight: 600,
-              color: "var(--primary-foreground, #ffffff)",
-              background: "var(--primary, #2f6e62)",
-              border: "none",
-              borderRadius: 10,
-              cursor: value.trim() ? "pointer" : "not-allowed",
-              opacity: value.trim() ? 1 : 0.5,
-            }}
+            className="h-11 flex-1 rounded-md bg-brass px-4 text-sm font-semibold text-ink transition-colors duration-150 hover:bg-brass-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Continue
           </button>
           <button
             type="button"
             onClick={() => setReveal((on) => !on)}
-            style={{
-              padding: "10px 12px",
-              fontSize: 13,
-              color: "inherit",
-              background: "transparent",
-              border: "1px solid var(--border, #d7ddd8)",
-              borderRadius: 10,
-              cursor: "pointer",
-            }}
+            className="h-11 rounded-md border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors duration-150 hover:border-line-strong hover:bg-surface-2"
           >
             {reveal ? "Hide" : "Show"}
           </button>
         </div>
-        <p style={{ margin: "14px 0 0", fontSize: 12, lineHeight: 1.5, opacity: 0.6 }}>
-          Set <code>GAW_ADMIN_TOKEN</code> on the API service (16+ characters) to require one. If
-          the API has no token configured, any value works.
+
+        <p className="mt-5 border-t border-line pt-4 text-xs leading-relaxed text-faint">
+          Set <code className="font-mono text-[11px] text-muted">GAW_ADMIN_TOKEN</code> on the API
+          service (16+ characters) to require one. If the API has no token configured, any value
+          works.
         </p>
       </div>
     </div>

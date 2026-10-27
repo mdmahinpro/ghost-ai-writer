@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Field, PageIntro, fieldClass } from "@/components/ui";
+import { Button, Field, PageIntro, fieldClass } from "@/components/ui";
 import { buildInvoice, invoiceHtml, invoicePdf } from "@/lib/invoice";
 import { money, utcDay } from "@/lib/utils";
 
@@ -47,75 +47,79 @@ export function BillingPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <PageIntro
         eyebrow="Account"
         title="Billing"
         lede="This invoice is the usage ledger saved with the studio. It stays after a reload. No card is charged. Stripe checkout is a separate task."
       />
       <div className="grid gap-3 sm:grid-cols-3">
-        <Card className="p-4">
-          <div className="eyebrow">Plan</div>
-          <div className="mt-1.5 text-[15px] font-semibold text-fg">Owner</div>
-          <p className="mt-1 text-sm text-muted">{sites.length} websites, no cap</p>
-        </Card>
-        <Card className="p-4">
-          <div className="eyebrow">Today</div>
-          <div className="num mt-1.5 text-[22px] leading-none text-fg">{money(spentToday)}</div>
-          <p className="mt-1 text-sm text-muted">Settled usage, not a charge</p>
-        </Card>
-        <Card className="p-4">
-          <div className="eyebrow">This invoice</div>
-          <div className="num mt-1.5 text-[22px] leading-none text-fg">{money(invoice.usd)}</div>
-          <p className="mt-1 text-sm text-muted">{invoice.lines.length} settled lines</p>
-        </Card>
+        <section className="rounded-xl border border-line bg-elev px-5 py-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Plan</p>
+          <p className="mt-2 font-display text-[30px] font-semibold leading-none tracking-[-0.02em] text-fg">Owner</p>
+          <p className="mt-2 text-[12px] text-muted">{sites.length} websites, no cap</p>
+        </section>
+        <section className="rounded-xl border border-line bg-elev px-5 py-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Today</p>
+          <p className="mt-2 font-display text-[30px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg">{money(spentToday)}</p>
+          <p className="mt-2 text-[12px] text-muted">Settled usage, not a charge</p>
+        </section>
+        <section className="rounded-xl border border-line bg-elev px-5 py-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">This invoice</p>
+          <p className="mt-2 font-display text-[30px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg">{money(invoice.usd)}</p>
+          <p className="mt-2 text-[12px] text-muted">{invoice.lines.length} settled lines</p>
+        </section>
       </div>
-      <Card className="grid gap-3 p-5 md:grid-cols-[1fr_1fr_auto] md:items-end">
-        <Field label="From">
-          <input className={fieldClass} type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
-        </Field>
-        <Field label="To">
-          <input className={fieldClass} type="date" value={to} onChange={(event) => setTo(event.target.value)} />
-        </Field>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => save("pdf")}>Download PDF</Button>
-          <Button variant="ghost" onClick={() => save("html")}>
-            Download HTML
-          </Button>
+      <section className="rounded-xl border border-line bg-elev px-5 py-4">
+        <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+          <Field label="From">
+            <input className={fieldClass} type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
+          </Field>
+          <Field label="To">
+            <input className={fieldClass} type="date" value={to} onChange={(event) => setTo(event.target.value)} />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => save("pdf")}>Download PDF</Button>
+            <Button variant="secondary" className="bg-surface" onClick={() => save("html")}>
+              Download HTML
+            </Button>
+          </div>
         </div>
-      </Card>
-      {saved ? <p className="text-sm text-muted">{saved}</p> : null}
-      <Card className="p-5">
-        <h2 className="text-[13px] font-semibold text-fg">Usage invoice</h2>
-        <p className="mt-1 text-[12px] text-faint">
-          {invoice.number} · issued {invoice.issued} · {invoice.rangeLabel}
-        </p>
-        <div className="mt-4 overflow-x-auto">
+        {saved ? <p className="mt-3 border-t border-line pt-3 text-[12px] text-muted">{saved}</p> : null}
+      </section>
+      <section className="overflow-hidden rounded-xl border border-line bg-elev">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Usage invoice</h2>
+          <p className="num mt-1 text-[11px] text-faint">
+            {invoice.number} · issued {invoice.issued} · {invoice.rangeLabel}
+          </p>
+        </div>
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-[13px]">
-            <thead className="text-[11px] uppercase tracking-[0.06em] text-faint">
+            <thead className="text-[10px] uppercase tracking-[0.12em] text-faint">
               <tr>
-                <th className="py-2 font-medium">Date</th>
-                <th className="py-2 font-medium">Website</th>
-                <th className="py-2 font-medium">Stage</th>
-                <th className="py-2 font-medium">Model</th>
-                <th className="py-2 text-right font-medium">Tokens</th>
-                <th className="py-2 text-right font-medium">Amount</th>
+                <th className="py-2 font-semibold">Date</th>
+                <th className="py-2 font-semibold">Website</th>
+                <th className="py-2 font-semibold">Stage</th>
+                <th className="py-2 font-semibold">Model</th>
+                <th className="py-2 text-right font-semibold">Tokens</th>
+                <th className="py-2 text-right font-semibold">Amount</th>
               </tr>
             </thead>
             <tbody>
               {invoice.lines.map((line, index) => (
-                <tr key={`${line.date}-${index}`} className="border-t border-line/70 hover:bg-surface/60">
-                  <td className="py-2.5 text-muted">{line.date}</td>
-                  <td>{line.site}</td>
-                  <td>{line.stage}</td>
-                  <td>{line.model}</td>
+                <tr key={`${line.date}-${index}`}>
+                  <td className="num py-2.5 text-[11px] text-muted">{line.date}</td>
+                  <td className="py-2.5 text-fg">{line.site}</td>
+                  <td className="py-2.5 text-muted">{line.stage}</td>
+                  <td className="num py-2.5 text-[11px] text-muted">{line.model}</td>
                   <td className="num py-2.5 text-right text-muted">{line.tokens}</td>
-                  <td className="num py-2.5 text-right text-fg">{money(line.usd)}</td>
+                  <td className="num py-2.5 text-right font-medium text-fg">{money(line.usd)}</td>
                 </tr>
               ))}
               {!invoice.lines.length ? (
                 <tr>
-                  <td className="py-6 text-center text-[12px] text-faint" colSpan={6}>
+                  <td className="py-8 text-center text-[12px] text-faint" colSpan={6}>
                     No settled usage in this range.
                   </td>
                 </tr>
@@ -123,15 +127,15 @@ export function BillingPage() {
             </tbody>
           </table>
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-1 border-t border-line pt-3 text-[12px] text-muted">
+        <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 border-t border-line px-5 py-3 text-[12px] text-muted">
           <span className="num">{invoice.lines.length} lines</span>
           <span className="num">{invoice.tokens} tokens</span>
-          <span className="num text-[13px] font-semibold text-fg">{money(invoice.usd)}</span>
+          <span className="num text-[14px] font-semibold text-fg">{money(invoice.usd)}</span>
         </div>
-        <p className="mt-2 text-xs leading-5 text-faint">
+        <p className="border-t border-line px-5 py-3 text-[11px] leading-5 text-faint">
           The ledger is the settled usage saved in this browser. It is not written to a shared database, because that table would be readable without an account. Downloading does not pay anyone.
         </p>
-      </Card>
+      </section>
     </div>
   );
 }

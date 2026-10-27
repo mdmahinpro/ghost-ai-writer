@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { Check, Circle } from "lucide-react";
 import { useState } from "react";
 import { useApp } from "@/lib/store";
 import { goldenSteps } from "@/lib/engine";
@@ -23,12 +24,28 @@ export function OverviewPage() {
   const site = data.sites.find((item) => item.id === data.activeSiteId) ?? data.sites[0];
   if (!site) {
     return (
-      <div>
-        <h1 className="text-4xl font-semibold tracking-tight">No workspace yet</h1>
-        <p className="mt-3 text-sm text-muted">Create a website workspace to start. An owner account has no workspace cap.</p>
-        <Link to="/workspaces" className="mt-4 inline-flex min-h-11 items-center rounded-lg bg-brass px-4 text-sm font-medium text-ink">
-          Website workspaces
-        </Link>
+      <div className="rounded-xl border border-line bg-elev p-8 sm:p-12">
+        <div className="mx-auto max-w-md text-center">
+          <span
+            aria-hidden="true"
+            className="mx-auto flex size-10 items-center justify-center rounded-md bg-brass/10 text-brass"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-5">
+              <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5z" />
+              <path d="M4 10h16M10 20V10" />
+            </svg>
+          </span>
+          <h1 className="display mt-4 text-fg">No workspace yet</h1>
+          <p className="mt-2 text-[14px] leading-6 text-muted">
+            Create a website workspace to start. An owner account has no workspace cap.
+          </p>
+          <Link
+            to="/workspaces"
+            className="mt-5 inline-flex min-h-10 items-center rounded-md bg-brass px-4 text-[13px] font-semibold text-ink transition-colors duration-150 hover:bg-brass-2"
+          >
+            Website workspaces
+          </Link>
+        </div>
       </div>
     );
   }
@@ -136,7 +153,7 @@ export function OverviewPage() {
   const telemetry = [
     { label: "Jobs generated", hint: "per bucket", values: buckets.map((bucket) => bucket.generated), color: "var(--color-brass)" },
     { label: "Words written", hint: "published copy", values: buckets.map((bucket) => bucket.words), color: "var(--color-ok)" },
-    { label: "Tokens settled", hint: "model usage", values: buckets.map((bucket) => bucket.tokens), color: "#ff1e56" },
+    { label: "Tokens settled", hint: "model usage", values: buckets.map((bucket) => bucket.tokens), color: "var(--color-muted)" },
   ];
   const logs = data.activity
     .filter((entry) => entry.siteId === site.id)
@@ -146,22 +163,29 @@ export function OverviewPage() {
   return (
     <div>
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-brass-2">Desk</p>
-          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-4xl">Overview</h1>
-          <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted">
-            <span>{site.name}</span>
+        <div className="min-w-0">
+          <p className="eyebrow">Desk</p>
+          <h1 className="display mt-1.5 text-fg">Overview</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+            <span className="font-medium text-fg">{site.name}</span>
+            <span aria-hidden="true" className="h-3 w-px bg-line" />
             <Badge tone={site.ghost.status === "connected" ? "ok" : site.ghost.status === "error" ? "danger" : "muted"}>
               {site.ghost.status === "connected" ? "Connected" : site.ghost.status === "error" ? "Error" : "Not connected"}
             </Badge>
             <span>{ghostLive ? "Ghost live" : site.ghost.mode === "studio" ? "Ghost sandbox" : "Ghost off"}</span>
-          </p>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link to="/create" className="inline-flex min-h-11 items-center rounded-lg bg-brass px-4 text-sm font-medium text-ink">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/create"
+            className="inline-flex min-h-10 items-center rounded-md bg-brass px-4 text-[13px] font-semibold text-ink transition-colors duration-150 hover:bg-brass-2"
+          >
             Create content
           </Link>
-          <Link to="/connections" className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm">
+          <Link
+            to="/connections"
+            className="inline-flex min-h-10 items-center rounded-md border border-line bg-surface px-4 text-[13px] font-medium text-fg transition-colors duration-150 hover:border-line-strong hover:bg-surface-2"
+          >
             Connections
           </Link>
         </div>
@@ -188,39 +212,50 @@ export function OverviewPage() {
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-5">
-        <Card className="p-5 lg:col-span-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold">Golden path</h2>
-              <p className="text-sm text-muted">The full product journey — your progress to a deployed static site</p>
+        <Card className="rounded-xl p-5 lg:col-span-3">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Golden path</h2>
+              <p className="mt-0.5 max-w-md text-[13px] leading-5 text-faint">
+                The full product journey — your progress to a deployed static site
+              </p>
             </div>
-            <div className="text-right">
-              <div className="text-2xl font-semibold text-brass">{pct}%</div>
-              <div className="font-mono text-xs text-faint">
+            <div className="shrink-0 text-right">
+              <div className="font-display text-[30px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-brass">
+                {pct}%
+              </div>
+              <div className="num mt-1 text-[11px] text-faint">
                 {done}/{steps.length} steps
               </div>
             </div>
           </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-2">
-            <div className="h-full rounded-full bg-brass" style={{ width: `${pct}%` }} />
+          <div className="mt-4 h-1 overflow-hidden rounded-full bg-surface-2">
+            <div className="h-full rounded-full bg-brass transition-[width] duration-150" style={{ width: `${pct}%` }} />
           </div>
           <ol className="mt-4 grid gap-2 sm:grid-cols-2">
             {steps.map((step) => (
               <li key={step.label}>
-                <Link to={step.href} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm hover:border-brass">
-                  <span className={step.done ? "text-brass" : "text-faint"}>{step.done ? "✓" : "○"}</span>
+                <Link
+                  to={step.href}
+                  className="flex items-start gap-2.5 rounded-md border border-line bg-surface/40 px-3 py-2 transition-colors duration-150 hover:border-line-strong hover:bg-surface-2/60"
+                >
+                  <span className={step.done ? "mt-px text-brass" : "mt-px text-faint"}>
+                    {step.done ? <Check aria-hidden="true" className="size-3.5" /> : <Circle aria-hidden="true" className="size-3.5" />}
+                  </span>
                   <span className="min-w-0">
-                    <span className={step.done ? "block text-fg" : "block text-muted"}>{step.label}</span>
-                    {!step.done ? <span className="block text-xs text-faint">{step.reason}</span> : null}
+                    <span className={step.done ? "block text-[13px] font-medium text-fg" : "block text-[13px] font-medium text-muted"}>
+                      {step.label}
+                    </span>
+                    {!step.done ? <span className="mt-0.5 block text-[11px] leading-4 text-faint">{step.reason}</span> : null}
                   </span>
                 </Link>
               </li>
             ))}
           </ol>
         </Card>
-        <Card className="p-5 lg:col-span-2">
-          <h2 className="text-lg font-semibold">System health</h2>
-          <dl className="mt-4 space-y-2 text-sm">
+        <Card className="rounded-xl p-5 lg:col-span-2">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">System health</h2>
+          <dl className="mt-3 divide-y divide-line text-[13px]">
             <Row k="Worker" v={data.workerPaused ? "Offline" : "Connected"} />
             <Row k="This site · running" v={String(jobs.filter((job) => job.status === "running").length)} />
             <Row k="This site · completed / failed" v={`${completed} / ${failed}`} />
@@ -228,52 +263,59 @@ export function OverviewPage() {
           </dl>
           <div className="mt-4 border-t border-line pt-3">
             {keyRows(data, day).map((row) => (
-              <div key={row.id} className="flex items-center justify-between py-1 text-sm">
-                <span>{row.label}</span>
-                <span className="text-muted">
+              <div key={row.id} className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
+                <span className="min-w-0 truncate text-muted">{row.label}</span>
+                <span className="num shrink-0 text-fg">
                   {compact(row.tokens)} {row.allowanceUsd > 0 ? "" : "(unlimited)"}
                 </span>
               </div>
             ))}
-            <p className="mt-2 text-xs text-faint">Resets {nextUtcResetLabel()} · UTC day</p>
+            <p className="mt-2 text-[11px] text-faint">Resets {nextUtcResetLabel()} · UTC day</p>
           </div>
         </Card>
       </div>
 
-      <Card className="mt-4 flex flex-wrap items-center justify-between gap-3 p-5">
-        <div>
-          <div className="text-xs uppercase tracking-widest text-faint">Last static build</div>
+      <Card className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl p-5">
+        <div className="min-w-0">
+          <div className="eyebrow">Last static build</div>
           {build ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+            <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[13px]">
               <Badge tone={statusTone(build.status)}>{build.status}</Badge>
-              <span>
+              <span className="num text-fg">
                 {build.pages} pages · {Math.round(build.bytes / 1024)} KB · {relTime(build.at)}
               </span>
             </div>
           ) : (
-            <p className="mt-2 text-sm text-muted">No build yet.</p>
+            <p className="mt-2 text-[13px] text-muted">No build yet.</p>
           )}
         </div>
-        <Link to="/static-delivery" className="text-sm text-brass">
+        <Link
+          to="/static-delivery"
+          className="inline-flex h-9 shrink-0 items-center rounded-md border border-line bg-surface px-3 text-[12px] font-medium text-fg transition-colors duration-150 hover:border-line-strong hover:bg-surface-2"
+        >
           Open delivery
         </Link>
       </Card>
 
       <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2">
-        <Card className="min-w-0 p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Recent runs</h2>
-            <Link to="/runs" className="text-sm text-brass">
+        <Card className="min-w-0 rounded-xl p-5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Recent runs</h2>
+            <Link to="/runs" className="text-[12px] font-medium text-muted transition-colors duration-150 hover:text-fg">
               View all
             </Link>
           </div>
           <ul className="mt-3 divide-y divide-line">
             {runs.slice(0, 5).map((run) => (
               <li key={run.id}>
-                <Link to="/runs/$id" params={{ id: run.id }} className="flex min-w-0 items-center justify-between gap-3 py-3 text-sm">
+                <Link
+                  to="/runs/$id"
+                  params={{ id: run.id }}
+                  className="flex min-w-0 items-center justify-between gap-3 py-2.5 text-[13px] transition-colors duration-150 hover:bg-surface-2/60"
+                >
                   <span className="min-w-0">
-                    <span className="block truncate">{run.title}</span>
-                    <span className="text-xs text-faint">
+                    <span className="block truncate font-medium text-fg">{run.title}</span>
+                    <span className="num mt-0.5 block text-[11px] text-faint">
                       {run.type} · {jobs.filter((job) => job.runId === run.id).length} jobs · {relTime(run.createdAt)}
                     </span>
                   </span>
@@ -281,23 +323,36 @@ export function OverviewPage() {
                 </Link>
               </li>
             ))}
-            {!runs.length ? <li className="py-6 text-sm text-muted">No runs on this website yet.</li> : null}
+            {!runs.length ? (
+              <li className="flex items-center gap-3 py-6 text-[13px] text-muted">
+                <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-faint">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-4">
+                    <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+                No runs on this website yet.
+              </li>
+            ) : null}
           </ul>
         </Card>
-        <Card className="min-w-0 p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Recent articles</h2>
-            <Link to="/articles" className="text-sm text-brass">
+        <Card className="min-w-0 rounded-xl p-5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Recent articles</h2>
+            <Link to="/articles" className="text-[12px] font-medium text-muted transition-colors duration-150 hover:text-fg">
               View all
             </Link>
           </div>
           <ul className="mt-3 divide-y divide-line">
             {articles.slice(0, 5).map((article) => (
               <li key={article.id}>
-                <Link to="/articles/$id" params={{ id: article.id }} className="flex min-w-0 items-center justify-between gap-3 py-3 text-sm">
+                <Link
+                  to="/articles/$id"
+                  params={{ id: article.id }}
+                  className="flex min-w-0 items-center justify-between gap-3 py-2.5 text-[13px] transition-colors duration-150 hover:bg-surface-2/60"
+                >
                   <span className="min-w-0">
-                    <span className="block truncate">{article.title}</span>
-                    <span className="text-xs text-faint">
+                    <span className="block truncate font-medium text-fg">{article.title}</span>
+                    <span className="num mt-0.5 block text-[11px] text-faint">
                       {article.engine} · {article.status} · {relTime(article.publishedAt)}
                     </span>
                   </span>
@@ -305,23 +360,43 @@ export function OverviewPage() {
                 </Link>
               </li>
             ))}
-            {!articles.length ? <li className="py-6 text-sm text-muted">No articles yet.</li> : null}
+            {!articles.length ? (
+              <li className="flex items-center gap-3 py-6 text-[13px] text-muted">
+                <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-faint">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-4">
+                    <path d="M7 4h10a1 1 0 0 1 1 1v14l-6-3.5L6 19V5a1 1 0 0 1 1-1z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+                No articles yet.
+              </li>
+            ) : null}
           </ul>
         </Card>
       </div>
 
-      <Card className="mt-4 p-5">
-        <h2 className="text-lg font-semibold">Internal link graph</h2>
-        <p className="mt-1 text-xs text-faint">{links} edges</p>
+      <Card className="mt-4 rounded-xl p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Internal link graph</h2>
+          <span className="num text-[11px] text-faint">{links} edges</span>
+        </div>
         <ul className="mt-3 divide-y divide-line">
           {edges.map((edge, index) => (
-            <li key={`${edge.slug}-${index}`} className="py-2 text-sm">
-              <span className="text-muted">{edge.from.slice(0, 48)}</span>
-              <span className="text-faint"> links to </span>
-              <span>“{edge.anchor}”</span>
+            <li key={`${edge.slug}-${index}`} className="flex flex-wrap items-baseline gap-x-1.5 py-2 text-[13px]">
+              <span className="truncate text-muted">{edge.from.slice(0, 48)}</span>
+              <span className="text-faint">links to</span>
+              <span className="text-fg">“{edge.anchor}”</span>
             </li>
           ))}
-          {!edges.length ? <li className="py-4 text-sm text-muted">Links appear after a second article is published.</li> : null}
+          {!edges.length ? (
+            <li className="flex items-center gap-3 py-4 text-[13px] text-muted">
+              <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-faint">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-4">
+                  <path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" strokeLinecap="round" />
+                </svg>
+              </span>
+              Links appear after a second article is published.
+            </li>
+          ) : null}
         </ul>
       </Card>
 
@@ -344,9 +419,9 @@ function keyRows(data: { keys: { id: string; label: string; allowanceUsd: number
 
 function Row({ k, v }: { k: string; v: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-line/70 py-1.5">
-      <dt className="text-muted">{k}</dt>
-      <dd className="text-right text-fg">{v}</dd>
+    <div className="flex items-baseline justify-between gap-4 py-2">
+      <dt className="min-w-0 text-muted">{k}</dt>
+      <dd className="num shrink-0 text-right text-fg">{v}</dd>
     </div>
   );
 }

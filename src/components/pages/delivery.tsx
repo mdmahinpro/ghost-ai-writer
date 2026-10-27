@@ -1,5 +1,6 @@
 ﻿import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Boxes } from "lucide-react";
 import { probePublicUrl } from "@/lib/ghost.functions";
 import { readMediaBatch } from "@/lib/images.functions";
 import { deployCloudflarePages, deployGithubPages, deployVercel, mirrorArticlesToCms, submitIndexNow, uploadFtps } from "@/lib/ops.functions";
@@ -9,7 +10,7 @@ import { useApp, useHydrated } from "@/lib/store";
 import { zipStore } from "@/lib/zip";
 import { validatePublicUrl } from "@/lib/engine";
 import { AD_CODE_LIMIT, AD_SLOT_LABELS, type AdSlotConfig, type AdSlotId, type DeployProvider } from "@/lib/types";
-import { Badge, Button, Card, Field, PageIntro, SkeletonRows, StateNote, fieldClass, statusTone } from "@/components/ui";
+import { Button, Card, Field, PageIntro, SkeletonRows, StateNote, fieldClass, statusTone } from "@/components/ui";
 import { relTime } from "@/lib/utils";
 
 const TEMPLATES = [
@@ -38,6 +39,56 @@ function decode64(data: string): Uint8Array {
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
   return out;
+}
+
+function Pill({ tone = "muted", children }: { tone?: "ok" | "danger" | "warn" | "muted"; children: ReactNode }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 ${
+        tone === "ok"
+          ? "border-ok/30 bg-ok/10 text-ok"
+          : tone === "danger"
+            ? "border-danger/30 bg-danger/10 text-danger"
+            : tone === "warn"
+              ? "border-warn/30 bg-warn/10 text-warn"
+              : "border-line bg-surface text-muted"
+      }`}
+    >
+      <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+      {children}
+    </span>
+  );
+}
+
+function StatusPill({ status, label }: { status: string; label?: string }) {
+  const tone = statusTone(status);
+  return <Pill tone={tone === "brass" ? "warn" : tone}>{label ?? status}</Pill>;
+}
+
+function Switch({ checked, onChange, children }: { checked: boolean; onChange: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={onChange}
+      className="inline-flex items-center gap-2.5 text-[12px] font-medium text-muted transition-colors duration-150 hover:text-fg"
+    >
+      <span
+        className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 ${
+          checked ? "border-brass/50 bg-brass/20" : "border-line bg-surface-2"
+        }`}
+      >
+        <span
+          aria-hidden="true"
+          className={`absolute top-0.5 size-3.5 rounded-full transition-transform duration-150 ${
+            checked ? "translate-x-[1.125rem] bg-brass" : "translate-x-[0.125rem] bg-faint"
+          }`}
+        />
+      </span>
+      {children}
+    </button>
+  );
 }
 
 export function DeliveryPage() {
@@ -255,46 +306,64 @@ export function DeliveryPage() {
   // Rule 7: honest loading state before the store hydrates (after every hook).
   if (!hydrated) return <SkeletonRows rows={5} />;
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <PageIntro
         eyebrow="Website"
         title="Static delivery"
         lede="Ghost updates the CMS. This page builds the frozen public site: 7 configured ad slots, ads.txt, a route-diff gate that refuses to drop a live URL silently, and real deploy adapters for cPanel, Cloudflare Pages, Vercel, and GitHub Pages."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" className="bg-surface" onClick={() => void download()} disabled={packing || (!articles.length && !builds.length)}>
+              {packing ? "Packing ZIP…" : "Download ZIP"}
+            </Button>
+            <Link
+              to="/preview"
+              className="inline-flex min-h-10 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors duration-150 hover:border-line-strong"
+            >
+              Preview
+            </Link>
+            <Button onClick={buildSite}>Build now</Button>
+          </div>
+        }
       />
 
       {holds.map((deploy) => {
         const diff = deploy.routeDiff;
         return (
-          <Card key={deploy.id} className="border-danger/50 p-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="danger">ROUTE-DIFF HOLD</Badge>
-              <span className="text-sm text-muted">
+          <Card key={deploy.id} className="overflow-hidden rounded-xl border-danger/40 bg-danger/5 p-0">
+            <div className="flex flex-wrap items-center gap-2.5 border-b border-danger/20 px-5 py-3.5">
+              <Pill tone="danger">ROUTE-DIFF HOLD</Pill>
+              <span className="num text-[11px] text-muted">
                 build {deploy.buildId.slice(-6)} · {diff?.removedRoutes.length ?? 0} removed · {diff?.addedRoutes.length ?? 0} added · {diff?.unchangedCount ?? 0} unchanged
               </span>
             </div>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              Deploying this build would remove {(diff?.removedRoutes.length ?? 0) === 1 ? "a URL that is currently live" : "URLs that are currently live"}. Nothing has been uploaded. Acknowledge explicitly, or rebuild with the missing articles.
-            </p>
-            <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-danger">
-              {(diff?.removedRoutes ?? []).map((route) => (
-                <li key={route}>{route}</li>
-              ))}
-            </ul>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button variant="danger" onClick={() => acknowledgeRouteDiff(deploy.id)}>
-                Acknowledge & Deploy Anyway
-              </Button>
-              <Button variant="ghost" onClick={() => rebuildForRouteDiff(deploy.id)}>
-                Rebuild with missing articles
-              </Button>
+            <div className="px-5 py-4">
+              <p className="text-[13px] leading-6 text-muted">
+                Deploying this build would remove {(diff?.removedRoutes.length ?? 0) === 1 ? "a URL that is currently live" : "URLs that are currently live"}. Nothing has been uploaded. Acknowledge explicitly, or rebuild with the missing articles.
+              </p>
+              <ul className="num mt-3 max-h-40 space-y-1 overflow-auto rounded-md border border-danger/20 bg-elev px-3 py-2 text-[11px] leading-5 text-danger">
+                {(diff?.removedRoutes ?? []).map((route) => (
+                  <li key={route}>{route}</li>
+                ))}
+              </ul>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="danger" size="sm" onClick={() => acknowledgeRouteDiff(deploy.id)}>
+                  Acknowledge & Deploy Anyway
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => rebuildForRouteDiff(deploy.id)}>
+                  Rebuild with missing articles
+                </Button>
+              </div>
             </div>
           </Card>
         );
       })}
 
-      <Card className="p-5 text-sm leading-6">
-        <div className="font-medium">Where a published post actually goes</div>
-        <p className="mt-2 text-muted">
+      <Card className="rounded-xl p-0">
+        <div className="border-b border-line px-5 py-3.5">
+          <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Where a published post actually goes</h2>
+        </div>
+        <p className="px-5 py-4 text-[13px] leading-6 text-muted">
           Ghost Admin writes to {site.ghost.url || "the connected CMS"}. The public website is {site.publicUrl || "not set"}.{" "}
           {differentHost(site.ghost.url, site.publicUrl)
             ? "Those are different hosts, so a CMS post will not show on the public site by itself. Download the ZIP or deploy through an adapter."
@@ -302,30 +371,25 @@ export function DeliveryPage() {
         </p>
       </Card>
 
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+      <Card className="flex flex-wrap items-center justify-between gap-4 rounded-xl px-5 py-4">
         <div>
-          <div className="font-medium">Auto-rebuild on publish</div>
-          <p className="mt-1 max-w-xl text-sm text-muted">When on, a new article queues a fresh snapshot. Deploy still respects the route-diff gate.</p>
+          <div className="text-[13px] font-medium text-fg">Auto-rebuild on publish</div>
+          <p className="mt-0.5 max-w-xl text-[12px] leading-5 text-muted">When on, a new article queues a fresh snapshot. Deploy still respects the route-diff gate.</p>
         </div>
-        <button
-          role="switch"
-          aria-checked={site.autoRebuild}
-          onClick={() => patchSite({ autoRebuild: !site.autoRebuild })}
-          className={`min-h-11 rounded-full px-4 text-sm ${site.autoRebuild ? "bg-brass text-ink" : "border border-line text-muted"}`}
-        >
+        <Switch checked={site.autoRebuild} onChange={() => patchSite({ autoRebuild: !site.autoRebuild })}>
           {site.autoRebuild ? "On" : "Off"}
-        </button>
+        </Switch>
       </Card>
 
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <Card className="overflow-hidden rounded-xl p-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
           <div>
-            <div className="font-medium">Delivery targets</div>
-            <p className="mt-1 text-sm text-muted">Four adapters. Credentials stay in this browser; every host is a hardcoded https origin.</p>
+            <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Delivery targets</h2>
+            <p className="mt-1 text-[12px] leading-5 text-muted">Four adapters. Credentials stay in this browser; every host is a hardcoded https origin.</p>
           </div>
-          <Badge tone={adsConfigHash(site) ? "muted" : "muted"}>ads hash {adsConfigHash(site)}</Badge>
+          <Pill>ads hash {adsConfigHash(site)}</Pill>
         </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div className="grid gap-px bg-line md:grid-cols-2">
           {site.providers.map((provider) => (
             <ProviderCard
               key={provider.id}
@@ -342,129 +406,147 @@ export function DeliveryPage() {
 
       <AdSlotsCard site={site} preview={adsPreview} onPreview={setAdsPreview} onPatch={(patch) => patchSite(patch)} />
 
-      <Card className="space-y-3 p-5">
-        <div className="font-medium">ads.txt</div>
-        <p className="text-sm text-muted">Emitted as a tracked build artifact at <span className="font-mono">/ads.txt</span> whenever it is not empty.</p>
-        <textarea
-          className={`${fieldClass} font-mono text-xs`}
-          rows={5}
-          value={site.adsTxt ?? ""}
-          onChange={(e) => patchSite({ adsTxt: e.target.value })}
-          placeholder={"google.com, pub-0000000000000000, DIRECT, f08c47fec0942fa0"}
-        />
-        <p className="text-xs text-faint">{new TextEncoder().encode(site.adsTxt ?? "").length} bytes · will ship on the next build</p>
+      <Card className="rounded-xl p-0">
+        <div className="border-b border-line px-5 py-3.5">
+          <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">ads.txt</h2>
+        </div>
+        <div className="space-y-3 px-5 py-4">
+          <p className="text-[13px] leading-6 text-muted">
+            Emitted as a tracked build artifact at <span className="num">/ads.txt</span> whenever it is not empty.
+          </p>
+          <textarea
+            className={`${fieldClass} font-mono text-[11px] leading-5`}
+            rows={5}
+            value={site.adsTxt ?? ""}
+            onChange={(e) => patchSite({ adsTxt: e.target.value })}
+            placeholder={"google.com, pub-0000000000000000, DIRECT, f08c47fec0942fa0"}
+          />
+          <p className="num text-[11px] text-faint">{new TextEncoder().encode(site.adsTxt ?? "").length} bytes · will ship on the next build</p>
+        </div>
       </Card>
 
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={buildSite}>Build now</Button>
-        <Button variant="ghost" onClick={() => void download()} disabled={packing || (!articles.length && !builds.length)}>
-          {packing ? "Packing ZIP…" : "Download ZIP"}
-        </Button>
-        <Link to="/preview" className="inline-flex min-h-11 items-center rounded-lg border border-line px-3 text-sm">
-          Preview
-        </Link>
-      </div>
       {!urlCheck.ok ? (
         <StateNote tone="partial" title="Delivery is not indexable yet" body={urlCheck.error} />
       ) : (
-        <p className="text-sm text-muted">Public origin {urlCheck.url}</p>
+        <p className="text-[12px] text-muted">
+          Public origin <span className="num text-fg">{urlCheck.url}</span>
+        </p>
       )}
       {uploadNote ? (
-        <Card className="p-4 text-sm">
-          <div className="font-medium">Last delivery action</div>
-          <p className="mt-1 text-muted">{uploadNote}</p>
+        <Card className="rounded-xl border-warn/30 bg-warn/5 p-0">
+          <div className="border-b border-warn/20 px-5 py-3.5">
+            <div className="text-[13px] font-medium text-fg">Last delivery action</div>
+          </div>
+          <p className="px-5 py-3.5 text-[13px] leading-6 text-muted">{uploadNote}</p>
         </Card>
       ) : null}
 
-      <div className="space-y-2">
-        {builds.map((build) => {
-          const deploy = deploys.find((item) => item.buildId === build.id);
-          return (
-            <Card key={build.id} className="p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-xs text-faint">{build.id}</span>
-                {build.auto ? <Badge tone="brass">AUTO</Badge> : null}
-                <Badge tone={statusTone(build.status)}>{build.status}</Badge>
-                <span className="text-sm text-muted">
-                  {build.pages} pages · {(build.routes ?? []).length} routes · {Math.round(build.bytes / 1024)} KB · ads {build.adsConfigHash ?? "—"} · {relTime(build.at)}
-                </span>
-              </div>
-              {build.detail ? <p className="mt-2 text-sm text-muted">{build.detail}</p> : null}
-              <div className="mt-3 flex flex-wrap gap-2">
-                {!deploy && build.status === "succeeded" ? (
-                  <Button variant="ghost" disabled={packing} onClick={() => void uploadLive(build.id)}>
-                    {packing ? "Uploading… (also pushes to the CMS)" : "Upload live (cPanel + CMS)"}
-                  </Button>
-                ) : null}
-                {build.status === "succeeded" ? (
-                  <>
-                    <Button variant="ghost" disabled={mirroring} onClick={() => void mirrorToCms()}>
-                      {mirroring ? "Syncing…" : "Re-sync an existing build"}
+      <Card className="overflow-hidden rounded-xl p-0">
+        <div className="divide-y divide-line">
+          {builds.map((build) => {
+            const deploy = deploys.find((item) => item.buildId === build.id);
+            return (
+              <div key={build.id} className="px-5 py-4">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="num text-[11px] text-faint">{build.id}</span>
+                  {build.auto ? <Pill tone="warn">AUTO</Pill> : null}
+                  <StatusPill status={build.status} />
+                  <span className="num text-[12px] text-muted">
+                    {build.pages} pages · {(build.routes ?? []).length} routes · {Math.round(build.bytes / 1024)} KB · ads {build.adsConfigHash ?? "—"} · {relTime(build.at)}
+                  </span>
+                </div>
+                {build.detail ? <p className="mt-2 text-[13px] leading-6 text-muted">{build.detail}</p> : null}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {!deploy && build.status === "succeeded" ? (
+                    <Button variant="secondary" size="sm" className="bg-surface" disabled={packing} onClick={() => void uploadLive(build.id)}>
+                      {packing ? "Uploading… (also pushes to the CMS)" : "Upload live (cPanel + CMS)"}
                     </Button>
-                    {mirrorNote ? <span className="text-xs text-muted">{mirrorNote}</span> : null}
-                  </>
-                ) : null}
-                {deploy ? (
-                  <>
-                    <Badge tone={statusTone(deploy.status === "hold-route-diff" ? "failed" : deploy.status)}>{deploy.status}</Badge>
-                    <span className="text-xs text-muted">{deploy.probe}</span>
-                    {deploy.status === "packaged" ? (
-                      <Button variant="ghost" onClick={() => void probe(deploy.id)}>
-                        Live probe
+                  ) : null}
+                  {build.status === "succeeded" ? (
+                    <>
+                      <Button variant="ghost" size="sm" disabled={mirroring} onClick={() => void mirrorToCms()}>
+                        {mirroring ? "Syncing…" : "Re-sync an existing build"}
                       </Button>
-                    ) : null}
-                  </>
-                ) : null}
+                      {mirrorNote ? <span className="text-[11px] text-faint">{mirrorNote}</span> : null}
+                    </>
+                  ) : null}
+                  {deploy ? (
+                    <>
+                      <StatusPill status={deploy.status === "hold-route-diff" ? "failed" : deploy.status} />
+                      <span className="text-[11px] text-muted">{deploy.probe}</span>
+                      {deploy.status === "packaged" ? (
+                        <Button variant="ghost" size="sm" onClick={() => void probe(deploy.id)}>
+                          Live probe
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
               </div>
-            </Card>
-          );
-        })}
-        {!builds.length ? <p className="text-sm text-muted">No builds yet.</p> : null}
-      </div>
+            );
+          })}
+          {!builds.length ? (
+            <div className="px-5 py-10 text-center">
+              <span className="mx-auto grid size-9 place-items-center rounded-md bg-surface-2 text-faint">
+                <Boxes aria-hidden="true" strokeWidth={1.6} className="size-4" />
+              </span>
+              <p className="mt-2 text-[12px] text-muted">No builds yet.</p>
+            </div>
+          ) : null}
+        </div>
+      </Card>
 
-      <Card className="space-y-4 p-5">
-        <h2 className="font-display text-2xl">Site customization</h2>
-        <div className="flex flex-wrap gap-2">
-          {TEMPLATES.map((template) => (
-            <button
-              key={template.id}
-              onClick={() => patchSite({ template: template.id })}
-              className={`rounded-lg border px-3 py-2 text-left text-sm ${site.template === template.id ? "border-brass text-fg" : "border-line text-muted"}`}
-            >
-              <span className="block font-medium">{template.id}</span>
-              <span className="text-xs">{template.note}</span>
-            </button>
-          ))}
+      <Card className="rounded-xl p-0">
+        <div className="border-b border-line px-5 py-3.5">
+          <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Site customization</h2>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <Field label="Site name">
-            <input className={fieldClass} value={site.staticName} onChange={(e) => patchSite({ staticName: e.target.value })} />
+        <div className="space-y-4 px-5 py-4">
+          <div className="grid gap-2 sm:grid-cols-3">
+            {TEMPLATES.map((template) => (
+              <button
+                key={template.id}
+                onClick={() => patchSite({ template: template.id })}
+                className={`rounded-md border px-3 py-2.5 text-left text-[13px] transition-colors duration-150 ${
+                  site.template === template.id
+                    ? "border-brass/40 bg-brass/5 text-fg"
+                    : "border-line bg-surface text-muted hover:border-line-strong hover:text-fg"
+                }`}
+              >
+                <span className="block font-medium">{template.id}</span>
+                <span className="mt-0.5 block text-[11px] text-faint">{template.note}</span>
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Site name">
+              <input className={fieldClass} value={site.staticName} onChange={(e) => patchSite({ staticName: e.target.value })} />
+            </Field>
+            <Field label="Public URL" hint="Required for an indexable build. Placeholder domains are rejected.">
+              <input className={fieldClass} value={site.publicUrl} onChange={(e) => patchSite({ publicUrl: e.target.value })} placeholder="https://notes.example" />
+            </Field>
+            <Field label="Footer">
+              <input className={fieldClass} value={site.footer} onChange={(e) => patchSite({ footer: e.target.value })} />
+            </Field>
+            <Field label="Robots">
+              <select className={fieldClass} value={site.robots} onChange={(e) => patchSite({ robots: e.target.value as typeof site.robots })}>
+                <option value="index,follow">index,follow</option>
+                <option value="noindex,nofollow">noindex,nofollow</option>
+              </select>
+            </Field>
+            <Field label="Header menu">
+              <input className={fieldClass} value={site.headerMenu} onChange={(e) => patchSite({ headerMenu: e.target.value })} />
+            </Field>
+            <Field label="Footer menu">
+              <input className={fieldClass} value={site.footerMenu} onChange={(e) => patchSite({ footerMenu: e.target.value })} />
+            </Field>
+          </div>
+          <Field label="Head HTML" hint="Inserted into the downloaded ZIP only.">
+            <textarea className={fieldClass} rows={3} value={site.headHtml} onChange={(e) => patchSite({ headHtml: e.target.value })} />
           </Field>
-          <Field label="Public URL" hint="Required for an indexable build. Placeholder domains are rejected.">
-            <input className={fieldClass} value={site.publicUrl} onChange={(e) => patchSite({ publicUrl: e.target.value })} placeholder="https://notes.example" />
-          </Field>
-          <Field label="Footer">
-            <input className={fieldClass} value={site.footer} onChange={(e) => patchSite({ footer: e.target.value })} />
-          </Field>
-          <Field label="Robots">
-            <select className={fieldClass} value={site.robots} onChange={(e) => patchSite({ robots: e.target.value as typeof site.robots })}>
-              <option value="index,follow">index,follow</option>
-              <option value="noindex,nofollow">noindex,nofollow</option>
-            </select>
-          </Field>
-          <Field label="Header menu">
-            <input className={fieldClass} value={site.headerMenu} onChange={(e) => patchSite({ headerMenu: e.target.value })} />
-          </Field>
-          <Field label="Footer menu">
-            <input className={fieldClass} value={site.footerMenu} onChange={(e) => patchSite({ footerMenu: e.target.value })} />
+          <Field label="Analytics snippet" hint="Same rule: customer static site only, never this control panel.">
+            <textarea className={fieldClass} rows={3} value={site.analyticsSnippet} onChange={(e) => patchSite({ analyticsSnippet: e.target.value })} />
           </Field>
         </div>
-        <Field label="Head HTML" hint="Inserted into the downloaded ZIP only.">
-          <textarea className={fieldClass} rows={3} value={site.headHtml} onChange={(e) => patchSite({ headHtml: e.target.value })} />
-        </Field>
-        <Field label="Analytics snippet" hint="Same rule: customer static site only, never this control panel.">
-          <textarea className={fieldClass} rows={3} value={site.analyticsSnippet} onChange={(e) => patchSite({ analyticsSnippet: e.target.value })} />
-        </Field>
       </Card>
     </div>
   );
@@ -512,18 +594,20 @@ function ProviderCard({
             ]
           : [];
   return (
-    <div className="rounded-lg border border-line p-3 text-sm">
+    <div className="bg-elev p-4 text-[13px]">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium">{provider.name}</div>
-        <Badge tone={provider.status === "verified" ? "ok" : provider.status === "configured" ? "brass" : "muted"}>{provider.status.replace("_", " ")}</Badge>
+        <div className="text-[13px] font-medium text-fg">{provider.name}</div>
+        <Pill tone={provider.status === "verified" ? "ok" : provider.status === "configured" ? "warn" : "muted"}>{provider.status.replace("_", " ")}</Pill>
       </div>
-      <p className="mt-1 text-xs text-faint">{provider.capability}</p>
+      <p className="mt-1 text-[11px] leading-5 text-faint">{provider.capability}</p>
       {provider.id === "cpanel" ? (
-        <div className="mt-2 text-xs text-faint">{provider.ftp?.host ? `${provider.ftp.host}${provider.ftp.path ?? ""} · ${provider.ftp.via ?? "ftps"}` : "Configure FTPS/SFTP on Connections."}</div>
+        <div className="num mt-2 text-[11px] leading-5 text-faint">
+          {provider.ftp?.host ? `${provider.ftp.host}${provider.ftp.path ?? ""} · ${provider.ftp.via ?? "ftps"}` : "Configure FTPS/SFTP on Connections."}
+        </div>
       ) : (
-        <div className="mt-2 space-y-2">
+        <div className="mt-3 space-y-2">
           {credentialFields.map((field) => (
-            <label key={field.key} className="block text-xs">
+            <label key={field.key} className="block text-[11px]">
               <span className="text-faint">{field.label}</span>
               <input
                 className={`${fieldClass} mt-1`}
@@ -534,9 +618,9 @@ function ProviderCard({
               />
             </label>
           ))}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 pt-1">
             <Button
-              className="min-h-9 px-3 py-1.5 text-xs"
+              size="sm"
               onClick={() =>
                 onSave({
                   accountId: draft.accountId,
@@ -549,10 +633,10 @@ function ProviderCard({
             >
               Save
             </Button>
-            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={onVerify}>
+            <Button size="sm" variant="ghost" onClick={onVerify}>
               Verify
             </Button>
-            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" disabled={packing || !buildId || provider.status !== "verified"} onClick={() => buildId && onDeploy(buildId)}>
+            <Button size="sm" variant="ghost" disabled={packing || !buildId || provider.status !== "verified"} onClick={() => buildId && onDeploy(buildId)}>
               Deploy
             </Button>
           </div>
@@ -577,55 +661,48 @@ function AdSlotsCard({
   const update = (id: AdSlotId, patch: Partial<AdSlotConfig>) => onPatch({ ads: slots.map((slot) => (slot.id === id ? { ...slot, ...patch } : slot)) });
   const [unit, setUnit] = useState({ publisher: "", slotId: "" });
   return (
-    <Card className="space-y-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="font-medium">Ad slots (7)</div>
-          <p className="mt-1 text-sm text-muted">Each slot is independent, capped at {Math.round(AD_CODE_LIMIT / 1024)} KiB of code, and only renders on the public build.</p>
+    <Card className="overflow-hidden rounded-xl p-0">
+      <div className="space-y-3 border-b border-line px-5 py-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Ad slots (7)</h2>
+            <p className="mt-1 text-[12px] leading-5 text-muted">Each slot is independent, capped at {Math.round(AD_CODE_LIMIT / 1024)} KiB of code, and only renders on the public build.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Switch checked={preview} onChange={() => onPreview(!preview)}>
+              {preview ? "Preview mode ON (scripts disabled)" : "Preview mode OFF"}
+            </Switch>
+            <Switch checked={Boolean(site.adsEnabled)} onChange={() => onPatch({ adsEnabled: !site.adsEnabled })}>
+              {site.adsEnabled ? "Ads enabled" : "Ads disabled"}
+            </Switch>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            role="switch"
-            aria-checked={preview}
-            onClick={() => onPreview(!preview)}
-            className={`min-h-11 rounded-full px-4 text-sm ${preview ? "bg-brass text-ink" : "border border-line text-muted"}`}
-          >
-            {preview ? "Preview mode ON (scripts disabled)" : "Preview mode OFF"}
-          </button>
-          <button
-            role="switch"
-            aria-checked={Boolean(site.adsEnabled)}
-            onClick={() => onPatch({ adsEnabled: !site.adsEnabled })}
-            className={`min-h-11 rounded-full px-4 text-sm ${site.adsEnabled ? "bg-brass text-ink" : "border border-line text-muted"}`}
-          >
-            {site.adsEnabled ? "Ads enabled" : "Ads disabled"}
-          </button>
-        </div>
+        {preview ? (
+          <div className="rounded-md border border-dashed border-brass/30 bg-brass/5 px-3 py-2 text-[11px] leading-5 text-muted">
+            Preview mode renders the slot placeholders and never loads live ad code — use it to check placement before switching ads on.
+          </div>
+        ) : null}
       </div>
-      {preview ? (
-        <div className="rounded-lg border border-dashed border-brass/50 bg-brass/5 p-3 text-xs text-muted">
-          Preview mode renders the slot placeholders and never loads live ad code — use it to check placement before switching ads on.
-        </div>
-      ) : null}
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-px bg-line md:grid-cols-2">
         {slots.map((slot) => {
           const bytes = new TextEncoder().encode(slot.code).length;
           const over = !adCodeWithinLimit(slot.code);
           return (
-            <div key={slot.id} className={`rounded-lg border p-3 text-sm ${slot.enabled ? "border-brass/40" : "border-line"}`}>
+            <div key={slot.id} className="bg-elev p-4 text-[13px]">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="flex items-center gap-2">
-                  <input type="checkbox" className="size-4 accent-brass" checked={slot.enabled} onChange={(e) => update(slot.id, { enabled: e.target.checked })} />
-                  <span className="font-medium">{AD_SLOT_LABELS[slot.id]}</span>
+                  <input type="checkbox" className="size-3.5 accent-brass" checked={slot.enabled} onChange={(e) => update(slot.id, { enabled: e.target.checked })} />
+                  <span className="font-medium text-fg">{AD_SLOT_LABELS[slot.id]}</span>
+                  {slot.enabled ? <span aria-hidden="true" className="size-1.5 rounded-full bg-brass" /> : null}
                 </label>
-                <span className="font-mono text-xs text-faint">{slot.id}</span>
+                <span className="num text-[11px] text-faint">{slot.id}</span>
               </div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <label className="block text-xs">
+              <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
+                <label className="block text-[11px]">
                   <span className="text-faint">Internal name</span>
                   <input className={`${fieldClass} mt-1`} value={slot.name} onChange={(e) => update(slot.id, { name: e.target.value })} />
                 </label>
-                <label className="block text-xs">
+                <label className="block text-[11px]">
                   <span className="text-faint">Type</span>
                   <select className={`${fieldClass} mt-1`} value={slot.adType} onChange={(e) => update(slot.id, { adType: e.target.value as AdSlotConfig["adType"] })}>
                     <option value="custom_code">Custom code</option>
@@ -634,19 +711,19 @@ function AdSlotsCard({
                 </label>
               </div>
               {slot.adType === "custom_code" ? (
-                <label className="mt-2 block text-xs">
+                <label className="mt-2 block text-[11px]">
                   <span className="text-faint">Code</span>
-                  <textarea className={`${fieldClass} mt-1 font-mono text-xs`} rows={3} value={slot.code} onChange={(e) => update(slot.id, { code: e.target.value })} />
+                  <textarea className={`${fieldClass} mt-1 font-mono text-[11px] leading-5`} rows={3} value={slot.code} onChange={(e) => update(slot.id, { code: e.target.value })} />
                 </label>
               ) : (
-                <div className="mt-2 space-y-2 text-xs">
+                <div className="mt-2 space-y-2 text-[11px]">
                   <span className="text-faint">AdSense unit id (data-ad-slot)</span>
                   <input className={fieldClass} value={slot.code} onChange={(e) => update(slot.id, { code: e.target.value })} placeholder="1234567890" />
                   <div className="flex flex-wrap items-center gap-2">
                     <input className={fieldClass} value={unit.publisher} onChange={(e) => setUnit({ ...unit, publisher: e.target.value })} placeholder="pub-1234567890" />
                     <input className={fieldClass} value={unit.slotId} onChange={(e) => setUnit({ ...unit, slotId: e.target.value })} placeholder="unit id" />
                     <Button
-                      className="min-h-9 px-3 py-1.5 text-xs"
+                      size="sm"
                       variant="ghost"
                       onClick={() => update(slot.id, { adType: "custom_code", code: `<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${unit.publisher}" crossorigin="anonymous"></script>\n<ins class="adsbygoogle" style="display:block" data-ad-client="${unit.publisher}" data-ad-slot="${unit.slotId || slot.code}" data-ad-format="auto" data-full-width-responsive="true"></ins>\n<script>(adsbygoogle = window.adsbygoogle || []).push({});</script>` })}
                     >
@@ -655,10 +732,10 @@ function AdSlotsCard({
                   </div>
                 </div>
               )}
-              <div className="mt-2 text-xs text-faint">
+              <div className={`num mt-2.5 text-[11px] ${over ? "text-danger" : "text-faint"}`}>
                 {bytes.toLocaleString()} / {AD_CODE_LIMIT.toLocaleString()} bytes {over ? "· OVER LIMIT — the build will refuse this slot" : ""}
               </div>
-              <div className="mt-1 text-xs text-faint">
+              <div className="mt-1 text-[11px] leading-5 text-faint">
                 desktop: {slot.position.desktop}
                 <br />
                 mobile: {slot.position.mobile}

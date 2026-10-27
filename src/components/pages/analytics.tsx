@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
+import { ChartColumn, ChartLine } from "lucide-react";
 import { Bar, BarChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { HumanizeBanner } from "@/components/humanize-pipeline";
 import { LinkField } from "@/components/link-field";
@@ -192,291 +193,341 @@ export function AnalyticsPage() {
   // Rule 7: honest loading state before the store hydrates (after every hook).
   if (!hydrated) return <SkeletonRows rows={5} />;
   return (
-    <div>
-      <PageIntro eyebrow="Content" title="Analytics" lede="Pipeline health, plus the Bing desk: uniqueness, interlinks, and what to fix before a page can rank." />
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="Content"
+        title="Analytics"
+        lede="Pipeline health, plus the Bing desk: uniqueness, interlinks, and what to fix before a page can rank."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              className="bg-surface"
+              onClick={() => {
+                const origin = site?.publicUrl?.replace(/\/$/, "") || "";
+                const body = corpus.map((article) => `${origin}/post/${article.slug}/`).join("\n");
+                void navigator.clipboard.writeText(body);
+              }}
+            >
+              Copy IndexNow URL list
+            </Button>
+            <Button onClick={() => weaveLinks()}>Weave missing internal links</Button>
+          </div>
+        }
+      />
       {!corpus.length ? (
-        <div className="mb-4">
-          <StateNote
-            tone="empty"
-            title="Nothing to measure on this website yet"
-            body="Write one or two articles first. Every number on this page is computed from your own corpus and usage ledger — never estimated from a third-party metric."
-          />
-        </div>
+        <StateNote
+          tone="empty"
+          title="Nothing to measure on this website yet"
+          body="Write one or two articles first. Every number on this page is computed from your own corpus and usage ledger — never estimated from a third-party metric."
+        />
       ) : null}
-      <div className="mb-4 flex gap-2">
+      <div className="flex items-center gap-1 rounded-full border border-line bg-surface p-1">
         {([7, 14, 30] as const).map((item) => (
-          <button key={item} onClick={() => setDays(item)} className={`min-h-11 rounded-full px-4 text-sm ${days === item ? "bg-brass text-ink" : "border border-line text-muted"}`}>
+          <button
+            key={item}
+            onClick={() => setDays(item)}
+            className={`h-7 rounded-full border px-3 text-[12px] font-medium transition-colors duration-150 ${
+              days === item
+                ? "border-brass/30 bg-brass/10 text-fg"
+                : "border-transparent text-muted hover:bg-surface-2 hover:text-fg"
+            }`}
+          >
             {item} days
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile k="Tokens settled" v={compact(settled.reduce((sum, event) => sum + event.tokens, 0))} />
-        <Tile k="Articles produced" v={String(siteArticles.length)} />
-        <Tile k="Verified link edges" v={String(linkEdges)} />
-        <Tile k="Pipeline success" v={finished.length ? `${Math.round(success * 100)}%` : "—"} />
-      </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[13px] font-semibold text-fg">Token usage</h2>
+      <Card className="overflow-hidden rounded-xl p-0">
+        <div className="grid grid-cols-2 gap-px bg-line lg:grid-cols-4">
+          <Kpi k="Tokens settled" v={compact(settled.reduce((sum, event) => sum + event.tokens, 0))} />
+          <Kpi k="Articles produced" v={String(siteArticles.length)} />
+          <Kpi k="Verified link edges" v={String(linkEdges)} />
+          <Kpi k="Pipeline success" v={finished.length ? `${Math.round(success * 100)}%` : "—"} />
+        </div>
+      </Card>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card className="rounded-xl p-0">
+          <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5">
+            <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Token usage</h2>
             <span className="num text-[11px] text-faint">last {days} days</span>
           </div>
-          {byDay.every((d) => d.tokens === 0) ? (
-            <p className="grid h-52 place-items-center rounded-md border border-dashed border-line text-[12px] text-faint">
-              No tokens settled in this window — the ledger fills when a run writes.
-            </p>
-          ) : charts ? (
-            <ResponsiveContainer width="100%" height={208}>
-              <LineChart data={byDay}>
-                <XAxis dataKey="day" stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} width={40} />
-                <Tooltip contentStyle={{ background: "var(--color-elev)", border: "1px solid var(--color-line)", color: "var(--color-fg)" }} />
-                <Line type="monotone" dataKey="tokens" stroke="var(--color-accent)" strokeWidth={1.75} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : null}
+          <div className="p-4">
+            {byDay.every((d) => d.tokens === 0) ? (
+              <ChartEmpty icon={<ChartLine aria-hidden="true" strokeWidth={1.6} className="size-4" />}>
+                No tokens settled in this window — the ledger fills when a run writes.
+              </ChartEmpty>
+            ) : charts ? (
+              <ResponsiveContainer width="100%" height={208}>
+                <LineChart data={byDay}>
+                  <XAxis dataKey="day" stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} width={40} />
+                  <Tooltip contentStyle={{ background: "var(--color-elev)", border: "1px solid var(--color-line)", color: "var(--color-fg)" }} />
+                  <Line type="monotone" dataKey="tokens" stroke="var(--color-accent)" strokeWidth={1.75} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : null}
+          </div>
         </Card>
-        <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[13px] font-semibold text-fg">Article output</h2>
+        <Card className="rounded-xl p-0">
+          <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5">
+            <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Article output</h2>
             <span className="num text-[11px] text-faint">{siteArticles.length} total</span>
           </div>
-          {byDay.every((d) => d.articles === 0) ? (
-            <p className="grid h-52 place-items-center rounded-md border border-dashed border-line text-[12px] text-faint">
-              No articles finished in this window.
-            </p>
-          ) : charts ? (
-            <ResponsiveContainer width="100%" height={208}>
-              <BarChart data={byDay}>
-                <XAxis dataKey="day" stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis allowDecimals={false} stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} width={24} />
-                <Tooltip contentStyle={{ background: "var(--color-elev)", border: "1px solid var(--color-line)", color: "var(--color-fg)" }} />
-                <Bar dataKey="articles" fill="var(--color-accent)" radius={2} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : null}
+          <div className="p-4">
+            {byDay.every((d) => d.articles === 0) ? (
+              <ChartEmpty icon={<ChartColumn aria-hidden="true" strokeWidth={1.6} className="size-4" />}>
+                No articles finished in this window.
+              </ChartEmpty>
+            ) : charts ? (
+              <ResponsiveContainer width="100%" height={208}>
+                <BarChart data={byDay}>
+                  <XAxis dataKey="day" stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} stroke="var(--color-faint)" fontSize={12} tickLine={false} axisLine={false} width={24} />
+                  <Tooltip contentStyle={{ background: "var(--color-elev)", border: "1px solid var(--color-line)", color: "var(--color-fg)" }} />
+                  <Bar dataKey="articles" fill="var(--color-accent)" radius={2} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : null}
+          </div>
         </Card>
       </div>
-      <Card className="mt-4 overflow-x-auto p-4">
-        <h2 className="text-[13px] font-semibold text-fg">Stage performance</h2>
-        <table className="mt-3 w-full min-w-lg text-left text-[13px]">
-          <thead className="text-[11px] uppercase tracking-[0.06em] text-faint">
-            <tr>
-              <th className="py-2 font-medium">Stage</th>
-              <th className="py-2 font-medium">Success</th>
-              <th className="py-2 font-medium">Avg duration</th>
-              <th className="py-2 font-medium">Avg tokens</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stageRows.map((row) => (
-              <tr key={row.label} className="border-t border-line/70 hover:bg-surface/60">
-                <td className="py-2">{row.label}</td>
-                <td>{row.success}</td>
-                <td>{row.duration}</td>
-                <td className="font-mono">{row.tokens}</td>
+      <Card className="overflow-hidden rounded-xl p-0">
+        <div className="border-b border-line px-5 py-3.5">
+          <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Stage performance</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-lg text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-line">
+                <th className="px-5 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Stage</th>
+                <th className="px-5 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Success</th>
+                <th className="px-5 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Avg duration</th>
+                <th className="px-5 py-2.5 text-right text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Avg tokens</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {stageRows.map((row) => (
+                <tr key={row.label} className="border-b border-line transition-colors duration-150 last:border-0 hover:bg-surface-2/60">
+                  <td className="px-5 py-2.5 text-fg">{row.label}</td>
+                  <td className="num px-5 py-2.5 text-muted">{row.success}</td>
+                  <td className="num px-5 py-2.5 text-muted">{row.duration}</td>
+                  <td className="num px-5 py-2.5 text-right text-fg">{row.tokens}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Card>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card className="p-4 text-sm">
-          <h2 className="font-display text-2xl">Content quality</h2>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card className="rounded-xl p-0">
+          <div className="border-b border-line px-5 py-3.5">
+            <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Content quality</h2>
+          </div>
           {quality ? (
-            <dl className="mt-3 space-y-2">
+            <dl className="divide-y divide-line px-5">
               <LineItem k="Uniqueness" v={`${Math.round(quality.uniqueness * 100)}%`} />
               <LineItem k="Intent match" v={`${Math.round(quality.intent * 100)}%`} />
               <LineItem k="Coverage" v={`${Math.round(quality.coverage * 100)}%`} />
               <LineItem k="Images / article" v={quality.images.toFixed(1)} />
             </dl>
           ) : (
-            <p className="mt-3 text-muted">No articles in this window.</p>
+            <p className="px-5 py-4 text-[13px] text-muted">No articles in this window.</p>
           )}
         </Card>
-        <Card className="p-4 text-sm">
-          <h2 className="font-display text-2xl">Engine reliability</h2>
-          <dl className="mt-3 space-y-2">
+        <Card className="rounded-xl p-0">
+          <div className="border-b border-line px-5 py-3.5">
+            <h2 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Engine reliability</h2>
+          </div>
+          <dl className="divide-y divide-line px-5">
             <LineItem k="LLM" v={String(llm)} />
             <LineItem k="Fallback" v={String(fallback)} />
           </dl>
-          <p className="mt-3 text-xs leading-5 text-faint">Studio writer is the default engine. A custom model replaces the draft after the six stages finish.</p>
+          <p className="border-t border-line px-5 py-3 text-[11px] leading-5 text-faint">
+            Studio writer is the default engine. A custom model replaces the draft after the six stages finish.
+          </p>
         </Card>
       </div>
 
-      <section className="mt-8 space-y-4">
+      <section className="space-y-5 pt-3">
         <HumanizeBanner />
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Bing ranking desk</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
+        <div className="flex flex-wrap items-end justify-between gap-5">
+          <div className="min-w-0 max-w-2xl">
+            <h2 className="font-sans text-[18px] font-semibold normal-case tracking-[-0.015em] text-fg">Bing ranking desk</h2>
+            <p className="mt-1.5 text-[13px] leading-6 text-muted">
               These checks are the ones that decide whether Bing treats the library as a set of distinct pages or as copies of each other.
             </p>
           </div>
-          <div className="text-right">
-            <div className="font-mono text-xs uppercase tracking-widest text-faint">Library readiness</div>
-            <div className="text-3xl font-semibold tracking-tight text-brass">{corpus.length ? `${Math.floor(ready * 100)}%` : "—"}</div>
+          <div className="min-w-36">
+            <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Library readiness</div>
+            <div className="mt-1 font-display text-[36px] leading-none tabular-nums text-fg">{corpus.length ? `${Math.floor(ready * 100)}%` : "—"}</div>
+            <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-surface-2">
+              <div className="h-full rounded-full bg-brass" style={{ width: `${corpus.length ? Math.floor(ready * 100) : 0}%` }} />
+            </div>
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {playbook.map((item) => (
-            <Card key={item.title} className="p-4">
-              <h3 className="font-semibold tracking-tight">{item.title}</h3>
-              <p className="mt-2 text-sm leading-6 text-muted">{item.body}</p>
-            </Card>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => weaveLinks()}>Weave missing internal links</Button>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              const origin = site?.publicUrl?.replace(/\/$/, "") || "";
-              const body = corpus.map((article) => `${origin}/post/${article.slug}/`).join("\n");
-              void navigator.clipboard.writeText(body);
-            }}
-          >
-            Copy IndexNow URL list
-          </Button>
-        </div>
-        <Card className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-end">
-          <Field label="IndexNow key" hint="The key file is uploaded to the verified cPanel public root before Bing is called. If that file does not answer with the key, nothing is submitted.">
-            <input className={fieldClass} value={indexNow} onChange={(e) => setIndexNow(e.target.value)} placeholder="your-indexnow-key" />
-          </Field>
-          <Button
-            onClick={() => {
-              const key = indexNow.trim();
-              patchSite({ indexNowKey: key });
-              const origin = site?.publicUrl?.replace(/\/$/, "") || "";
-              if (!origin || !key) {
-                setIndexNote(key ? "Key saved. Set the public https URL, then submit." : "Enter the IndexNow key.");
-                return;
-              }
-              const urls = corpus.map((article) => `${origin}/post/${article.slug}/`).filter((url) => url.startsWith("https://"));
-              if (!cpanelReady || !cpanel?.ftp) {
-                setIndexNote("cPanel hosting is not verified. Verify Explicit-TLS FTPS on Connections before submitting IndexNow. Bing was not called.");
-                return;
-              }
-              setIndexNote("Uploading the key file, then checking it is public…");
-              void submitIndexNow({
-                data: {
-                  publicUrl: origin,
-                  key,
-                  urls,
-                  verified: true,
-                  ftp: {
-                    host: cpanel.ftp.host,
-                    user: cpanel.ftp.user,
-                    password: cpanel.ftp.password,
-                    port: cpanel.ftp.port || 21,
-                    path: cpanel.ftp.path || "/",
-                    via: cpanel.ftp.via || "ftps",
-                  },
-                },
-              }).then((result) => {
-                setIndexNote(
-                  result.ok
-                    ? `Submitted ${urls.length} URLs. Uploaded ${key}.txt. The public file returned the key. Bing answered HTTP ${result.status}.`
-                    : result.error,
-                );
-              });
-            }}
-          >
-            Save and submit
-          </Button>
+        <Card className="overflow-hidden rounded-xl p-0">
+          <div className="grid gap-px bg-line md:grid-cols-2 xl:grid-cols-3">
+            {playbook.map((item, index) => (
+              <div key={item.title} className="bg-elev px-5 py-4">
+                <div className="flex items-baseline gap-2">
+                  <span className="num text-[10px] text-faint">{String(index + 1).padStart(2, "0")}</span>
+                  <h3 className="text-[13px] font-semibold leading-5 text-fg">{item.title}</h3>
+                </div>
+                <p className="mt-1.5 text-[12px] leading-6 text-muted">{item.body}</p>
+              </div>
+            ))}
+          </div>
         </Card>
-        {indexNote ? <p className="text-sm text-muted">{indexNote}</p> : null}
-        {indexPreview ? <p className="text-sm text-muted">{indexPreview}</p> : null}
-        <Card className="p-5">
-          <h3 className="font-semibold tracking-tight">Internal link field</h3>
-          <p className="mt-1 text-xs text-faint">
-            Every article is a node on the sphere, every internal link already in the HTML is an
-            arrow between them. The field turns on its own — drag it to look from another angle.
-          </p>
-          <div className="mt-4">
+        <Card className="rounded-xl p-5">
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <Field label="IndexNow key" hint="The key file is uploaded to the verified cPanel public root before Bing is called. If that file does not answer with the key, nothing is submitted.">
+              <input className={fieldClass} value={indexNow} onChange={(e) => setIndexNow(e.target.value)} placeholder="your-indexnow-key" />
+            </Field>
+            <Button
+              onClick={() => {
+                const key = indexNow.trim();
+                patchSite({ indexNowKey: key });
+                const origin = site?.publicUrl?.replace(/\/$/, "") || "";
+                if (!origin || !key) {
+                  setIndexNote(key ? "Key saved. Set the public https URL, then submit." : "Enter the IndexNow key.");
+                  return;
+                }
+                const urls = corpus.map((article) => `${origin}/post/${article.slug}/`).filter((url) => url.startsWith("https://"));
+                if (!cpanelReady || !cpanel?.ftp) {
+                  setIndexNote("cPanel hosting is not verified. Verify Explicit-TLS FTPS on Connections before submitting IndexNow. Bing was not called.");
+                  return;
+                }
+                setIndexNote("Uploading the key file, then checking it is public…");
+                void submitIndexNow({
+                  data: {
+                    publicUrl: origin,
+                    key,
+                    urls,
+                    verified: true,
+                    ftp: {
+                      host: cpanel.ftp.host,
+                      user: cpanel.ftp.user,
+                      password: cpanel.ftp.password,
+                      port: cpanel.ftp.port || 21,
+                      path: cpanel.ftp.path || "/",
+                      via: cpanel.ftp.via || "ftps",
+                    },
+                  },
+                }).then((result) => {
+                  setIndexNote(
+                    result.ok
+                      ? `Submitted ${urls.length} URLs. Uploaded ${key}.txt. The public file returned the key. Bing answered HTTP ${result.status}.`
+                      : result.error,
+                  );
+                });
+              }}
+            >
+              Save and submit
+            </Button>
+          </div>
+          {indexNote ? <p className="mt-3 text-[12px] text-muted">{indexNote}</p> : null}
+          {indexPreview ? <p className="mt-1 text-[12px] text-faint">{indexPreview}</p> : null}
+        </Card>
+        <Card className="overflow-hidden rounded-xl p-0">
+          <div className="border-b border-line px-5 py-3.5">
+            <h3 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Internal link field</h3>
+            <p className="mt-1 text-[12px] leading-5 text-faint">
+              Every article is a node on the sphere, every internal link already in the HTML is an
+              arrow between them. The field turns on its own — drag it to look from another angle.
+            </p>
+          </div>
+          <div className="p-5">
             <LinkField articles={linked} />
           </div>
         </Card>
-        <Card className="p-4">
-          <h3 className="font-semibold tracking-tight">Uniqueness worklist</h3>
-          <p className="mt-1 text-sm text-muted">
-            Worst first, measured against every other article on this site. Under 70 percent, a page is mostly
-            re-saying what a sibling already said — that is the one to rewrite or merge, not the whole site.
-          </p>
-          <ul className="mt-3 space-y-2 text-sm">
-            {uniquenessRanked.slice(0, 8).map(({ article, score }) => (
-              <li key={article.id} className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
+        <Card className="overflow-hidden rounded-xl p-0">
+          <div className="border-b border-line px-5 py-3.5">
+            <h3 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Uniqueness worklist</h3>
+            <p className="mt-1 text-[12px] leading-6 text-muted">
+              Worst first, measured against every other article on this site. Under 70 percent, a page is mostly
+              re-saying what a sibling already said — that is the one to rewrite or merge, not the whole site.
+            </p>
+          </div>
+          <ul className="divide-y divide-line">
+            {uniquenessRanked.slice(0, 8).map(({ article, score }, index) => (
+              <li key={article.id} className="flex items-center gap-3 px-5 py-2.5 text-[13px] transition-colors duration-150 hover:bg-surface-2/60">
+                <span className="num w-5 text-right text-[10px] text-faint">{index + 1}</span>
                 <Link
                   to="/articles/$id"
                   params={{ id: article.id }}
-                  className="min-w-0 flex-1 truncate hover:text-accent"
+                  className="min-w-0 flex-1 truncate text-fg transition-colors duration-150 hover:text-brass-2"
                   title={article.title}
                 >
                   {article.title}
                 </Link>
-                <span className={`font-mono text-xs ${score < 0.7 ? "text-danger" : "text-brass"}`}>
+                <span className={`num text-[11px] ${score < 0.7 ? "text-danger" : "text-muted"}`}>
                   {Math.round(score * 100)}%
                 </span>
               </li>
             ))}
-            {uniquenessRanked.length ? null : <li className="text-muted">No article to rank yet.</li>}
+            {uniquenessRanked.length ? null : <li className="px-5 py-4 text-[13px] text-muted">No article to rank yet.</li>}
           </ul>
         </Card>
-        <Card className="p-4">
-          <h3 className="font-semibold tracking-tight">Near-duplicates</h3>
-          <p className="mt-1 text-sm text-muted">
-            {pairs.length
-              ? "These pairs are close enough that Bing may fold them. Link one to the other and change the angle, or unpublish the weaker URL."
-              : "No pair is close enough to look like a copy. Keep linking sideways so new drafts do not drift into the same title."}
-          </p>
-          <ul className="mt-3 space-y-2 text-sm">
+        <Card className="overflow-hidden rounded-xl p-0">
+          <div className="border-b border-line px-5 py-3.5">
+            <h3 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Near-duplicates</h3>
+            <p className="mt-1 text-[12px] leading-6 text-muted">
+              {pairs.length
+                ? "These pairs are close enough that Bing may fold them. Link one to the other and change the angle, or unpublish the weaker URL."
+                : "No pair is close enough to look like a copy. Keep linking sideways so new drafts do not drift into the same title."}
+            </p>
+          </div>
+          <ul className="divide-y divide-line">
             {pairs.map((pair) => (
-              <li key={pair.left.id + pair.right.id} className="rounded-lg border border-line px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate">{pair.left.title}</span>
-                  <span className="font-mono text-xs text-brass">{Math.round(pair.score * 100)}%</span>
+              <li key={pair.left.id + pair.right.id} className="px-5 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="truncate text-[13px] text-fg">{pair.left.title}</span>
+                  <span className="num shrink-0 text-[11px] text-warn">{Math.round(pair.score * 100)}%</span>
                 </div>
-                <div className="truncate text-muted">{pair.right.title}</div>
+                <div className="mt-0.5 truncate text-[12px] text-muted">{pair.right.title}</div>
               </li>
             ))}
           </ul>
           {orphans.length ? (
-            <p className="mt-3 text-sm text-danger">
+            <p className="border-t border-line px-5 py-2.5 text-[12px] leading-5 text-danger">
               {orphans.length} orphan{orphans.length === 1 ? "" : "s"} with no inbound link: {orphans.map((article) => article.title).join(", ")}.
             </p>
           ) : (
-            <p className="mt-3 text-sm text-brass-2">No orphan pages. Every article has an inbound link.</p>
+            <p className="border-t border-line px-5 py-2.5 text-[12px] leading-5 text-ok">No orphan pages. Every article has an inbound link.</p>
           )}
         </Card>
-        <Card className="overflow-x-auto p-4">
-          <h3 className="font-semibold tracking-tight">Page checklist</h3>
-          <table className="mt-3 w-full min-w-lg text-left text-sm">
-            <thead className="text-xs uppercase tracking-widest text-faint">
-              <tr>
-                <th className="py-2 font-medium">Article</th>
-                <th className="py-2 font-medium">Bing</th>
-                <th className="py-2 font-medium">Links</th>
-                <th className="py-2 font-medium">Author</th>
-                <th className="py-2 font-medium">Gaps</th>
-              </tr>
-            </thead>
-            <tbody>
-              {scored.slice(0, 12).map((row) => (
-                <tr key={row.article.id} className="border-t border-line">
-                  <td className="max-w-xs truncate py-2">
-                    <Link to="/articles/$id" params={{ id: row.article.id }} className="hover:text-brass">
-                      {row.article.title}
-                    </Link>
-                  </td>
-                  <td>{Math.floor(row.score * 100)}%</td>
-                  <td>{row.article.links.length}</td>
-                  <td className="truncate">{row.article.authorName ?? "—"}</td>
-                  <td className="text-muted">{row.checks.filter((check) => !check.pass).map((check) => check.label).join(", ") || "Clear"}</td>
+        <Card className="overflow-hidden rounded-xl p-0">
+          <div className="border-b border-line px-5 py-3.5">
+            <h3 className="font-sans text-[15px] font-semibold normal-case tracking-[-0.01em] text-fg">Page checklist</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-lg text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-line">
+                  <th className="px-5 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Article</th>
+                  <th className="px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Bing</th>
+                  <th className="px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Links</th>
+                  <th className="px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Author</th>
+                  <th className="px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">Gaps</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {scored.slice(0, 12).map((row) => (
+                  <tr key={row.article.id} className="border-b border-line transition-colors duration-150 last:border-0 hover:bg-surface-2/60">
+                    <td className="max-w-xs truncate px-5 py-2.5 text-fg">
+                      <Link to="/articles/$id" params={{ id: row.article.id }} className="transition-colors duration-150 hover:text-brass-2">
+                        {row.article.title}
+                      </Link>
+                    </td>
+                    <td className="num px-4 py-2.5 text-muted">{Math.floor(row.score * 100)}%</td>
+                    <td className="num px-4 py-2.5 text-muted">{row.article.links.length}</td>
+                    <td className="max-w-40 truncate px-4 py-2.5 text-muted">{row.article.authorName ?? "—"}</td>
+                    <td className="px-4 py-2.5 text-muted">{row.checks.filter((check) => !check.pass).map((check) => check.label).join(", ") || "Clear"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </section>
     </div>
@@ -486,19 +537,29 @@ export function AnalyticsPage() {
 function avg(values: number[]) {
   return values.reduce((sum, n) => sum + n, 0) / values.length;
 }
-function Tile({ k, v }: { k: string; v: string }) {
+function Kpi({ k, v }: { k: string; v: string }) {
   return (
-    <Card className="p-4">
-      <div className="eyebrow">{k}</div>
-      <div className="num mt-2 text-[22px] leading-none text-fg">{v}</div>
-    </Card>
+    <div className="bg-elev px-5 py-4">
+      <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-faint">{k}</div>
+      <div className="mt-2 font-display text-[30px] leading-none tabular-nums text-fg">{v}</div>
+    </div>
   );
 }
 function LineItem({ k, v }: { k: string; v: string }) {
   return (
-    <div className="flex justify-between border-b border-line py-1">
-      <dt className="text-muted">{k}</dt>
-      <dd className="font-mono">{v}</dd>
+    <div className="flex items-center justify-between gap-3 py-2.5">
+      <dt className="text-[13px] text-muted">{k}</dt>
+      <dd className="num text-[13px] text-fg">{v}</dd>
+    </div>
+  );
+}
+function ChartEmpty({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="grid h-52 place-items-center rounded-md border border-dashed border-line/80">
+      <div className="px-4 text-center">
+        <span className="mx-auto grid size-9 place-items-center rounded-md bg-surface-2 text-faint">{icon}</span>
+        <p className="mt-2 text-[12px] leading-5 text-faint">{children}</p>
+      </div>
     </div>
   );
 }

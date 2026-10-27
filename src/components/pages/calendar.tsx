@@ -1,5 +1,6 @@
 ﻿import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { CalendarDays } from "lucide-react";
 import { automationLabel, publishModeLabel } from "@/lib/operator";
 import { previewCalendar, type CalendarPreview } from "@/lib/ops.functions";
 import { useApp, useHydrated } from "@/lib/store";
@@ -29,6 +30,18 @@ const ENTRY_LABEL: Record<CalendarEntry["status"], string> = {
   FAILED: "FAILED",
 };
 
+function NoteEmpty({ title, children }: { title?: string; children: string }) {
+  return (
+    <div className="rounded-xl border border-line bg-elev px-6 py-12 text-center">
+      <span className="mx-auto grid size-10 place-items-center rounded-lg bg-surface-2 text-faint">
+        <CalendarDays aria-hidden="true" strokeWidth={1.75} className="size-[18px]" />
+      </span>
+      {title ? <h2 className="mt-4 text-[15px] font-semibold tracking-[-0.01em] text-fg">{title}</h2> : null}
+      <p className={title ? "mx-auto mt-1.5 max-w-sm text-[13px] leading-6 text-muted" : "mx-auto mt-3 max-w-sm text-[13px] leading-6 text-muted"}>{children}</p>
+    </div>
+  );
+}
+
 function Switches({ calendar }: { calendar: ContentCalendar }) {
   const patchCalendar = useApp((s) => s.patchCalendar);
   // The switches are the server's. This asks the server what they would do —
@@ -37,45 +50,48 @@ function Switches({ calendar }: { calendar: ContentCalendar }) {
   const [previewing, setPreviewing] = useState(false);
   const stamp = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
   return (
-    <Card className="mb-4 space-y-3 p-4 text-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium">Automation</div>
+    <Card className="mb-4 overflow-hidden rounded-xl p-0 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3.5">
+        <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">Automation</h2>
         <span className="flex items-center gap-2">
           <Badge tone={automationLabel(calendar) === "automation on" ? "brass" : "muted"}>{automationLabel(calendar)}</Badge>
-          <span className="text-xs text-faint">{calendar.cadence}</span>
+          <span className="num text-[11px] text-faint">{calendar.cadence}</span>
         </span>
       </div>
-      <label className="flex items-start gap-2">
-        <input type="checkbox" className="mt-1 size-4 accent-brass" checked={calendar.autoGenerate} onChange={(e) => patchCalendar(calendar.id, { autoGenerate: e.target.checked })} />
-        <span>
-          <span className="font-medium">Write automatically</span>
-          <span className="block text-xs text-faint">Queues and runs the pipeline at write time ({calendar.generationLeadHours}h before publish). Holds before publishing unless the next switch is on.</span>
-        </span>
-      </label>
-      <label className="flex items-start gap-2">
-        <input type="checkbox" className="mt-1 size-4 accent-brass" checked={calendar.autoPublish} onChange={(e) => patchCalendar(calendar.id, { autoPublish: e.target.checked })} />
-        <span>
-          <span className="font-medium">{publishModeLabel(calendar)}</span>
-          <span className="block text-xs text-faint">
-            Acts at publish time. Current mode: {calendar.publishMode === "published" ? "publish to the CMS" : "save a draft on the CMS"}.
+      <div className="divide-y divide-line">
+        <label className="flex items-start gap-3 px-5 py-3.5 transition-colors duration-150 hover:bg-surface-2/40">
+          <input type="checkbox" className="mt-1 size-4 accent-brass" checked={calendar.autoGenerate} onChange={(e) => patchCalendar(calendar.id, { autoGenerate: e.target.checked })} />
+          <span>
+            <span className="block text-[13px] font-medium text-fg">Write automatically</span>
+            <span className="mt-0.5 block text-[11px] leading-5 text-faint">Queues and runs the pipeline at write time ({calendar.generationLeadHours}h before publish). Holds before publishing unless the next switch is on.</span>
           </span>
-        </span>
-      </label>
-      <label className="flex items-start gap-2">
-        <input type="checkbox" className="mt-1 size-4 accent-brass" checked={calendar.autoReweave} onChange={(e) => patchCalendar(calendar.id, { autoReweave: e.target.checked })} />
-        <span>
-          <span className="font-medium">Automatic internal linking</span>
-          <span className="block text-xs text-faint">After publish, links each new post to its same-calendar siblings (pillars first) through the Ghost PUT re-weave path with an optimistic lock.</span>
-        </span>
-      </label>
-      <p className="text-xs text-faint">{calendar.automation}</p>
-      <div className="rounded-lg border border-line p-3">
+        </label>
+        <label className="flex items-start gap-3 px-5 py-3.5 transition-colors duration-150 hover:bg-surface-2/40">
+          <input type="checkbox" className="mt-1 size-4 accent-brass" checked={calendar.autoPublish} onChange={(e) => patchCalendar(calendar.id, { autoPublish: e.target.checked })} />
+          <span>
+            <span className="block text-[13px] font-medium text-fg">{publishModeLabel(calendar)}</span>
+            <span className="mt-0.5 block text-[11px] leading-5 text-faint">
+              Acts at publish time. Current mode: {calendar.publishMode === "published" ? "publish to the CMS" : "save a draft on the CMS"}.
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-3 px-5 py-3.5 transition-colors duration-150 hover:bg-surface-2/40">
+          <input type="checkbox" className="mt-1 size-4 accent-brass" checked={calendar.autoReweave} onChange={(e) => patchCalendar(calendar.id, { autoReweave: e.target.checked })} />
+          <span>
+            <span className="block text-[13px] font-medium text-fg">Automatic internal linking</span>
+            <span className="mt-0.5 block text-[11px] leading-5 text-faint">After publish, links each new post to its same-calendar siblings (pillars first) through the Ghost PUT re-weave path with an optimistic lock.</span>
+          </span>
+        </label>
+      </div>
+      <p className="border-t border-line px-5 py-3 text-[11px] leading-5 text-faint">{calendar.automation}</p>
+      <div className="border-t border-line bg-surface/50 px-5 py-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs text-faint">
+          <span className="text-[11px] leading-5 text-faint">
             A dry run: it asks the server what the switches would do next and writes nothing.
           </span>
           <Button
-            variant="ghost"
+            variant="secondary"
+            size="sm"
             disabled={previewing}
             onClick={() => {
               setPreviewing(true);
@@ -90,20 +106,20 @@ function Switches({ calendar }: { calendar: ContentCalendar }) {
         </div>
         {preview ? (
           preview.ok ? (
-            <div className="mt-2 space-y-1 text-xs">
+            <div className="mt-2 space-y-1 text-[11px]">
               {preview.items.length ? (
                 preview.items.map((item) => (
                   <p key={`${item.action}-${item.item_id}`}>
                     <span className="font-mono text-brass">{item.action === "write" ? "WRITE" : "PUBLISH"}</span>{" "}
                     <span className="text-fg">{item.title || item.item_id}</span>{" "}
-                    <span className="text-faint">· due {stamp(item.due_at)} UTC</span>
+                    <span className="num text-faint">· due {stamp(item.due_at)} UTC</span>
                   </p>
                 ))
               ) : (
                 <p className="text-faint">Nothing is due right now, so the next pulse would queue nothing.</p>
               )}
-              {preview.next_write_at ? <p className="text-faint">Next write: {stamp(preview.next_write_at)} UTC</p> : null}
-              {preview.next_publish_at ? <p className="text-faint">Next publish: {stamp(preview.next_publish_at)} UTC</p> : null}
+              {preview.next_write_at ? <p className="num text-faint">Next write: {stamp(preview.next_write_at)} UTC</p> : null}
+              {preview.next_publish_at ? <p className="num text-faint">Next publish: {stamp(preview.next_publish_at)} UTC</p> : null}
               {preview.skipped_no_site ? (
                 <p className="text-danger">
                   {preview.skipped_no_site} due item{preview.skipped_no_site === 1 ? "" : "s"} would be skipped: this calendar has no
@@ -115,11 +131,11 @@ function Switches({ calendar }: { calendar: ContentCalendar }) {
               ) : null}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-danger">{preview.error}</p>
+            <p className="mt-2 text-[11px] text-danger">{preview.error}</p>
           )
         ) : null}
       </div>
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="grid gap-3 border-t border-line px-5 py-4 sm:grid-cols-2 lg:grid-cols-5">
         <Field label="Publish mode">
           <select className={fieldClass} value={calendar.publishMode} onChange={(e) => patchCalendar(calendar.id, { publishMode: e.target.value as ContentCalendar["publishMode"] })}>
             <option value="published">Published</option>
@@ -153,9 +169,9 @@ function Switches({ calendar }: { calendar: ContentCalendar }) {
           />
         </Field>
       </div>
-      <div>
-        <span className="mb-2 block text-sm">Active days</span>
-        <div className="flex flex-wrap gap-2">
+      <div className="border-t border-line px-5 py-4">
+        <span className="eyebrow mb-2 block">Active days</span>
+        <div className="flex flex-wrap gap-1.5">
           {DAY_LABELS.map((label, index) => (
             <button
               key={label}
@@ -165,7 +181,9 @@ function Switches({ calendar }: { calendar: ContentCalendar }) {
                   activeDays: calendar.activeDays.includes(index) ? calendar.activeDays.filter((day) => day !== index) : [...calendar.activeDays, index].sort((a, b) => a - b),
                 })
               }
-              className={`min-h-11 rounded-lg border px-3 text-sm ${calendar.activeDays.includes(index) ? "border-brass bg-brass/10 text-fg" : "border-line text-muted"}`}
+              className={`min-h-9 rounded-md border px-3 text-[13px] transition-colors duration-150 ${
+                calendar.activeDays.includes(index) ? "border-brass bg-brass/10 text-fg" : "border-line bg-surface text-muted hover:border-line-strong hover:text-fg"
+              }`}
             >
               {label}
             </button>
@@ -198,55 +216,70 @@ export function CalendarPage() {
 
   // Rule 7: honest loading state before the store hydrates (after every hook).
   if (!hydrated) return <SkeletonRows rows={4} />;
+  const scheduled = mine.reduce((sum, calendar) => sum + calendar.items.filter((item) => item.status === "SCHEDULED").length, 0);
   return (
     <div>
       <PageIntro
         eyebrow="Content"
         title="Calendar"
         lede="Every article has a write time and a publish time (lead hours apart). The 3 automation switches are independent and start OFF: write automatically, publish/save-draft automatically, and automatic internal linking. Until you turn them on, nothing writes or publishes on its own."
+        action={
+          <div className="flex items-end gap-6">
+            <div className="text-right">
+              <div className="font-display text-[32px] font-semibold leading-none tracking-[-0.03em] text-fg tabular-nums">{mine.length}</div>
+              <div className="mt-1.5 text-[10px] uppercase tracking-[0.14em] text-faint">calendars</div>
+            </div>
+            <div className="border-l border-line pl-6 text-right">
+              <div className="font-display text-[32px] font-semibold leading-none tracking-[-0.03em] text-faint tabular-nums">{scheduled}</div>
+              <div className="mt-1.5 text-[10px] uppercase tracking-[0.14em] text-faint">scheduled</div>
+            </div>
+          </div>
+        }
       />
-      <Card className="mb-4 grid gap-3 p-5 md:grid-cols-2">
-        <Field label="Name">
-          <input className={fieldClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Autumn schedule" />
-        </Field>
-        <Field label="Timezone" hint="IANA zone. DST-safe slot math.">
-          <input className={fieldClass} value={timezone} onChange={(e) => setTimezone(e.target.value)} />
-        </Field>
-        <Field label="Articles per week" hint="1–21">
-          <input className={fieldClass} type="number" min={1} max={21} value={perWeek} onChange={(e) => setPerWeek(Number(e.target.value) || 1)} />
-        </Field>
-        <Field label="Publish time (local)">
-          <input className={fieldClass} type="time" value={publishTime} onChange={(e) => setPublishTime(e.target.value)} />
-        </Field>
-        <Field label="Write lead hours" hint="1–336. write_at is this many hours before publish_at.">
-          <input className={fieldClass} type="number" min={1} max={336} value={lead} onChange={(e) => setLead(Number(e.target.value) || 1)} />
-        </Field>
-        <Field label="Publish mode" hint="Published posts or CMS drafts.">
-          <select className={fieldClass} value={publishMode} onChange={(e) => setPublishMode(e.target.value as ContentCalendar["publishMode"])}>
-            <option value="published">Published</option>
-            <option value="draft">Draft</option>
-          </select>
-        </Field>
-        <Field label="Order">
-          <select className={fieldClass} value={order} onChange={(e) => setOrder(e.target.value as ContentCalendar["order"])}>
-            <option value="pillars-first">Pillars first</option>
-            <option value="one-cluster">One cluster at a time</option>
-            <option value="balanced">Balanced</option>
-            <option value="my-order">My order</option>
-          </select>
-        </Field>
-        <div className="md:col-span-2">
+      <Card className="mb-5 rounded-xl p-0">
+        <div className="grid gap-3 p-5 md:grid-cols-2">
+          <Field label="Name">
+            <input className={fieldClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Autumn schedule" />
+          </Field>
+          <Field label="Timezone" hint="IANA zone. DST-safe slot math.">
+            <input className={fieldClass} value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+          </Field>
+          <Field label="Articles per week" hint="1–21">
+            <input className={fieldClass} type="number" min={1} max={21} value={perWeek} onChange={(e) => setPerWeek(Number(e.target.value) || 1)} />
+          </Field>
+          <Field label="Publish time (local)">
+            <input className={fieldClass} type="time" value={publishTime} onChange={(e) => setPublishTime(e.target.value)} />
+          </Field>
+          <Field label="Write lead hours" hint="1–336. write_at is this many hours before publish_at.">
+            <input className={fieldClass} type="number" min={1} max={336} value={lead} onChange={(e) => setLead(Number(e.target.value) || 1)} />
+          </Field>
+          <Field label="Publish mode" hint="Published posts or CMS drafts.">
+            <select className={fieldClass} value={publishMode} onChange={(e) => setPublishMode(e.target.value as ContentCalendar["publishMode"])}>
+              <option value="published">Published</option>
+              <option value="draft">Draft</option>
+            </select>
+          </Field>
+          <Field label="Order">
+            <select className={fieldClass} value={order} onChange={(e) => setOrder(e.target.value as ContentCalendar["order"])}>
+              <option value="pillars-first">Pillars first</option>
+              <option value="one-cluster">One cluster at a time</option>
+              <option value="balanced">Balanced</option>
+              <option value="my-order">My order</option>
+            </select>
+          </Field>
+        </div>
+        <div className="border-t border-line px-5 py-4">
           <span className="eyebrow mb-2 block">Active days</span>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {DAY_LABELS.map((label, index) => (
               <button
                 key={label}
                 type="button"
                 onClick={() => setDays((prev) => (prev.includes(index) ? prev.filter((day) => day !== index) : [...prev, index]))}
-                className={`h-8 rounded-md border px-2.5 text-[12px] transition-colors ${
+                className={`h-9 rounded-md border px-3 text-[13px] transition-colors duration-150 ${
                   days.includes(index)
-                    ? "border-accent bg-accent/10 font-medium text-fg"
-                    : "border-line text-muted hover:border-line-strong hover:text-fg"
+                    ? "border-brass bg-brass/10 font-medium text-fg"
+                    : "border-line bg-surface text-muted hover:border-line-strong hover:text-fg"
                 }`}
               >
                 {label}
@@ -254,20 +287,22 @@ export function CalendarPage() {
             ))}
           </div>
         </div>
-        <Field label="Fill from a topic plan" hint="Optional. Otherwise paste titles below.">
-          <select className={fieldClass} value={planId} onChange={(e) => setPlanId(e.target.value)}>
-            <option value="">No plan</option>
-            {readyPlans.map((plan) => (
-              <option key={plan.id} value={plan.id}>
-                {plan.topic}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Or one title per line">
-          <textarea className={fieldClass} rows={4} value={lines} onChange={(e) => setLines(e.target.value)} />
-        </Field>
-        <div>
+        <div className="grid gap-3 border-t border-line p-5 md:grid-cols-2">
+          <Field label="Fill from a topic plan" hint="Optional. Otherwise paste titles below.">
+            <select className={fieldClass} value={planId} onChange={(e) => setPlanId(e.target.value)}>
+              <option value="">No plan</option>
+              {readyPlans.map((plan) => (
+                <option key={plan.id} value={plan.id}>
+                  {plan.topic}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Or one title per line">
+            <textarea className={fieldClass} rows={4} value={lines} onChange={(e) => setLines(e.target.value)} />
+          </Field>
+        </div>
+        <div className="flex justify-end border-t border-line px-5 py-3.5">
           <Button
             onClick={() => {
               const id = createCalendar({ name, timezone, activeDays: days, articlesPerWeek: perWeek, publishTime, generationLeadHours: lead, order, publishMode, planId: planId || undefined, lines });
@@ -279,32 +314,38 @@ export function CalendarPage() {
         </div>
       </Card>
       {!mine.length ? (
-        <Empty title="No calendars" body="Scheduling does not write articles. Open a calendar to write or publish one at a time." />
+        <NoteEmpty title="No calendars">Scheduling does not write articles. Open a calendar to write or publish one at a time.</NoteEmpty>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-line bg-elev">
-          {mine.map((calendar, index) => {
-            const next = calendar.items.filter((item) => item.status === "SCHEDULED").sort((a, b) => a.publishAt - b.publishAt)[0];
-            const counts = calendar.items.reduce<Record<string, number>>((acc, item) => ({ ...acc, [item.status]: (acc[item.status] ?? 0) + 1 }), {});
-            return (
-              <Link
-                key={calendar.id}
-                to="/calendar/$id"
-                params={{ id: calendar.id }}
-                className={`flex items-center gap-3 px-3 py-2.5 hover:bg-surface/70 ${index ? "border-t border-line/70" : ""}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium text-fg">{calendar.name}</div>
-                  <div className="truncate text-[11px] text-faint">
-                    {calendar.items.length} entries · next {next ? relTime(next.publishAt) : "none"} · {calendar.cadence}
-                    {Object.keys(counts).length ? ` · ${Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(" · ")}` : " · empty"}
+        <Card className="overflow-hidden rounded-xl p-0">
+          <div className="flex items-center justify-between gap-2 border-b border-line px-5 py-3">
+            <span className="eyebrow">Calendars</span>
+            <span className="num text-[11px] text-faint">{mine.length}</span>
+          </div>
+          <div className="divide-y divide-line">
+            {mine.map((calendar) => {
+              const next = calendar.items.filter((item) => item.status === "SCHEDULED").sort((a, b) => a.publishAt - b.publishAt)[0];
+              const counts = calendar.items.reduce<Record<string, number>>((acc, item) => ({ ...acc, [item.status]: (acc[item.status] ?? 0) + 1 }), {});
+              return (
+                <Link
+                  key={calendar.id}
+                  to="/calendar/$id"
+                  params={{ id: calendar.id }}
+                  className="flex items-center gap-3 px-5 py-3 transition-colors duration-150 hover:bg-surface-2/60"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-fg">{calendar.name}</div>
+                    <div className="num mt-0.5 truncate text-[11px] text-faint">
+                      {calendar.items.length} entries · next {next ? relTime(next.publishAt) : "none"} · {calendar.cadence}
+                      {Object.keys(counts).length ? ` · ${Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(" · ")}` : " · empty"}
+                    </div>
                   </div>
-                </div>
-                <Badge tone={automationLabel(calendar) === "automation on" ? "brass" : "muted"}>{automationLabel(calendar)}</Badge>
-                <span className="hidden text-[11px] text-faint sm:inline">{calendar.timezone}</span>
-              </Link>
-            );
-          })}
-        </div>
+                  <Badge tone={automationLabel(calendar) === "automation on" ? "brass" : "muted"}>{automationLabel(calendar)}</Badge>
+                  <span className="num hidden text-[11px] text-faint sm:inline">{calendar.timezone}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </Card>
       )}
     </div>
   );
@@ -319,56 +360,56 @@ function EntryCard({ calendar, entry }: { calendar: ContentCalendar; entry: Cale
   const [editing, setEditing] = useState(false);
   const canEdit = entry.status === "SCHEDULED" || entry.status === "SKIPPED";
   return (
-    <Card className="p-4">
+    <Card className="rounded-xl p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="font-medium">{entry.title}</div>
-          <div className="mt-1 text-xs text-muted">
+        <div className="min-w-0">
+          <div className="text-[13px] font-medium text-fg">{entry.title}</div>
+          <div className="num mt-1 text-[11px] text-faint">
             {entry.kind} · write {new Date(entry.writeAt).toLocaleString("en-GB", { timeZone: calendar.timezone })} · publish{" "}
             {new Date(entry.publishAt).toLocaleString("en-GB", { timeZone: calendar.timezone })}
           </div>
-          {entry.note ? <p className="mt-1 text-xs text-faint">{entry.note}</p> : null}
+          {entry.note ? <p className="mt-1 text-[11px] leading-5 text-faint">{entry.note}</p> : null}
         </div>
         <Badge tone={ENTRY_TONE[entry.status]}>{ENTRY_LABEL[entry.status]}</Badge>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {canEdit ? <Button onClick={() => writeCalendarItem(calendar.id, entry.id)}>Write now</Button> : null}
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+        {canEdit ? <Button size="sm" onClick={() => writeCalendarItem(calendar.id, entry.id)}>Write now</Button> : null}
         {entry.status === "READY" && entry.jobId ? (
-          <Button onClick={() => publishCalendarItem(calendar.id, entry.id)}>{calendar.publishMode === "published" ? "Publish now" : "Save draft now"}</Button>
+          <Button size="sm" onClick={() => publishCalendarItem(calendar.id, entry.id)}>{calendar.publishMode === "published" ? "Publish now" : "Save draft now"}</Button>
         ) : null}
         {entry.runId ? (
-          <Link to="/runs/$id" params={{ id: entry.runId }} className="inline-flex min-h-11 items-center text-sm text-brass">
+          <Link to="/runs/$id" params={{ id: entry.runId }} className="text-[12px] font-medium text-fg underline decoration-line-strong underline-offset-4 transition-colors duration-150 hover:decoration-brass">
             Open run
           </Link>
         ) : null}
         {entry.articleId ? (
-          <Link to="/articles/$id" params={{ id: entry.articleId }} className="inline-flex min-h-11 items-center text-sm text-brass">
+          <Link to="/articles/$id" params={{ id: entry.articleId }} className="text-[12px] font-medium text-fg underline decoration-line-strong underline-offset-4 transition-colors duration-150 hover:decoration-brass">
             Article
           </Link>
         ) : null}
         {entry.status === "SCHEDULED" ? (
-          <Button variant="ghost" onClick={() => patchCalendarItem(calendar.id, entry.id, { status: "SKIPPED" })}>
+          <Button variant="ghost" size="sm" onClick={() => patchCalendarItem(calendar.id, entry.id, { status: "SKIPPED" })}>
             Skip
           </Button>
         ) : null}
         {entry.status === "SKIPPED" ? (
-          <Button variant="ghost" onClick={() => patchCalendarItem(calendar.id, entry.id, { status: "SCHEDULED" })}>
+          <Button variant="ghost" size="sm" onClick={() => patchCalendarItem(calendar.id, entry.id, { status: "SCHEDULED" })}>
             Restore
           </Button>
         ) : null}
         {canEdit ? (
           <>
-            <Button variant="ghost" onClick={() => setEditing(!editing)}>
+            <Button variant="ghost" size="sm" onClick={() => setEditing(!editing)}>
               Reschedule
             </Button>
-            <Button variant="danger" onClick={() => removeCalendarItem(calendar.id, entry.id)}>
+            <Button variant="danger" size="sm" onClick={() => removeCalendarItem(calendar.id, entry.id)}>
               Delete
             </Button>
           </>
         ) : null}
       </div>
       {editing ? (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
           <input className={fieldClass} value={when} onChange={(e) => setWhen(e.target.value)} placeholder="YYYY-MM-DDTHH:MM" aria-label="New local time" />
           <Button
             onClick={() => {
@@ -407,6 +448,21 @@ export function CalendarDetail({ id }: { id: string }) {
         eyebrow={calendar.timezone}
         title={calendar.name}
         lede={automationLabel(calendar) === "automation on" ? `${calendar.automation} The worker must be online.` : "Manual. Nothing writes or publishes until you use the buttons on an entry or turn a switch on."}
+        action={
+          <div className="segmented" aria-label="Calendar view">
+            {(["list", "month", "cluster"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={view === option}
+                className="capitalize"
+                onClick={() => setView(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        }
       />
       {workerPaused ? (
         <div className="mb-3">
@@ -414,19 +470,8 @@ export function CalendarDetail({ id }: { id: string }) {
         </div>
       ) : null}
       <Switches calendar={calendar} />
-       <div className="mb-5 flex flex-wrap items-center gap-3">
-         <div className="segmented" aria-label="Calendar view">{(["list", "month", "cluster"] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            aria-pressed={view === option}
-             className="capitalize"
-            onClick={() => setView(option)}
-          >
-            {option}
-          </button>
-         ))}</div>
-        <span className="text-xs text-faint">
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <span className="num text-[11px] text-faint">
           server heartbeat {worker.lastBeatAt ? relTime(worker.lastBeatAt) : "never"} · {worker.online ? "online" : "offline"}
         </span>
         {planOptions.length ? (
@@ -451,7 +496,7 @@ export function CalendarDetail({ id }: { id: string }) {
           {calendar.items.map((entry) => (
             <EntryCard key={entry.id} calendar={calendar} entry={entry} />
           ))}
-          {!calendar.items.length ? <p className="text-sm text-muted">No entries. Fill from a topic plan or create a new calendar.</p> : null}
+          {!calendar.items.length ? <NoteEmpty>No entries. Fill from a topic plan or create a new calendar.</NoteEmpty> : null}
         </div>
       ) : null}
       {view === "month" ? (
@@ -459,20 +504,23 @@ export function CalendarDetail({ id }: { id: string }) {
           {[...month.entries()].map(([label, items]) => (
             <MonthGrid key={label} label={label} items={items} timezone={calendar.timezone} />
           ))}
-          {!month.size ? <p className="text-sm text-muted">No entries scheduled.</p> : null}
+          {!month.size ? <NoteEmpty>No entries scheduled.</NoteEmpty> : null}
         </div>
       ) : null}
       {view === "cluster" ? (
         <div className="space-y-4">
           {[...clusters.entries()].map(([kind, items]) => (
-            <Card key={kind} className="p-4">
-              <div className="font-medium capitalize">
-                {kind} entries ({items.length})
+            <Card key={kind} className="overflow-hidden rounded-xl p-0">
+              <div className="flex items-center justify-between gap-2 border-b border-line px-5 py-3">
+                <span className="text-[13px] font-semibold capitalize text-fg">
+                  {kind} entries ({items.length})
+                </span>
               </div>
-              <ul className="mt-2 space-y-1 text-sm text-muted">
+              <ul className="divide-y divide-line">
                 {items.map((entry) => (
-                  <li key={entry.id}>
-                    {entry.title} · {relTime(entry.publishAt)} · {entry.status}
+                  <li key={entry.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 text-[12px] text-muted">
+                    <span className="min-w-0 truncate">{entry.title}</span>
+                    <span className="num shrink-0 text-[11px] text-faint">{relTime(entry.publishAt)} · {entry.status}</span>
                   </li>
                 ))}
               </ul>
@@ -508,12 +556,12 @@ function MonthGrid({ label, items, timezone }: { label: string; items: CalendarE
   while (cells.length % 7 !== 0) cells.push(null);
 
   return (
-    <section className="overflow-hidden rounded-lg border border-line bg-elev">
-      <header className="flex items-center justify-between border-b border-line bg-surface/40 px-3 py-2">
+    <section className="overflow-hidden rounded-xl border border-line bg-elev">
+      <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5">
         <h2 className="text-[13px] font-semibold text-fg">{label}</h2>
         <span className="num text-[11px] text-faint">{items.length} scheduled · {timezone}</span>
       </header>
-      <div className="grid grid-cols-7 border-b border-line text-[11px] uppercase tracking-[0.06em] text-faint">
+      <div className="grid grid-cols-7 border-b border-line text-[10px] uppercase tracking-[0.1em] text-faint">
         {WEEKDAYS.map((day) => (
           <div key={day} className="px-2 py-1.5 text-center">{day.slice(0, 1)}<span className="hidden sm:inline">{day.slice(1)}</span></div>
         ))}
@@ -525,7 +573,7 @@ function MonthGrid({ label, items, timezone }: { label: string; items: CalendarE
             <div
               key={`${label}-${index}`}
               className={`min-h-20 border-b border-r border-line/60 p-1.5 last:border-r-0 ${
-                day ? "bg-transparent" : "bg-surface/30"
+                day ? "bg-transparent" : "bg-surface/40"
               }`}
             >
               {day ? (
@@ -533,7 +581,7 @@ function MonthGrid({ label, items, timezone }: { label: string; items: CalendarE
                   <div className={`num text-[11px] ${entries.length ? "text-fg" : "text-faint"}`}>{day}</div>
                   <div className="mt-1 space-y-0.5">
                     {entries.slice(0, 2).map((entry) => (
-                      <div key={entry.id} className="flex items-center gap-1 truncate rounded-sm bg-surface px-1 py-0.5 text-[10px] text-muted" title={entry.title}>
+                      <div key={entry.id} className="flex items-center gap-1 truncate rounded-sm bg-surface-2 px-1 py-0.5 text-[10px] text-muted" title={entry.title}>
                         <span className={`size-1.5 shrink-0 rounded-full ${ENTRY_DOT[entry.status] ?? "bg-faint"}`} aria-hidden="true" />
                         <span className="truncate">{entry.title}</span>
                       </div>
@@ -551,7 +599,7 @@ function MonthGrid({ label, items, timezone }: { label: string; items: CalendarE
 }
 
 const ENTRY_DOT: Record<string, string> = {
-  SCHEDULED: "bg-accent",
+  SCHEDULED: "bg-brass",
   WRITING: "bg-warn",
   WRITTEN: "bg-ok",
   PUBLISHED: "bg-ok",

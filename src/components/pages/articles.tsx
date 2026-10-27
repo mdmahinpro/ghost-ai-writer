@@ -89,7 +89,7 @@ export function ArticlesPage() {
           placeholder="Search title, slug, keyword"
           aria-label="Filter articles"
         />
-        <div className="flex items-center gap-0.5 rounded-md border border-line bg-surface/60 p-0.5" role="tablist" aria-label="Status">
+        <div className="flex items-center gap-0.5 rounded-md border border-line bg-surface p-0.5" role="tablist" aria-label="Status">
           {([
             ["all", "All", articles.length],
             ["draft", "Draft", articles.filter((a) => a.status === "draft").length],
@@ -100,8 +100,8 @@ export function ArticlesPage() {
               role="tab"
               aria-selected={status === value}
               onClick={() => setStatus(value)}
-              className={`inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-[12px] transition-colors ${
-                status === value ? "bg-elev font-medium text-fg shadow-xs" : "text-muted hover:text-fg"
+              className={`inline-flex h-7 items-center gap-1.5 rounded-sm px-2.5 text-[12px] transition-colors duration-150 ${
+                status === value ? "bg-surface-2 font-medium text-fg shadow-xs" : "text-muted hover:text-fg"
               }`}
             >
               {label}
@@ -119,7 +119,7 @@ export function ArticlesPage() {
           <option value="llm">LLM</option>
           <option value="fallback">Fallback</option>
         </select>
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex items-center gap-2">
           <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
             <input
               type="checkbox"
@@ -162,8 +162,8 @@ export function ArticlesPage() {
       {!rows.length ? (
         <Empty title="No articles" body="Completed jobs land here with a Ghost ledger, downloaded photos, and internal links." />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-line bg-elev">
-          <div className="flex items-center gap-2.5 border-b border-line bg-surface/40 px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-faint">
+        <div className="overflow-hidden rounded-xl border border-line bg-elev">
+          <div className="flex items-center gap-2.5 border-b border-line bg-surface px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">
             <span aria-hidden="true" className="w-3.5 shrink-0" />
             <span className="hidden w-16 shrink-0 sm:inline">ID</span>
             <span className="min-w-0 flex-1">Title</span>
@@ -183,7 +183,7 @@ export function ArticlesPage() {
             .filter((group) => group.count > 0)
             .map((group) => (
               <section key={group.key}>
-                <header className="sticky top-14 z-10 flex h-8 items-center gap-2 border-b border-line-strong/50 bg-surface-2/60 px-2.5 backdrop-blur">
+                <header className="sticky top-14 z-10 flex h-9 items-center gap-2.5 border-b border-line bg-surface-2 px-4">
                   <input
                     type="checkbox"
                     aria-label={`Select the ${group.count} ${group.label.toLowerCase()} article(s)`}
@@ -202,7 +202,10 @@ export function ArticlesPage() {
                   <span className="num text-[11px] text-faint">{group.count}</span>
                 </header>
                 {group.rows.map((article) => (
-                  <div key={article.id} className="group flex items-center gap-2.5 border-b border-line/70 px-2.5 last:border-0 hover:bg-surface/70">
+                  <div
+                    key={article.id}
+                    className="group flex items-center gap-2.5 border-b border-line/70 px-4 transition-colors duration-150 last:border-0 hover:bg-surface-2/60"
+                  >
                     <input
                       type="checkbox"
                       aria-label={`Select ${article.title}`}
@@ -217,16 +220,16 @@ export function ArticlesPage() {
                     <Link
                       to="/articles/$id"
                       params={{ id: article.id }}
-                      className="min-w-0 flex-1 truncate py-2 text-[13px] font-medium text-fg hover:text-accent"
+                      className="min-w-0 flex-1 truncate py-2 text-[13px] font-medium text-fg underline-offset-4 hover:underline"
                       title={article.title}
                     >
                       {article.title}
                     </Link>
-                    <span className="hidden w-40 shrink-0 truncate text-[11px] text-faint lg:inline">/{article.slug}</span>
-                    <span className="hidden w-28 shrink-0 items-center justify-end gap-1 text-[11px] text-muted md:inline-flex" title="Outbound · inbound links">
+                    <span className="num hidden w-40 shrink-0 truncate text-[11px] text-faint lg:inline">/{article.slug}</span>
+                    <span className="num hidden w-28 shrink-0 items-center justify-end gap-1 text-[11px] text-muted md:inline-flex" title="Outbound · inbound links">
                       {article.links.length} out · {inboundCount(articles, article.slug)} in
                     </span>
-                    <span className="hidden w-14 shrink-0 text-right text-[11px] text-muted sm:inline" title="Selected images">
+                    <span className="num hidden w-14 shrink-0 text-right text-[11px] text-muted sm:inline" title="Selected images">
                       {article.images.filter((image) => image.selected).length} img
                     </span>
                     <span className="num hidden w-12 shrink-0 text-right text-[11px] text-muted sm:inline" title="Uniqueness">
@@ -247,7 +250,7 @@ export function ArticlesPage() {
                       )}
                       %
                     </span>
-                    <span className="w-16 shrink-0 text-right text-[11px] text-faint">{relTime(article.publishedAt)}</span>
+                    <span className="num w-16 shrink-0 text-right text-[11px] text-faint">{relTime(article.publishedAt)}</span>
                   </div>
                 ))}
               </section>
@@ -450,22 +453,22 @@ export function ArticleDetail({ id }: { id: string }) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-5">
-      <div className="space-y-4 lg:col-span-3">
+      <div className="min-w-0 space-y-4 lg:col-span-3">
         <PageIntro eyebrow={article.keyword} title={article.title} lede={article.excerpt} />
         <HumanizeBanner />
         {!article.humanized ? (
-          <Card className="p-4 text-sm leading-6 text-muted">
+          <Card className="rounded-xl p-4 text-[13px] leading-6 text-muted">
             {article.humanState === "running" || article.humanState === "pending"
               ? "Blader humanizer is auditing this draft for AI tells."
               : article.humanNote || HUMANIZER_MISSING}
           </Card>
         ) : (
-          <Card className="p-4 text-sm text-muted">{article.humanNote || "Blader humanizer pass is done."}</Card>
+          <Card className="rounded-xl p-4 text-[13px] leading-6 text-muted">{article.humanNote || "Blader humanizer pass is done."}</Card>
         )}
         {article.humanized && typeof article.humanizerScore === "number" ? (
-          <Card className="space-y-3 p-4">
+          <Card className="space-y-3 rounded-xl p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs uppercase tracking-widest text-faint">Blader humanizer</div>
+              <div className="eyebrow">Blader humanizer</div>
               <div className="flex gap-2">
                 <Badge tone={article.humanizerScore >= 90 ? "ok" : article.humanizerScore >= 70 ? "brass" : "danger"}>prose purity {article.humanizerScore}/100</Badge>
                 <Badge tone="muted">{article.humanizerPasses === 2 ? "audit + rewrite (2 passes)" : "deterministic pass"}</Badge>
@@ -473,19 +476,19 @@ export function ArticleDetail({ id }: { id: string }) {
             </div>
             {article.humanizerStripped?.length ? (
               <div>
-                <p className="text-xs text-faint">AI patterns stripped in Stage 3 revision:</p>
-                <ul className="mt-1 flex flex-wrap gap-1.5">
+                <p className="text-[11px] text-faint">AI patterns stripped in Stage 3 revision:</p>
+                <ul className="mt-1.5 flex flex-wrap gap-1.5">
                   {article.humanizerStripped.map((pattern, index) => (
-                    <li key={`${pattern}-${index}`} className="rounded border border-line px-2 py-0.5 font-mono text-xs text-muted">
+                    <li key={`${pattern}-${index}`} className="num rounded-sm border border-line bg-surface px-2 py-0.5 text-[11px] text-muted">
                       {pattern}
                     </li>
                   ))}
                 </ul>
               </div>
             ) : (
-              <p className="text-xs text-faint">No AI patterns remained after the pass.</p>
+              <p className="text-[11px] text-faint">No AI patterns remained after the pass.</p>
             )}
-            {article.humanizerNote ? <p className="text-xs text-faint">{article.humanizerNote}</p> : null}
+            {article.humanizerNote ? <p className="text-[11px] leading-5 text-faint">{article.humanizerNote}</p> : null}
           </Card>
         ) : null}
         <div className="flex flex-wrap gap-2">
@@ -496,9 +499,9 @@ export function ArticleDetail({ id }: { id: string }) {
           ))}
         </div>
         {!article.html.includes("<img") ? (
-          <Card className="p-4 text-sm text-muted">{article.imageState === "empty" ? "No Bing photo passed the size check for this draft." : "Matching a Bing photo for this draft…"}</Card>
+          <Card className="rounded-xl p-4 text-[13px] leading-6 text-muted">{article.imageState === "empty" ? "No Bing photo passed the size check for this draft." : "Matching a Bing photo for this draft…"}</Card>
         ) : null}
-        <Card className="p-5">
+        <Card className="rounded-xl p-5 sm:p-7">
           <article
               className="reading-prose mx-auto text-fg [&_a]:text-brass"
             onClick={(event) => {
@@ -508,7 +511,7 @@ export function ArticleDetail({ id }: { id: string }) {
             }}
             dangerouslySetInnerHTML={{ __html: stripVerify(article.html) }}
           />
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
             <Button variant="ghost" onClick={() => void copy("html")}>
               {copied === "html" ? "HTML copied" : "Copy HTML"}
             </Button>
@@ -604,12 +607,16 @@ export function ArticleDetail({ id }: { id: string }) {
                 Release the hold and publish
               </Button>
             ) : null}
-            <Link to="/preview/$slug" params={{ slug: article.slug }} className="inline-flex min-h-11 items-center text-sm text-brass">
+            <Link
+              to="/preview/$slug"
+              params={{ slug: article.slug }}
+              className="inline-flex min-h-10 items-center rounded-md px-1 text-[13px] font-medium text-muted underline-offset-4 transition-colors duration-150 hover:text-fg hover:underline"
+            >
               Preview static page
             </Link>
           </div>
           {note || article.humanNote || article.liveError || article.liveState === "running" || article.liveState === "pending" ? (
-            <p className="mt-3 text-sm text-muted">
+            <p className="mt-3 text-[13px] leading-6 text-muted">
               {article.liveState === "pending" || article.liveState === "running"
                 ? "Live model is writing this draft."
                 : note || article.liveError || article.humanNote}
@@ -617,15 +624,15 @@ export function ArticleDetail({ id }: { id: string }) {
           ) : null}
         </Card>
       </div>
-      <div className="space-y-4 lg:sticky lg:top-20 lg:col-span-2 lg:self-start">
-        <Card className="overflow-hidden p-0">
-          <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-            <h2 className="text-[13px] font-semibold text-fg">Properties</h2>
+      <div className="min-w-0 space-y-4 lg:sticky lg:top-20 lg:col-span-2 lg:self-start">
+        <Card className="overflow-hidden rounded-xl p-0">
+          <div className="flex items-center justify-between gap-3 border-b border-line bg-surface/60 px-4 py-3">
+            <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Properties</h2>
             <span className="num text-[11px] text-faint">{article.words} words</span>
           </div>
-          <dl className="divide-y divide-line/70">
+          <dl className="divide-y divide-line">
             {stats.map(([label, value]) => (
-              <div key={label} className="flex h-9 items-center justify-between gap-3 px-4">
+              <div key={label} className="flex items-center justify-between gap-3 px-4 py-2">
                 <dt className="text-[12px] text-muted">{label}</dt>
                 <dd className="num truncate text-[12px] text-fg">{value}</dd>
               </div>
@@ -633,54 +640,54 @@ export function ArticleDetail({ id }: { id: string }) {
           </dl>
         </Card>
         {author ? (
-          <Card className="p-4 text-sm">
-            <div className="text-xs uppercase tracking-widest text-faint">Author</div>
-            <div className="mt-2 flex items-start gap-3">
+          <Card className="rounded-xl p-4">
+            <div className="eyebrow">Author</div>
+            <div className="mt-2.5 flex items-start gap-3">
               <AuthorAvatar author={author} size={48} />
               <div className="min-w-0">
-                <Link to="/authors/$id" params={{ id: author.id }} className="block text-lg font-semibold tracking-tight">
+                <Link to="/authors/$id" params={{ id: author.id }} className="block truncate text-[15px] font-semibold tracking-[-0.01em] text-fg underline-offset-4 hover:underline">
                   {author.name}
                 </Link>
-                <p className="text-muted">
+                <p className="text-[12px] text-muted">
                   {author.role} · {author.city}, {author.region}, US
                 </p>
-                <p className="mt-1 text-xs text-faint">
+                <p className="num mt-1 text-[11px] text-faint">
                   {author.articleCount}/{author.maxArticles} articles · {author.ghostAuthorId ? `Ghost · ${author.ghostAuthorId}` : "local byline"}
                 </p>
               </div>
             </div>
-            <p className="mt-2 leading-6 text-muted">{author.shortBio}</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <p className="mt-3 text-[13px] leading-6 text-muted">{author.shortBio}</p>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
               {author.expertise.map((tag) => (
-                <span key={tag} className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
+                <span key={tag} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
                   {tag}
                 </span>
               ))}
             </div>
           </Card>
         ) : null}
-        <Card className="p-4 text-sm">
-          <h2 className="text-lg font-semibold tracking-tight">Bing checklist</h2>
-          <ul className="mt-3 space-y-2">
+        <Card className="rounded-xl p-4">
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Bing checklist</h2>
+          <ul className="mt-2 divide-y divide-line">
             {checks.map((check) => (
-              <li key={check.id}>
-                <div className="flex items-center justify-between gap-2">
-                  <span>{check.label}</span>
+              <li key={check.id} className="py-2.5 first:pt-0 last:pb-0">
+                <div className="flex items-center justify-between gap-2 text-[13px] text-fg">
+                  <span className="min-w-0">{check.label}</span>
                   {check.pass ? (
                     <Badge tone="ok">pass</Badge>
                   ) : (
-                    <span className="flex items-center gap-2">
+                    <span className="flex shrink-0 items-center gap-2">
                       <Badge tone="danger">fix</Badge>
-                      <Button variant="ghost" className="min-h-8 px-2 text-xs" onClick={() => fixCheck(check.id)}>
+                      <Button variant="ghost" className="min-h-7 px-2 text-[12px]" onClick={() => fixCheck(check.id)}>
                         Fix
                       </Button>
                     </span>
                   )}
                 </div>
-                {!check.pass ? <p className="mt-1 text-xs leading-5 text-muted">{check.tip}</p> : null}
+                {!check.pass ? <p className="mt-1 text-[11px] leading-5 text-muted">{check.tip}</p> : null}
                 {check.id === "index" && !check.pass && !site?.publicUrl ? (
                   <input
-                    className={`${fieldClass} mt-2 text-xs`}
+                    className={`${fieldClass} mt-2 text-[12px]`}
                     value={publicUrl}
                     onChange={(event) => setPublicUrl(event.target.value)}
                     placeholder="https://your-site.com"
@@ -691,9 +698,9 @@ export function ArticleDetail({ id }: { id: string }) {
             ))}
           </ul>
         </Card>
-        <Card className="space-y-3 p-4">
+        <Card className="space-y-3 rounded-xl p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-display text-xl">Article text</h2>
+            <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Article text</h2>
             <div className="flex items-center gap-1.5">
               <Button variant="ghost" size="sm" onClick={exportMarkdown}>
                 Export .md
@@ -716,48 +723,48 @@ export function ArticleDetail({ id }: { id: string }) {
           </div>
           {editing ? (
             <textarea
-              className={`${fieldClass} h-96 w-full font-mono text-xs`}
+              className={`${fieldClass} h-96 w-full font-mono text-[12px]`}
               value={draftText}
               onChange={(event) => setDraftText(event.target.value)}
               aria-label="Article markdown"
               spellCheck={false}
             />
           ) : (
-            <p className="text-xs leading-5 text-muted">
+            <p className="text-[11px] leading-5 text-muted">
               {article.markdown.trim().split(/\s+/).length} words of stored markdown. Edit it here and the next build ships your
               text; export takes the file to Ghost's editor or anywhere else.
             </p>
           )}
         </Card>
-        <Card className="p-4 text-sm">
-          <h2 className="font-display text-xl">Ghost publish ledger</h2>
-          <p className="mt-2 text-muted">CONFIRMED · single-shot invariant. shots = {article.ledger.shots}</p>
-          <dl className="mt-3 space-y-1 text-xs">
+        <Card className="rounded-xl p-4">
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Ghost publish ledger</h2>
+          <p className="mt-2 text-[12px] leading-5 text-muted">CONFIRMED · single-shot invariant. shots = {article.ledger.shots}</p>
+          <dl className="num mt-3 space-y-1 text-[11px] leading-5 text-faint">
             <div>Mode {article.ledger.mode}</div>
             <div>Post {article.ledger.postId}</div>
             <div>Dispatched {new Date(article.ledger.dispatchedAt).toISOString()}</div>
             <div>Confirmed {new Date(article.ledger.confirmedAt).toISOString()}</div>
           </dl>
         </Card>
-        <Card className="p-4">
-          <h2 className="font-display text-xl">Internal links</h2>
-          <p className="mt-1 text-xs text-faint">{inboundCount(corpus, article.slug)} inbound · {article.links.length} outbound · /post/slug/</p>
-          <ul className="mt-2 space-y-2 text-sm">
+        <Card className="rounded-xl p-4">
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Internal links</h2>
+          <p className="num mt-1 text-[11px] text-faint">{inboundCount(corpus, article.slug)} inbound · {article.links.length} outbound · /post/slug/</p>
+          <ul className="mt-2 divide-y divide-line">
             {article.links.map((link) => (
-              <li key={link.targetSlug} className="flex items-center justify-between gap-2">
-                <span>
-                  {link.anchor}
-                  <span className="mt-0.5 block font-mono text-xs text-faint">/post/{link.targetSlug}/</span>
+              <li key={link.targetSlug} className="flex items-center justify-between gap-2 py-2">
+                <span className="min-w-0">
+                  <span className="block truncate text-[13px] text-fg">{link.anchor}</span>
+                  <span className="num mt-0.5 block truncate text-[11px] text-faint">/post/{link.targetSlug}/</span>
                 </span>
                 <Badge tone={statusTone(link.state)}>{link.state}</Badge>
               </li>
             ))}
-            {!article.links.length ? <li className="text-muted">No verified target in inventory yet.</li> : null}
+            {!article.links.length ? <li className="py-2 text-[13px] text-muted">No verified target in inventory yet.</li> : null}
           </ul>
         </Card>
-        <Card className="space-y-3 p-4">
+        <Card className="space-y-3 rounded-xl p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-display text-xl">Images</h2>
+            <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Images</h2>
             <Button
               variant="ghost"
               size="sm"
@@ -767,7 +774,7 @@ export function ArticleDetail({ id }: { id: string }) {
               {retrying.length > 1 ? "Fetching…" : "Fetch images again"}
             </Button>
           </div>
-          <p className="text-xs leading-5 text-muted">Every slot resolves a real, topic-matched Bing thumbnail URL (dynamic, zero disk). A downloaded copy is uploaded to Ghost only when Ghost is live; the exported static site keeps the Bing URL.</p>
+          <p className="text-[11px] leading-5 text-muted">Every slot resolves a real, topic-matched Bing thumbnail URL (dynamic, zero disk). A downloaded copy is uploaded to Ghost only when Ghost is live; the exported static site keeps the Bing URL.</p>
           {article.images.map((image, index) => (
             <div key={`${image.role}-${image.query}`}>
               <img
@@ -778,9 +785,9 @@ export function ArticleDetail({ id }: { id: string }) {
                 loading="lazy"
                 decoding="async"
                 referrerPolicy="no-referrer"
-                className="aspect-video w-full rounded-lg object-cover"
+                className="aspect-video w-full rounded-md border border-line object-cover"
               />
-              <div className="mt-1 flex items-center justify-between gap-2">
+              <div className="mt-2 flex items-center justify-between gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -789,21 +796,21 @@ export function ArticleDetail({ id }: { id: string }) {
                 >
                   {retrying.includes(index) ? "Fetching…" : "Retry this image"}
                 </Button>
-                <span className="text-xs text-faint">salt {retrySalt}</span>
+                <span className="num text-[11px] text-faint">salt {retrySalt}</span>
               </div>
-              <div className="mt-1 text-xs text-muted">
+              <div className="num mt-1 text-[11px] leading-5 text-muted">
                 {image.role} · {image.width || "…"}×{image.height || "…"} · c=7 · {image.selected ? "SELECTED" : "waiting"} · {image.license ?? "unknown-bing"}
               </div>
-              <div className="mt-1 break-all font-mono text-xs text-faint">
+              <div className="num mt-1 break-all text-[11px] leading-5 text-faint">
                 {articleImageSrc(image, article.keyword || article.title)}
               </div>
-              <div className="text-xs text-muted">{image.alt}</div>
+              <div className="mt-1 text-[11px] leading-5 text-muted">{image.alt}</div>
             </div>
           ))}
         </Card>
-        <Card className="p-4 text-sm">
-          <h2 className="font-display text-xl">Stage tokens</h2>
-          <ul className="mt-2 space-y-1 font-mono text-xs text-muted">
+        <Card className="rounded-xl p-4">
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Stage tokens</h2>
+          <ul className="num mt-2 space-y-1 text-[11px] leading-5 text-muted">
             {article.stageTokens.map((tokens, index) => (
               <li key={index}>
                 Stage {index + 1}: {tokens}
@@ -812,18 +819,18 @@ export function ArticleDetail({ id }: { id: string }) {
             ))}
           </ul>
         </Card>
-        <Card className="p-4 text-sm">
-          <h2 className="font-display text-xl">Revision notes</h2>
-          <p className="mt-2 leading-6 text-muted">{article.revisionNotes}</p>
-          <h3 className="mt-4 text-fg">Must-cover</h3>
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-muted">
+        <Card className="rounded-xl p-4">
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">Revision notes</h2>
+          <p className="mt-2 text-[13px] leading-6 text-muted">{article.revisionNotes}</p>
+          <h3 className="mt-4 text-[12px] font-semibold text-fg">Must-cover</h3>
+          <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[12px] leading-5 text-muted">
             {article.mustCover.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
-          <h3 className="mt-4 text-fg">Verify</h3>
-          <p className="mt-1 text-xs text-muted">Verify before publish</p>
-          <ul className="mt-2 space-y-1 text-brass-2">
+          <h3 className="mt-4 text-[12px] font-semibold text-fg">Verify</h3>
+          <p className="mt-1 text-[11px] text-muted">Verify before publish</p>
+          <ul className="mt-1.5 space-y-1 text-[12px] leading-5 text-brass-2">
             {article.verifyFlags.map((flag) => (
               <li key={flag}>{flag}</li>
             ))}
@@ -837,8 +844,8 @@ export function ArticleDetail({ id }: { id: string }) {
 function Stat({ k, v }: { k: string; v: string }) {
   return (
     <div>
-      <div className="text-xs uppercase tracking-widest text-faint">{k}</div>
-      <div className="font-display text-2xl">{v}</div>
+      <div className="eyebrow">{k}</div>
+      <div className="num mt-1 text-[15px] text-fg">{v}</div>
     </div>
   );
 }

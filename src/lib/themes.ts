@@ -23,11 +23,11 @@
 export type ThemeId = "midnight" | "paper";
 
 export const THEMES: { id: ThemeId; canvas: string; label: string }[] = [
-  { id: "midnight", canvas: "#0a0a0a", label: "Midnight" },
-  { id: "paper", canvas: "#ffffff", label: "Paper" },
+  { id: "midnight", canvas: "#07080B", label: "Midnight" },
+  { id: "paper", canvas: "#F5F7FA", label: "Paper" },
 ];
 
-export const DEFAULT_THEME: ThemeId = "paper";
+export const DEFAULT_THEME: ThemeId = "midnight";
 
 /** Every mode defines all of these, in both TS and CSS. */
 export const THEME_TOKEN_KEYS = [
@@ -55,42 +55,42 @@ export type ThemeTokens = Record<ThemeTokenKey, string>;
 
 export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
   midnight: {
-    bg: "#0a0a0a",
-    elev: "#111111",
-    surface: "#161616",
-    "surface-2": "#1f1f1f",
-    line: "#262626",
-    "line-strong": "#3a3a3a",
-    fg: "#f5f5f5",
-    muted: "#a3a3a3",
-    faint: "#7a7a7a",
-    brass: "#f5f5f5",
-    "brass-2": "#ffffff",
-    ink: "#0a0a0a",
-    ok: "#4ade80",
-    danger: "#f87171",
-    paper: "#0a0a0a",
-    "paper-ink": "#f5f5f5",
-    "paper-muted": "#a3a3a3",
+    bg: "#07080B",
+    elev: "#0D0F14",
+    surface: "#0B0D12",
+    "surface-2": "#141821",
+    line: "#232B38",
+    "line-strong": "#38424F",
+    fg: "#E9EDF5",
+    muted: "#9AA3B4",
+    faint: "#7B8698",
+    brass: "#34D399",
+    "brass-2": "#6EE7B7",
+    ink: "#07080B",
+    ok: "#10B981",
+    danger: "#F87171",
+    paper: "#0D0F14",
+    "paper-ink": "#E9EDF5",
+    "paper-muted": "#9AA3B4",
   },
   paper: {
-    bg: "#ffffff",
-    elev: "#f7f7f7",
-    surface: "#ffffff",
-    "surface-2": "#f7f7f7",
-    line: "#e5e5e5",
-    "line-strong": "#d4d4d4",
-    fg: "#1a1a1a",
-    muted: "#666666",
-    faint: "#6f6f6f",
-    brass: "#111111",
-    "brass-2": "#000000",
-    ink: "#ffffff",
-    ok: "#15803d",
-    danger: "#b91c1c",
-    paper: "#ffffff",
-    "paper-ink": "#1a1a1a",
-    "paper-muted": "#666666",
+    bg: "#F5F7FA",
+    elev: "#FFFFFF",
+    surface: "#FFFFFF",
+    "surface-2": "#F0F3F7",
+    line: "#E3E7EE",
+    "line-strong": "#CBD3DF",
+    fg: "#0B1220",
+    muted: "#4B5462",
+    faint: "#67707E",
+    brass: "#047857",
+    "brass-2": "#065F46",
+    ink: "#FFFFFF",
+    ok: "#047857",
+    danger: "#B91C1C",
+    paper: "#FFFFFF",
+    "paper-ink": "#0B1220",
+    "paper-muted": "#4B5462",
   },
 };
 
