@@ -23,8 +23,8 @@ export function ContentSettings() {
         lede="Account defaults and this website's overrides. Duplicate thresholds stay 0.85 lexical and 0.88 semantic. Keyword batching and job concurrency are yours to set."
       />
       <Card className="p-5">
-        <h2 className="font-display text-2xl text-fg">Theme</h2>
-        <p className="mt-2 text-sm text-muted">The studio, including the site preview, uses this palette. It stays after a reload.</p>
+        <h2 className="font-display text-2xl text-fg">Appearance</h2>
+        <p className="mt-2 text-sm text-muted">Two modes, one design: Midnight for long night sessions, Paper for bright rooms. The site preview follows the studio, and the choice stays after a reload.</p>
         <div className="mt-4">
           <ThemePicker variant="section" />
         </div>

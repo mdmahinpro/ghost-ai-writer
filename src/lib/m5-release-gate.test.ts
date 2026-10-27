@@ -123,8 +123,13 @@ async function drive(data: Persisted, predicate: (value: Persisted) => boolean, 
   return current;
 }
 
-test("Rule 7: all twelve themes define a complete, valid token set", () => {
-  assert.equal(THEMES.length, 12);
+test("Rule 7: both modes define a complete, valid token set", () => {
+  assert.equal(THEMES.length, 2, "exactly two modes: Midnight and Paper");
+  assert.deepEqual(
+    THEMES.map((theme) => theme.id),
+    ["midnight", "paper"],
+    "mode ids are stable — legacy keys map into them, never out",
+  );
   for (const theme of THEMES) {
     const tokens = THEME_TOKENS[theme.id];
     assert.ok(tokens, `${theme.id} has tokens`);
@@ -136,7 +141,7 @@ test("Rule 7: all twelve themes define a complete, valid token set", () => {
   }
 });
 
-test("Rule 7: themes pass contrast sanity for text, muted, faint, and accent pairs", () => {
+test("Rule 7: modes pass contrast sanity for text, muted, faint, and action pairs", () => {
   for (const theme of THEMES) {
     const tokens = THEME_TOKENS[theme.id];
     const body = contrastRatio(tokens.fg, tokens.bg);
@@ -147,9 +152,21 @@ test("Rule 7: themes pass contrast sanity for text, muted, faint, and accent pai
     assert.ok(body >= 7, `${theme.id} body text contrast ${body.toFixed(2)} must be ≥ 7`);
     assert.ok(muted >= 4.5, `${theme.id} muted contrast ${muted.toFixed(2)} must be ≥ 4.5`);
     assert.ok(faint >= 3, `${theme.id} faint contrast ${faint.toFixed(2)} must be ≥ 3`);
-    assert.ok(accent >= 3, `${theme.id} accent contrast ${accent.toFixed(2)} must be ≥ 3`);
-    assert.ok(ink >= 4.5, `${theme.id} ink-on-accent contrast ${ink.toFixed(2)} must be ≥ 4.5`);
+    assert.ok(accent >= 3, `${theme.id} action contrast ${accent.toFixed(2)} must be ≥ 3`);
+    assert.ok(ink >= 4.5, `${theme.id} ink-on-action contrast ${ink.toFixed(2)} must be ≥ 4.5`);
   }
+});
+
+test("Rule 7: the two modes are visually distinct (not the same palette twice)", () => {
+  const a = THEME_TOKENS.midnight;
+  const b = THEME_TOKENS.paper;
+  // Canvas must differ strongly — that is literally the toggle's job.
+  assert.ok(
+    Math.abs(contrastRatio(a.bg, b.bg)) > 1,
+    `midnight ${a.bg} and paper ${b.bg} must be different surfaces`,
+  );
+  assert.notEqual(a.fg, b.fg, "inverted text colours");
+  assert.notEqual(a.brass, b.brass, "the action green must re-tune per mode");
 });
 
 test("Rule 7: styles.css mirrors the TS token source exactly (no drift)", () => {

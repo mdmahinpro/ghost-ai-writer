@@ -87,7 +87,7 @@ export const PALETTE_ACTIONS = ACTIONS_SOURCE;
 
 export const useBeat = create<{ at: number }>(() => ({ at: 0 }));
 
-/** Palette matching that ignores punctuation and spacing (people type "rose", not "Theme · Rose"). */
+/** Mode matching that ignores punctuation and spacing (people type "midnight", not "Appearance · Midnight"). */
 function normQuery(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -191,10 +191,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     return rows.filter((row) => row.label.toLowerCase().includes(q));
   }, [query]);
 
-  /** Rule 7: theme switching straight from the palette (matching ignores punctuation). */
-  const themeCommands = useMemo(() => {
+  /** Rule 7: appearance switching straight from the palette — two modes, nothing else. */
+  const modeCommands = useMemo(() => {
     const q = normQuery(query);
-    return THEMES.filter((theme) => !q || normQuery(`theme ${theme.label}`).includes(q)).map((theme) => ({ ...theme, label: `Theme · ${theme.label}` }));
+    return THEMES.filter((theme) => !q || normQuery(`theme ${theme.label}`).includes(q) || normQuery(`mode ${theme.label}`).includes(q)).map((theme) => ({ ...theme, label: `Appearance · ${theme.label}` }));
   }, [query]);
 
   const results = useMemo(() => {
@@ -445,11 +445,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                   href={row.href === "__setup" ? undefined : row.href}
                 />
               ))}
-              {themeCommands.map((theme) => (
+              {modeCommands.map((theme) => (
                 <CommandRow
                   key={theme.id}
                   label={theme.label}
-                  hint="Theme"
+                  hint="Mode"
                   onPick={() => {
                     applyTheme(theme.id);
                     setPalette(false);

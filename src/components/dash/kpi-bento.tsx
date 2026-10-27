@@ -1,12 +1,10 @@
 /**
  * The four bento KPIs at the top of the desk.
  *
- * Each card carries one accent from the Mobbin references (coral = queued,
- * butter = drafting, pink = shipped, sky = health). The accent is applied with
- * `color-mix` against the theme's own surface token rather than a hardcoded
- * pastel, so the same card reads as a warm tint on Editorial and as a subtly
- * bordered tile on Telemetry — one implementation, correct in all eight themes,
- * no per-theme branching.
+ * Each card carries its own tint applied with `color-mix` against the
+ * mode's surface token rather than a hardcoded pastel, so the same card
+ * reads as a warm tint in Paper and a subtly bordered tile in Midnight —
+ * one implementation, both modes, no per-mode branching.
  */
 
 export type BentoCard = {

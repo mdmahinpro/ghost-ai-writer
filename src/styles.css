@@ -10,36 +10,40 @@
   --tracking-tight: -0.02em;
   --tracking-caption: 0.08em;
 
-  /* --- surfaces ------------------------------------------------------ */
-  --color-bg: #151817;
-  --color-elev: #1b1f1d;
-  --color-surface: #212623;
-  --color-surface-2: #282e2a;
-  --color-line: #2c332f;
-  --color-line-strong: #3e4742;
+  /*
+   * Base ramp: midnight (dark). The `html[data-theme="…"]` blocks below
+   * override the colour ramp per mode; radios, motion, and shell geometry
+   * live here and never change.
+   */
+  --color-bg: #0a0d0b;
+  --color-elev: #101411;
+  --color-surface: #141814;
+  --color-surface-2: #1c211c;
+  --color-line: #232a24;
+  --color-line-strong: #36413a;
 
   /* --- text ---------------------------------------------------------- */
-  --color-fg: #e5e7e2;
-  --color-muted: #a7aea7;
-  --color-faint: #8b938c;
+  --color-fg: #e8ede8;
+  --color-muted: #9ea99f;
+  --color-faint: #77837a;
   /* brass / brass-2 / ink are legacy aliases of accent / accent-hover / on-accent */
 
   /* --- accent (actions, links, live status) -------------------------- */
-  --color-accent: #78c0ab;
-  --color-accent-hover: #8fd3bf;
-  --color-on-accent: #08110d;
+  --color-accent: #62d3a5;
+  --color-accent-hover: #7fe0b8;
+  --color-on-accent: #08130d;
   /* legacy aliases: older screens reference brass / brass-2 / ink */
-  --color-brass: #78c0ab;
-  --color-brass-2: #8fd3bf;
-  --color-ink: #08110d;
+  --color-brass: #62d3a5;
+  --color-brass-2: #7fe0b8;
+  --color-ink: #08130d;
 
   /* --- semantic ------------------------------------------------------ */
-  --color-ok: #78c0ab;
-  --color-warn: #d8b183;
-  --color-danger: #e9948c;
-  --color-paper: #16161a;
-  --color-paper-ink: #f2efe8;
-  --color-paper-muted: #a8a49b;
+  --color-ok: #5ede9e;
+  --color-warn: #e0a55f;
+  --color-danger: #f98a8a;
+  --color-paper: #0a0d0b;
+  --color-paper-ink: #e8ede8;
+  --color-paper-muted: #9ea99f;
 
   /* --- radii, elevation, motion -------------------------------------- */
   --radius-sm: 0.25rem;
@@ -58,349 +62,69 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Base ramp: midnight (dark). Every theme below mirrors this structure so the
-   same contrast relationships hold in all six. */
+/*
+ * Midnight — the default mode. Flat near-black green canvas; cards sit one
+ * half-step lighter with a hairline border and no shadow. The pattern is the
+ * Supabase-grade console treatment: readable at 2 a.m., quiet by default.
+ */
 html[data-theme="midnight"] {
-  --color-bg: #09090b;
-  --color-elev: #111114;
-  --color-surface: #18181c;
-  --color-surface-2: #242429;
-  --color-line: #303036;
-  --color-line-strong: #474750;
-  --color-fg: #f4f4f5;
-  --color-muted: #b4b4bd;
-  --color-faint: #8c8c98;
-  --color-accent: #78c0ab;
-  --color-accent-hover: #8fd3bf;
-  --color-on-accent: #08110d;
-  --color-brass: #818cf8;
-  --color-brass-2: #c7d2fe;
-  --color-ink: #101020;
-  --color-ok: #3dcfb0;
-  --color-warn: #e0a86a;
-  --color-danger: #fb7185;
-  --color-paper: #f4f7fb;
-  --color-paper-ink: #0d1524;
-  --color-paper-muted: #52627a;
-  --shadow-xs: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-sm: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 10px 30px -10px rgb(0 0 0 / 0.85), 0 2px 8px rgb(0 0 0 / 0.5);
+  --color-bg: #0a0d0b;
+  --color-elev: #101411;
+  --color-surface: #141814;
+  --color-surface-2: #1c211c;
+  --color-line: #232a24;
+  --color-line-strong: #36413a;
+  --color-fg: #e8ede8;
+  --color-muted: #9ea99f;
+  --color-faint: #77837a;
+  --color-accent: #62d3a5;
+  --color-accent-hover: #7fe0b8;
+  --color-on-accent: #08130d;
+  --color-brass: #62d3a5;
+  --color-brass-2: #7fe0b8;
+  --color-ink: #08130d;
+  --color-ok: #5ede9e;
+  --color-warn: #e0a55f;
+  --color-danger: #f98a8a;
+  --color-paper: #0a0d0b;
+  --color-paper-ink: #e8ede8;
+  --color-paper-muted: #9ea99f;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.5);
   color-scheme: dark;
-}
-
-html[data-theme="paper"] {
-  --color-bg: #fafafa;
-  --color-elev: #ffffff;
-  --color-surface: #ffffff;
-  --color-surface-2: #f4f4f5;
-  --color-line: #e4e4e7;
-  --color-line-strong: #a1a1aa;
-  --color-fg: #18181b;
-  --color-muted: #52525b;
-  --color-faint: #71717a;
-  --color-accent: #2f6e62;
-  --color-accent-hover: #255a50;
-  --color-on-accent: #ffffff;
-  --color-brass: #4338ca;
-  --color-brass-2: #312e81;
-  --color-ink: #ffffff;
-  --color-ok: #0f8f72;
-  --color-warn: #a8621b;
-  --color-danger: #c4364e;
-  --color-paper: #ffffff;
-  --color-paper-ink: #0d1524;
-  --color-paper-muted: #52627a;
-  --shadow-xs: 0 1px 2px rgb(23 22 19 / 0.10), 0 1px 1px rgb(23 22 19 / 0.06);
-  --shadow-sm: 0 10px 28px -12px rgb(23 22 19 / 0.30), 0 2px 6px rgb(23 22 19 / 0.10);
-  color-scheme: light;
-}
-
-html[data-theme="forest"] {
-  --color-bg: #0c1410;
-  --color-elev: #121c16;
-  --color-surface: #17261c;
-  --color-surface-2: #203528;
-  --color-line: #2c4636;
-  --color-line-strong: #3d6450;
-  --color-fg: #e7f5ec;
-  --color-muted: #a3c4b0;
-  --color-faint: #7d9e8c;
-  --color-accent: #4ecf9a;
-  --color-accent-hover: #7ee3b8;
-  --color-on-accent: #06170f;
-  --color-brass: #3ecf8e;
-  --color-brass-2: #b7f0d2;
-  --color-ink: #052016;
-  --color-ok: #5ee0a0;
-  --color-warn: #e2b173;
-  --color-danger: #ff8b7a;
-  --color-paper: #f3faf5;
-  --color-paper-ink: #122117;
-  --color-paper-muted: #3f5c4c;
-  --shadow-xs: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-sm: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 10px 30px -10px rgb(0 0 0 / 0.85), 0 2px 8px rgb(0 0 0 / 0.5);
-  color-scheme: dark;
-}
-
-html[data-theme="rose"] {
-  --color-bg: #fbf4f6;
-  --color-elev: #ffffff;
-  --color-surface: #ffffff;
-  --color-surface-2: #f6e4ea;
-  --color-line: #ecd3dc;
-  --color-line-strong: #d7aebc;
-  --color-fg: #2a1219;
-  --color-muted: #6b3c4b;
-  --color-faint: #8a5566;
-  --color-accent: #a8324b;
-  --color-accent-hover: #88263b;
-  --color-on-accent: #ffffff;
-  --color-brass: #be3a5a;
-  --color-brass-2: #6e1e34;
-  --color-ink: #fff7f8;
-  --color-ok: #0f7a56;
-  --color-warn: #9c5a17;
-  --color-danger: #a61b32;
-  --color-paper: #fff8fa;
-  --color-paper-ink: #2a1219;
-  --color-paper-muted: #6d4554;
-  --shadow-xs: 0 1px 2px rgb(35 20 23 / 0.10), 0 1px 1px rgb(35 20 23 / 0.06);
-  --shadow-sm: 0 10px 28px -12px rgb(35 20 23 / 0.30), 0 2px 6px rgb(35 20 23 / 0.10);
-  color-scheme: light;
-}
-
-html[data-theme="sepia"] {
-  --color-bg: #f4efe4;
-  --color-elev: #fffaf3;
-  --color-surface: #fffaf3;
-  --color-surface-2: #efe4d2;
-  --color-line: #e0d0b8;
-  --color-line-strong: #c4ae8e;
-  --color-fg: #2a2118;
-  --color-muted: #5e4b38;
-  --color-faint: #74604c;
-  --color-accent: #7a4a1d;
-  --color-accent-hover: #5e3814;
-  --color-on-accent: #fffaf1;
-  --color-brass: #8a5424;
-  --color-brass-2: #5c3816;
-  --color-ink: #fff8ee;
-  --color-ok: #2f6b45;
-  --color-warn: #8a5216;
-  --color-danger: #9c2f2f;
-  --color-paper: #fbf6ee;
-  --color-paper-ink: #2a2118;
-  --color-paper-muted: #5e4e3c;
-  --shadow-xs: 0 1px 2px rgb(37 30 21 / 0.10), 0 1px 1px rgb(37 30 21 / 0.06);
-  --shadow-sm: 0 10px 28px -12px rgb(37 30 21 / 0.30), 0 2px 6px rgb(37 30 21 / 0.10);
-  color-scheme: light;
-}
-
-html[data-theme="ocean"] {
-  --color-bg: #06141c;
-  --color-elev: #0a1c28;
-  --color-surface: #0e2433;
-  --color-surface-2: #143246;
-  --color-line: #1e4660;
-  --color-line-strong: #2d6588;
-  --color-fg: #e7f4fb;
-  --color-muted: #9ec0d4;
-  --color-faint: #7d9eb3;
-  --color-accent: #59c2d8;
-  --color-accent-hover: #8adcee;
-  --color-on-accent: #04141d;
-  --color-brass: #2aa7c9;
-  --color-brass-2: #9be4f5;
-  --color-ink: #041018;
-  --color-ok: #3dcfb0;
-  --color-warn: #e3b273;
-  --color-danger: #ff8a9a;
-  --color-paper: #f3f9fc;
-  --color-paper-ink: #0c1c28;
-  --color-paper-muted: #3e5a6c;
-  --shadow-xs: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-sm: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 10px 30px -10px rgb(0 0 0 / 0.85), 0 2px 8px rgb(0 0 0 / 0.5);
-  color-scheme: dark;
-}
-
-html[data-theme="editorial"] {
-  --color-bg: #faf8f5;
-  --color-elev: #f7f4ee;
-  --color-surface: #ffffff;
-  --color-surface-2: #f3f0ea;
-  --color-line: #e8e6e3;
-  --color-line-strong: #d2d0cd;
-  --color-fg: #1c1b19;
-  --color-muted: #6e6a63;
-  --color-faint: #8a8478;
-  --color-brass: #8a4b2a;
-  --color-brass-2: #c98a63;
-  --color-ink: #faf8f5;
-  --color-ok: #15803d;
-  --color-danger: #b91c1c;
-  --color-paper: #ffffff;
-  --color-paper-ink: #1c1b19;
-  --color-paper-muted: #6e6a63;
-  --color-accent: #8a4b2a;
-  --color-accent-hover: #a55c33;
-  --color-on-accent: #faf8f5;
-  --color-warn: #b45309;
-  --shadow-xs: 0 1px 2px rgb(28 27 25 / 0.10), 0 1px 1px rgb(28 27 25 / 0.06);
-  --shadow-sm: 0 10px 28px -12px rgb(28 27 25 / 0.30), 0 2px 6px rgb(28 27 25 / 0.10);
-  color-scheme: light;
-}
-
-html[data-theme="telemetry"] {
-  --color-bg: #090a0c;
-  --color-elev: #1a1d23;
-  --color-surface: #121418;
-  --color-surface-2: #0d0e11;
-  --color-line: #1a1b1d;
-  --color-line-strong: #35363a;
-  --color-fg: #f3f4f6;
-  --color-muted: #9ca3af;
-  --color-faint: #6b7280;
-  --color-brass: #34d399;
-  --color-brass-2: #6ee7b7;
-  --color-ink: #06110c;
-  --color-ok: #34d399;
-  --color-danger: #f87171;
-  --color-paper: #f3f4f6;
-  --color-paper-ink: #090a0c;
-  --color-paper-muted: #6b7280;
-  --color-accent: #34d399;
-  --color-accent-hover: #6ee7b7;
-  --color-on-accent: #06110c;
-  --color-warn: #fbbf24;
-  --shadow-xs: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-sm: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 10px 30px -10px rgb(0 0 0 / 0.85), 0 2px 8px rgb(0 0 0 / 0.5);
-  color-scheme: dark;
-}
-
-html[data-theme="crimson"] {
-  --color-bg: #0b0709;
-  --color-elev: #14090e;
-  --color-surface: #1a0d13;
-  --color-surface-2: #220f17;
-  --color-line: #331722;
-  --color-line-strong: #4a2130;
-  --color-fg: #f9eff2;
-  --color-muted: #cbb0b8;
-  --color-faint: #9d828b;
-  --color-brass: #ff1e56;
-  --color-brass-2: #ff6f93;
-  --color-ink: #12050a;
-  --color-ok: #4ade80;
-  --color-danger: #f87171;
-  --color-paper: #f9eff2;
-  --color-paper-ink: #14090e;
-  --color-paper-muted: #6b5a60;
-  --color-accent: #ff1e56;
-  --color-accent-hover: #ff6f93;
-  --color-on-accent: #12050a;
-  --color-warn: #fbbf24;
-  --shadow-xs: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-sm: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 10px 30px -10px rgb(0 0 0 / 0.85), 0 2px 8px rgb(0 0 0 / 0.5);
-  color-scheme: dark;
-}
-
-html[data-theme="clay"] {
-  --color-bg: #fdf6f4;
-  --color-elev: #fbeeea;
-  --color-surface: #ffffff;
-  --color-surface-2: #f7e6e1;
-  --color-line: #eaddd8;
-  --color-line-strong: #d8c3bc;
-  --color-fg: #241715;
-  --color-muted: #6f5b56;
-  --color-faint: #8a736d;
-  --color-brass: #b3261e;
-  --color-brass-2: #d4534a;
-  --color-ink: #fdf6f4;
-  --color-ok: #15803d;
-  --color-danger: #b91c1c;
-  --color-paper: #ffffff;
-  --color-paper-ink: #241715;
-  --color-paper-muted: #6f5b56;
-  --color-accent: #b3261e;
-  --color-accent-hover: #d4534a;
-  --color-on-accent: #fdf6f4;
-  --color-warn: #b45309;
-  --shadow-xs: 0 1px 2px rgb(36 23 21 / 0.10), 0 1px 1px rgb(36 23 21 / 0.06);
-  --shadow-sm: 0 10px 28px -12px rgb(36 23 21 / 0.30), 0 2px 6px rgb(36 23 21 / 0.10);
-  color-scheme: light;
-}
-
-html[data-theme="graphite"] {
-  --color-bg: #010b17;
-  --color-elev: #1e2530;
-  --color-surface: #1e2530;
-  --color-surface-2: #0b274b;
-  --color-line: #2a3341;
-  --color-line-strong: #3a4757;
-  --color-fg: #ffffff;
-  --color-muted: #9aa7b8;
-  --color-faint: #7c8b9c;
-  --color-brass: #5b9dff;
-  --color-brass-2: #8dbcff;
-  --color-ink: #03101f;
-  --color-ok: #4ade80;
-  --color-danger: #f87171;
-  --color-paper: #f5f7fa;
-  --color-paper-ink: #0b1622;
-  --color-paper-muted: #4a5766;
-  --color-accent: #5b9dff;
-  --color-accent-hover: #8dbcff;
-  --color-on-accent: #03101f;
-  --color-warn: #fbbf24;
-  --shadow-xs: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-sm: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 10px 30px -10px rgb(0 0 0 / 0.85), 0 2px 8px rgb(0 0 0 / 0.5);
-  color-scheme: dark;
-}
-
-html[data-theme="daylight"] {
-  --color-bg: #f4f6fa;
-  --color-elev: #ffffff;
-  --color-surface: #ffffff;
-  --color-surface-2: #eef1f7;
-  --color-line: #e3e8f0;
-  --color-line-strong: #cbd4e1;
-  --color-fg: #0d1b2a;
-  --color-muted: #5a6b80;
-  --color-faint: #71808f;
-  --color-brass: #1f5fd0;
-  --color-brass-2: #3f7ae0;
-  --color-ink: #ffffff;
-  --color-ok: #15803d;
-  --color-danger: #b91c1c;
-  --color-paper: #ffffff;
-  --color-paper-ink: #0d1b2a;
-  --color-paper-muted: #5a6b80;
-  --color-accent: #1f5fd0;
-  --color-accent-hover: #3f7ae0;
-  --color-on-accent: #ffffff;
-  --color-warn: #b45309;
-  --shadow-xs: 0 1px 2px rgb(23 22 19 / 0.10), 0 1px 1px rgb(23 22 19 / 0.06);
-  --shadow-sm: 0 10px 28px -12px rgb(23 22 19 / 0.30), 0 2px 6px rgb(23 22 19 / 0.10);
-  color-scheme: light;
 }
 
 /*
- * Elevation.
- *
- * Every theme defined --shadow-xs and --shadow-sm, but nothing in the DOM ever
- * referenced them: the tokens were decorative and every card rendered flat, which
- * is exactly what the Posh reference does *not* do. Cards and badges now consume
- * their theme's own shadow, so dark themes get a deep cast and light themes get a
- * soft one without a single hardcoded colour here.
+ * Paper — the light mode. A tinted off-white canvas (never flat #fff) keeps
+ * white cards honest, and the hairline line carries all the structure. The
+ * accent inverts to a deep forest green so primary actions read the same
+ * weight in both modes.
  */
-@layer components {
-  [data-surface="card"] {
-    box-shadow: var(--shadow-sm);
-  }
-
-  [data-surface="badge"] {
-    box-shadow: var(--shadow-xs);
-  }
+html[data-theme="paper"] {
+  --color-bg: #f3f5f0;
+  --color-elev: #eef1ec;
+  --color-surface: #ffffff;
+  --color-surface-2: #f9faf8;
+  --color-line: #e2e7e0;
+  --color-line-strong: #cdd6cc;
+  --color-fg: #101511;
+  --color-muted: #545e56;
+  --color-faint: #5f6a5c;
+  --color-accent: #1a4d3a;
+  --color-accent-hover: #236349;
+  --color-on-accent: #f3f5f0;
+  --color-brass: #1a4d3a;
+  --color-brass-2: #236349;
+  --color-ink: #f3f5f0;
+  --color-ok: #1a7a4a;
+  --color-warn: #b45309;
+  --color-danger: #b91c1c;
+  --color-paper: #ffffff;
+  --color-paper-ink: #101511;
+  --color-paper-muted: #545e56;
+  --shadow-xs: 0 1px 2px rgb(16 21 17 / 0.05);
+  --shadow-sm: 0 4px 16px -8px rgb(16 21 17 / 0.12);
+  color-scheme: light;
 }
 
 @layer base {
@@ -417,7 +141,6 @@ html[data-theme="daylight"] {
   body {
     margin: 0;
     background-color: var(--color-bg);
-    background-image: none;
     color: var(--color-fg);
     font-family: var(--font-sans);
     font-size: 14px;
@@ -437,12 +160,25 @@ html[data-theme="daylight"] {
     border-radius: 6px;
   }
 
-  h1,
-  h2,
-  h3 {
-    font-family: var(--font-display);
+  h1 {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+  }
+
+  h2 {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  h3 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
   /* Rule 7: crisp tabular numerals for metrics, tokens, and counters. */
@@ -516,7 +252,7 @@ html[data-theme="daylight"] {
       background-color 160ms cubic-bezier(0.2, 0, 0, 1),
       border-color 160ms cubic-bezier(0.2, 0, 0, 1),
       color 160ms cubic-bezier(0.2, 0, 0, 1),
-      box-shadow 180ms cubic-bezier(0.2, 0, 0, 1),
+      border-color 160ms cubic-bezier(0.2, 0, 0, 1),
       transform 160ms cubic-bezier(0.2, 0, 0, 1),
       opacity 160ms cubic-bezier(0.2, 0, 0, 1);
   }
@@ -527,32 +263,29 @@ html[data-theme="daylight"] {
     transform: translateY(1px) scale(0.995);
   }
 
-  /* Editorial cards: flat white on tinted page, 1px hairline, tiny elevation.
-     No glow, no hover lift — the reference set keeps chrome quiet. */
+  /* Cards are flat: one half-step lighter than the canvas, a hairline border,
+     and no shadow at rest. Hover deepens the border only. */
   .card,
   [data-surface="card"] {
     border-color: var(--color-line);
-    box-shadow: var(--shadow-xs);
     transition:
-      border-color 160ms var(--ease-out),
-      box-shadow 160ms var(--ease-out);
+      border-color 160ms var(--ease-out);
   }
 
   .card:hover,
   [data-surface="card"]:hover {
     border-color: var(--color-line-strong);
-    box-shadow: var(--shadow-sm);
   }
 
   header[data-shell-header] {
-    position: relative;
-    border-bottom: 1px solid var(--color-line);
-    background: var(--color-bg);
+    position: sticky;
+    border-bottom: 0;
+    background: transparent;
   }
 
   /* --- type utilities ------------------------------------------------ */
-  /* Page titles follow the reference: sans, semibold, tight — not a serif voice.
-     The serif is reserved for quiet moments (.display-serif) and article prose. */
+  /* Page titles: sans, semibold, tight — the serif is reserved for
+     .display-serif moments and article prose. */
   .display {
     font-family: var(--font-sans);
     font-weight: 600;
@@ -745,7 +478,6 @@ html[data-theme="daylight"] {
 .segmented button[aria-pressed="true"] {
   color: var(--color-fg);
   background: var(--color-surface-2);
-  box-shadow: 0 1px 3px color-mix(in oklab, var(--color-bg) 40%, transparent);
 }
 
 .studio-mark {

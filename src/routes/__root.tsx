@@ -26,13 +26,13 @@ export const Route = createRootRoute({
   component: () => (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#09090b" />
+        <meta name="theme-color" content="#0a0d0b" />
         <meta name="apple-mobile-web-app-title" content="Ghost AI Writer" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <script
           dangerouslySetInnerHTML={{
             __html:
-              '(function(){try{var raw=localStorage.getItem("gaw-theme");var t=raw;if(t==="light")t="paper";if(t==="dark")t="midnight";if(!t)t="paper";var ok={midnight:1,paper:1,forest:1,rose:1,sepia:1,ocean:1};if(!ok[t])t="paper";if(raw!==t)localStorage.setItem("gaw-theme",t);var el=document.documentElement;el.setAttribute("data-theme",t);el.classList.remove("light");var c={midnight:"#151817",paper:"#f2f4f1",forest:"#0c1410",rose:"#fbf4f6",sepia:"#f4efe4",ocean:"#06141c"}[t];var m=document.querySelector(\'meta[name="theme-color"]\');if(m)m.setAttribute("content",c);}catch(e){}})();',
+              '(function(){try{var raw=localStorage.getItem("gaw-theme");var L=["light","paper","daylight","sepia","rose","clay","editorial"],D=["dark","midnight","forest","ocean","telemetry","crimson","graphite"];var t="midnight";if(raw&&L.indexOf(raw)>=0)t="paper";else if(raw&&(D.indexOf(raw)>=0||raw==="midnight"))t="midnight";var el=document.documentElement;el.setAttribute("data-theme",t);var c={midnight:"#0a0d0b",paper:"#f3f5f0"}[t];var m=document.querySelector(\'meta[name="theme-color"]\');if(m)m.setAttribute("content",c);}catch(e){}})();',
           }}
         />
         <HeadContent />

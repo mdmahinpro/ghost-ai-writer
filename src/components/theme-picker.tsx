@@ -1,93 +1,85 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { applyTheme, readStoredTheme, THEMES, type ThemeId } from "@/lib/themes";
+import { useEffect, useState } from "react";
+import { Check, Moon, Sun } from "lucide-react";
+import { applyTheme, readStoredTheme, type ThemeId } from "@/lib/themes";
 
-export function ThemePicker({ variant = "menu" }: { variant?: "menu" | "section" }) {
-  const [theme, setTheme] = useState<ThemeId>("paper");
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const id = readStoredTheme();
-    applyTheme(id);
-    setTheme(id);
-  }, []);
+/**
+ * Appearance: exactly two modes, surfaced in exactly two places — the pill
+ * in the header (Sun / Moon) and the section in Content settings. Midnight
+ * is for long night sessions, Paper for bright rooms; switching touches one
+ * attribute (`html[data-theme]`) and the whole app, site preview included,
+ * follows it. There is no third option, and there never will be again.
+ */
+export function ThemePicker({ variant = "header" }: { variant?: "header" | "section" }) {
+  const [mode, setMode] = useState<ThemeId>(readStoredTheme);
 
   useEffect(() => {
-    function sync() {
-      setTheme(readStoredTheme());
-    }
+    const sync = () => setMode(readStoredTheme());
     window.addEventListener("gaw-theme", sync);
     return () => window.removeEventListener("gaw-theme", sync);
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    function close(event: MouseEvent) {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
-
-  function choose(id: ThemeId) {
+  const set = (id: ThemeId) => {
     applyTheme(id);
-    setTheme(id);
-    setOpen(false);
-  }
+    setMode(id);
+  };
 
   if (variant === "section") {
     return (
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {THEMES.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => choose(item.id)}
-            aria-pressed={theme === item.id}
-            className={`flex min-h-11 items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm ${theme === item.id ? "border-brass bg-brass/10" : "border-line"}`}
-          >
-            <span className="flex shrink-0 -space-x-1">
-              <span className="size-5 rounded-full border border-line" style={{ background: item.canvas }} />
-              <span className="size-5 rounded-full border border-line" style={{ background: item.accent }} />
-            </span>
-            <span>{item.label}</span>
-          </button>
-        ))}
+      <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Appearance mode">
+        <ModeCard id="midnight" label="Midnight" hint="Near-black green canvas. For long night sessions." active={mode === "midnight"} onSelect={() => set("midnight")} />
+        <ModeCard id="paper" label="Paper" hint="Tinted off-white canvas. For bright rooms." active={mode === "paper"} onSelect={() => set("paper")} />
       </div>
     );
   }
 
-  const current = THEMES.find((item) => item.id === theme) ?? THEMES[0];
   return (
-    <div className="relative" ref={root}>
-      <button
-        type="button"
-        className="grid size-11 place-items-center rounded-lg border border-line"
-        aria-label="Theme"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="size-4 rounded-full border border-line" style={{ background: current.accent }} />
+    <div className="segmented" role="group" aria-label="Appearance mode">
+      <button type="button" aria-pressed={mode === "paper"} title="Paper — light mode" onClick={() => set("paper")}>
+        <Sun className="h-4 w-4" aria-hidden />
       </button>
-      {open ? (
-        <div className="absolute right-0 top-12 z-30 w-48 rounded-lg border border-line bg-elev p-1" role="listbox" aria-label="Themes">
-          {THEMES.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              role="option"
-              aria-selected={theme === item.id}
-              onClick={() => choose(item.id)}
-              className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${theme === item.id ? "bg-surface text-fg" : "text-muted"}`}
-            >
-              <span className="size-4 shrink-0 rounded-full border border-line" style={{ background: item.canvas }} />
-              <span className="size-2 shrink-0 rounded-full" style={{ background: item.accent }} />
-              {item.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <button type="button" aria-pressed={mode === "midnight"} title="Midnight — dark mode" onClick={() => set("midnight")}>
+        <Moon className="h-4 w-4" aria-hidden />
+      </button>
     </div>
+  );
+}
+
+function ModeCard({
+  id,
+  label,
+  hint,
+  active,
+  onSelect,
+}: {
+  id: ThemeId;
+  label: string;
+  hint: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onSelect}
+      data-surface="card"
+      className={`flex items-start gap-3 rounded-lg border p-4 text-left ${
+        active ? "border-accent bg-accent/8" : "border-line hover:border-line-strong"
+      }`}
+    >
+      <span className={`mt-0.5 grid h-9 w-9 flex-none place-items-center rounded-md border ${active ? "border-accent/40 bg-accent/15 text-accent" : "border-line text-faint"}`}>
+        {id === "midnight" ? <Moon className="h-4 w-4" aria-hidden /> : <Sun className="h-4 w-4" aria-hidden />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium text-fg">{label}</span>
+        <span className="mt-0.5 block text-[13px] text-muted">{hint}</span>
+      </span>
+      {active && (
+        <span className="mt-0.5 text-accent" aria-hidden>
+          <Check className="h-4 w-4" />
+        </span>
+      )}
+    </button>
   );
 }
