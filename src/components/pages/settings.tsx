@@ -4,7 +4,6 @@ import { ChevronRight, Database } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { BLADER_SOURCE, BLADER_VERSION } from "@/lib/humanizer";
 import { Badge, Button, PageIntro, fieldClass } from "@/components/ui";
-import { ThemePicker } from "@/components/theme-picker";
 import type { VoiceSettings } from "@/lib/types";
 
 function SettingRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -47,15 +46,6 @@ export function ContentSettings() {
         title="Content"
         lede="Account defaults and this website's overrides. Duplicate thresholds stay 0.85 lexical and 0.88 semantic. Keyword batching and job concurrency are yours to set."
       />
-      <section className="overflow-hidden rounded-xl border border-line bg-elev">
-        <SectionHead
-          title="Appearance"
-          hint="Two modes, one design: Midnight for long night sessions, Paper for bright rooms. The site preview follows the studio, and the choice stays after a reload."
-        />
-        <div className="px-5 py-5">
-          <ThemePicker variant="section" />
-        </div>
-      </section>
       <section className="overflow-hidden rounded-xl border border-line bg-elev">
         <SectionHead
           title="Scale &amp; limits"

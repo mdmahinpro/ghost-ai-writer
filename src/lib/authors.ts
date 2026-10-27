@@ -10,7 +10,7 @@
 import type { AuthorProfile, AuthorVoice, Persisted, Site } from "./types.ts";
 import { DEFAULT_AUTHOR_CAP } from "./types.ts";
 import { hashStr, uid } from "./utils.ts";
-import { avatarSourceUrl, avatarToken, isOurAvatarUrl } from "./avatar.ts";
+import { isOurAvatarUrl, portraitLibraryUrl } from "./avatar.ts";
 
 const FIRST = [
   "Elena", "Marcus", "Priya", "Jordan", "Caleb", "Naomi", "Andre", "Hannah", "Luis", "Claire",
@@ -163,7 +163,7 @@ const UNIVERSITIES: [string, string, string][] = [
   ["Stanford University", "Stanford", "CA"],
 ];
 
-const PHD_YEARS = ["2nd", "3rd", "3rd", "4th", "5th"];
+export const PHD_YEARS = ["2nd", "3rd", "3rd", "4th", "5th"];
 
 const ACADEMIC_CUES = [
   "phd", "ph.d", "doctoral", "doctorate", "grad school", "graduate school", "graduate student",
@@ -358,8 +358,8 @@ export function voiceFor(siteId: string, stem: string, pov?: AuthorVoice["pov"])
  * The upstream host renders a brand-new face per request. That means the token
  * is not what selects the face; it guarantees a unique, stable URL per author.
  */
-export function avatarUrlFor(seed: string): string {
-  return avatarSourceUrl(avatarToken(seed));
+export function avatarUrlFor(seed: string, name = ""): string {
+  return portraitLibraryUrl(seed, name);
 }
 
 export function generateAuthorForTopic(topic: string, siteId: string, options: { niche?: string } = {}): AuthorProfile {
@@ -393,7 +393,7 @@ export function generateAuthorForTopic(topic: string, siteId: string, options: {
     expertise,
     topic: stem,
     slug: slugify(`${first}-${last}-${stem}`),
-    avatarUrl: avatarUrlFor(`${siteId}:${stem}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`),
+    avatarUrl: avatarUrlFor(`${siteId}:${stem}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, `${first} ${last}`),
     voice: voiceFor(siteId, stem, pov),
     articleCount: 0,
     maxArticles: DEFAULT_AUTHOR_CAP,
@@ -524,9 +524,11 @@ export function normalizeAuthorProfile(raw: AuthorProfile | Partial<AuthorProfil
     expertise: Array.isArray(raw.expertise) && raw.expertise.length ? raw.expertise : [label(topic)],
     topic,
     slug: raw.slug ?? slugify(raw.name ?? "author"),
-    // Migrate every app-managed portrait (the retired resize-CDN form included)
-    // to the current direct thispersondoesnotexist.com URL; keep third-party URLs.
-    avatarUrl: raw.avatarUrl && !isOurAvatarUrl(raw.avatarUrl) ? raw.avatarUrl : avatarUrlFor(raw.id ?? raw.name ?? uid("author")),
+    // Migrate every app-managed portrait — the retired generator and resize-CDN
+    // forms included — to a stable library portrait; keep third-party URLs.
+    // The old generator ignored its query and answered with a new face per
+    // request, so authors sharing a cache ended up sharing a face.
+    avatarUrl: raw.avatarUrl && !isOurAvatarUrl(raw.avatarUrl) ? raw.avatarUrl : avatarUrlFor(raw.id ?? raw.name ?? uid("author"), raw.name ?? ""),
     voice: raw.voice ?? voiceFor(raw.siteId ?? "studio", topic, persona.experiential ? "first-person" : undefined),
     articleCount: raw.articleCount ?? articleCounts?.get(raw.id ?? "") ?? 0,
     maxArticles: raw.maxArticles ?? DEFAULT_AUTHOR_CAP,

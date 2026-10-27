@@ -49,6 +49,82 @@ export function avatarToken(seed: string): string {
   ).slice(0, 20);
 }
 
+/**
+ * The portrait library: stable files, one face per index, no query strings.
+ *
+ * The old face generator answers with a new stranger on every request and
+ * ignores its own query string, so it could never guarantee two authors differ
+ * — and every cache in the path (starting with wsrv) collapsed them into one
+ * shared face. These URLs are the opposite: index N is always the same face,
+ * so a portrait is distinct per author and identical across rebuilds.
+ */
+export const AVATAR_LIBRARY = "https://randomuser.me/api/portraits";
+
+/** First names the generator draws from that read as women's names. */
+const FEMALE_FIRST = new Set([
+  "Elena", "Priya", "Naomi", "Hannah", "Claire", "Maya", "Sophie", "Amelia", "Grace", "Fiona",
+  "Rebecca", "Lauren", "Vanessa", "Iris", "Camille", "Dana", "Leah", "Paige", "Alice", "Tessa",
+  "Jenna", "Noelle", "Rosa", "Brianna",
+]);
+
+/**
+ * A stable portrait URL for one author. The index comes from the author's own
+ * seed, so it never changes; the name only picks the library, so a woman's name
+ * does not get a man's photograph. Without a name the seed itself decides.
+ */
+export function portraitLibraryUrl(seed: string, name = ""): string {
+  const first = name.trim().split(/\s+/)[0] ?? "";
+  const bucket = first
+    ? FEMALE_FIRST.has(first)
+      ? "women"
+      : "men"
+    : hashStr(`bucket:${seed}`) % 2 === 0
+      ? "women"
+      : "men";
+  const index = 1 + (hashStr(`portrait:${seed}`) % 99);
+  return `${AVATAR_LIBRARY}/${bucket}/${index}.jpg`;
+}
+
+/**
+ * Give every author in a roster a portrait no one else has.
+ *
+ * A library index is 100 wide, so a hash alone will eventually hand two authors
+ * the same face (a 12-author roster collides about half the time). This walks
+ * the roster, keeps the first claim on a face, and probes forward to the next
+ * free index for anyone who lost the draw — deterministic, and stable once the
+ * author's URL is written back.
+ */
+export function dedupePortraits(
+  authors: ReadonlyArray<{ id: string; name: string; avatarUrl?: string }>,
+): Array<{ id: string; avatarUrl: string }> {
+  const used = new Set<string>();
+  const patches: Array<{ id: string; avatarUrl: string }> = [];
+  for (const author of authors) {
+    const current = String(author.avatarUrl ?? "");
+    const isLibrary = current.startsWith(AVATAR_LIBRARY);
+    if (!isLibrary) {
+      if (current) used.add(current);
+      continue;
+    }
+    if (!used.has(current)) {
+      used.add(current);
+      continue;
+    }
+    const [, bucket, rest] = /(men|women)\/(\d+)\.jpg$/.exec(current) ?? [];
+    const start = rest ? Number(rest) : 0;
+    let next = "";
+    for (let step = 1; step <= 99 && !next; step += 1) {
+      const candidate = `${AVATAR_LIBRARY}/${bucket}/${((start + step) % 99) + 1}.jpg`;
+      if (!used.has(candidate)) next = candidate;
+    }
+    if (next) {
+      used.add(next);
+      patches.push({ id: author.id, avatarUrl: next });
+    }
+  }
+  return patches;
+}
+
 function hashStr(input: string): number {
   let h = 2166136261;
   for (let index = 0; index < input.length; index++) {
@@ -99,35 +175,35 @@ export function portraitSrc(
   const url = String(author.avatarUrl ?? "").trim();
   if (!url) return "";
   if (isStoredPortrait(url)) return url;
+  // Library portraits are already small, stable files — proxying them gains
+  // nothing and a resize cache is exactly what merged the old faces.
+  if (url.startsWith(AVATAR_LIBRARY)) return url;
   const seed = avatarSeed(url);
-  if (seed && url.includes("random-person.jpeg")) return avatarCdnUrl(seed, size);
+  // Legacy generator URLs still resolve through the resize CDN: the host
+  // ignores its query when caching, so hotlinking it directly shares one face
+  // between authors. Boot-time repair rewrites these to library portraits.
+  if (seed && /thispersondoesnotexist\.com/i.test(url)) return avatarCdnUrl(seed, size);
   return url;
-}
-
-/** A token the CDN has never seen, so the generator answers with a new face. */
-export function freshPortraitToken(seed: string): string {
-  const noise = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-  return avatarToken(`${seed}:${noise}`);
 }
 
 /**
  * Capture one portrait for a new author and return it as a small self-contained
  * data URI.
  *
- * The generator has no stable URL of its own — every fetch is a new random
- * face — so the face is taken once here and stored on the profile. Every later
- * article by that author reuses the same picture, which is the only way two
- * authors can be told apart on a page. Returns null when there is no browser
- * (tests, server-side render) or the CDN/CORS request fails, so the caller can
- * keep whatever URL it already had.
+ * The library answers with the same face for the same index every time, so a
+ * capture is reproducible rather than a roll of the dice. Storing it keeps the
+ * published page free of third-party requests. Returns null when there is no
+ * browser (tests, server-side render) or the CORS request fails, so the caller
+ * can keep whatever URL it already had.
  */
 export async function capturePortrait(
   seed: string,
+  name = "",
   size = AVATAR_SIZE,
   quality = 0.82,
 ): Promise<string | null> {
   if (typeof document === "undefined" || typeof Image === "undefined") return null;
-  const url = avatarCdnUrl(freshPortraitToken(seed), size);
+  const url = portraitLibraryUrl(seed, name);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();

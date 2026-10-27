@@ -15,9 +15,9 @@ import {
   voiceFor,
 } from "./authors.ts";
 import { articleJsonLd, avatarImgHtml, staticFiles } from "./static-site.ts";
-import { avatarSeed, capturePortrait, freshPortraitToken, portraitSrc } from "./avatar.ts";
+import { avatarSeed, capturePortrait, dedupePortraits, portraitSrc } from "./avatar.ts";
 
-const AVATAR_HOST = "https://thispersondoesnotexist.com/random-person.jpeg?r=";
+const AVATAR_PATTERN = /^https:\/\/randomuser\.me\/api\/portraits\/(?:men|women)\/\d+\.jpg$/;
 
 function site(id = "s1", niche = "research craft"): Site {
   return {
@@ -92,28 +92,39 @@ function dataFixture(authors: AuthorProfile[] = []): Pick<Persisted, "authors" |
   return { authors, activity: [], articles: [] };
 }
 
-test("Rule 2: generated personas are US-based with realistic names and unique zero-disk avatar URLs", () => {
-  const seen = new Set<string>();
+test("Rule 2: generated personas are US-based with realistic names and portrait URLs", () => {
   for (let index = 0; index < 500; index++) {
     const author = generateAuthorForTopic(`niche ${index}`, "sX");
     assert.equal(author.country, "US");
     assert.ok(author.city.length > 1);
     assert.ok(author.region.length > 1, "US state present");
     assert.match(author.name, /^[A-Z][a-z]+ [A-Z][a-z]+$/);
-    assert.match(author.avatarUrl, /^https:\/\/thispersondoesnotexist\.com\/random-person\.jpeg\?r=[a-z0-9]+$/);
-    assert.ok(!seen.has(author.avatarUrl), "avatar seed must be unique per author");
-    seen.add(author.avatarUrl);
+    assert.match(author.avatarUrl, AVATAR_PATTERN);
     assert.equal(author.articleCount, 0);
     assert.equal(author.maxArticles, 250);
     assert.equal(author.status, "active");
   }
 });
 
+test("Rule 2: a roster never shows the same face twice", () => {
+  const roster = Array.from({ length: 12 }, (_, index) => generateAuthorForTopic(`topic ${index}`, "sX"));
+  // Hashing alone collides in a 100-wide library; the roster pass is what makes
+  // "a different portrait for each author" true rather than likely.
+  const fixed = roster.map((author) => ({ ...author }));
+  for (const patch of dedupePortraits(fixed)) {
+    const target = fixed.find((author) => author.id === patch.id)!;
+    target.avatarUrl = patch.avatarUrl;
+  }
+  const urls = new Set(fixed.map((author) => author.avatarUrl));
+  assert.equal(urls.size, fixed.length, `every author needs its own face: ${[...urls].join(", ")}`);
+  assert.ok(dedupePortraits(fixed).length === 0, "the repair must be idempotent");
+});
+
 test("Rule 2: avatarUrlFor is stable per seed and never a file path", () => {
   const first = avatarUrlFor("id-1");
   assert.equal(avatarUrlFor("id-1"), first);
-  assert.ok(first.startsWith(AVATAR_HOST));
-  assert.ok(!/\.(png|jpe?g|webp)$/i.test(first));
+  assert.match(first, AVATAR_PATTERN);
+  assert.equal(avatarUrlFor("id-1"), avatarUrlFor("id-1"), "a seed maps to one face forever");
 });
 
 test("Rule 2: matcher picks the existing under-cap expert for the niche", () => {
@@ -159,7 +170,7 @@ test("Rule 2: 251st article in a capped niche rotates to a brand-new US expert",
   assert.notEqual(result.author.id, "a1");
   assert.equal(result.author.articleCount, 0);
   assert.equal(result.author.country, "US");
-  assert.match(result.author.avatarUrl, /^https:\/\/thispersondoesnotexist\.com\/random-person\.jpeg\?r=/);
+  assert.match(result.author.avatarUrl, AVATAR_PATTERN);
 });
 
 test("Rule 2: voices are distinct across niches and feed readable blocks", () => {
@@ -299,26 +310,30 @@ test("Rule 2 persona: personaForTopic is deterministic per topic", () => {
   assert.equal(a.family, "academic");
 });
 
-test("a captured portrait is kept as-is, and a legacy generator URL is resized through the CDN", () => {
+test("a captured portrait is kept as-is and a library portrait is served directly", () => {
   const stored = `data:image/webp;base64,${"A".repeat(900)}`;
   assert.equal(portraitSrc({ id: "a1", avatarUrl: stored }, 128), stored);
 
-  const legacy = avatarUrlFor("avatar:s1:ellen");
-  assert.match(legacy, /random-person\.jpeg\?r=/);
+  const portrait = avatarUrlFor("avatar:s1:elena", "Elena Ripley");
+  assert.match(portrait, AVATAR_PATTERN);
+  assert.ok(portrait.includes("/women/"), "a woman's name must draw from the women's library");
+  // Stable files need no resize hop: the CDN is what collapsed the old faces.
+  assert.equal(portraitSrc({ id: "a1", avatarUrl: portrait }, 128), portrait);
+
+  const man = avatarUrlFor("avatar:s1:marcus", "Marcus Webb");
+  assert.ok(man.includes("/men/"), man);
+  assert.equal(avatarUrlFor("avatar:s1:marcus", "Marcus Webb"), man, "the same author keeps one face");
+  assert.notEqual(avatarUrlFor("avatar:s2:marcus", "Marcus Webb"), man, "two authors never share a face");
+});
+
+test("a legacy generator URL still resolves through the resize CDN", () => {
+  const legacy = "https://thispersondoesnotexist.com/random-person.jpeg?r=8x1433z7zn7f";
   const resized = portraitSrc({ id: "a1", avatarUrl: legacy }, 128);
   const token = avatarSeed(legacy);
   assert.ok(token, "the token must be readable back out of the URL");
   assert.ok(resized.includes("wsrv.nl"), resized);
   assert.ok(resized.includes(encodeURIComponent(token)), "the per-author token must survive the resize");
   assert.ok(resized.includes("w=128&h=128"), resized);
-  assert.ok(resized.includes("output=webp"), resized);
-});
-
-test("every capture asks the generator for a face the CDN has not seen", () => {
-  const first = freshPortraitToken("a1");
-  const second = freshPortraitToken("a1");
-  assert.notEqual(first, second, "two captures must never resolve to the same face");
-  assert.notEqual(freshPortraitToken("a1"), freshPortraitToken("a2"));
 });
 
 test("the static build ships the stored portrait instead of the 500 KB generator URL", () => {
@@ -327,9 +342,10 @@ test("the static build ships the stored portrait instead of the 500 KB generator
   assert.ok(captured.includes(stored), "the captured portrait must be embedded as-is");
   assert.ok(!captured.includes("thispersondoesnotexist.com"), captured);
 
-  const legacy = avatarImgHtml(author({ avatarUrl: avatarUrlFor("avatar:s1:ellen") }));
-  assert.ok(legacy.includes("wsrv.nl"), legacy);
-  assert.ok(!legacy.includes("random-person.jpeg?r="), "the raw generator URL must never reach a page");
+  const library = avatarImgHtml(author({ avatarUrl: avatarUrlFor("avatar:s1:elena", "Elena Ripley") }));
+  assert.ok(library.includes("randomuser.me/api/portraits"), library);
+  assert.ok(!library.includes("thispersondoesnotexist.com"), "the unstable generator must never reach a page");
+  assert.ok(!library.includes("wsrv.nl"), "a stable library file must not be re-cached through the CDN");
 });
 
 test("portrait capture returns null instead of throwing outside a browser", async () => {

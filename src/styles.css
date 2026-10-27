@@ -527,3 +527,40 @@ html[data-theme="paper"] {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/*
+ * The published website's own paper palette, scoped.
+ *
+ * The studio is dark-first, but a reader's page is not: the preview has to show
+ * the light site a visitor actually gets, in both studio modes, so these tokens
+ * are deliberately fixed rather than aliased to the theme. They mirror the
+ * :root block in lib/static-site.ts — change both together.
+ */
+.site-surface {
+  --sp-bg: #f7f3ea;
+  --sp-card: #fffdf8;
+  --sp-ink: #1b1813;
+  --sp-muted: #5b5449;
+  --sp-faint: #8a8171;
+  --sp-line: #e4dac6;
+  --sp-accent: #8a5a12;
+  color-scheme: light;
+  background: var(--sp-bg);
+  color: var(--sp-ink);
+  font-family: "Newsreader", Georgia, "Iowan Old Style", serif;
+  font-size: 19px;
+  line-height: 1.75;
+  font-optical-sizing: auto;
+}
+
+.site-surface a {
+  color: var(--sp-accent);
+}
+
+.site-ui {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+.site-surface .reading-prose p {
+  margin: 0 0 1.1em;
+}

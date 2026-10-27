@@ -225,9 +225,9 @@ test("Golden path: intake → US author (<250) → six stages → JSON-LD · ads
   assert.ok(job.authorId, "job carries an assigned author");
   const author = data.authors.find((item) => item.id === job.authorId)!;
   assert.equal(author.country, "US");
-  // Live reality: the host serves faces at /random-person.jpeg (the old /image
-  // path 404s), and the ?r= token keeps each author's URL distinct.
-  assert.match(author.avatarUrl, /^https:\/\/thispersondoesnotexist\.com\/random-person\.jpeg\?r=/);
+  // Portraits come from a stable library: index N is always the same face, so
+  // two authors never share one and a rebuild never reshuffles them.
+  assert.match(author.avatarUrl, /^https:\/\/randomuser\.me\/api\/portraits\/(?:men|women)\/\d+\.jpg$/);
   assert.equal(author.maxArticles, 250);
   // Drive the six stages to completion.
   data = await drive(data, (value) => value.jobs.find((item) => item.id === job.id)?.status === "completed");

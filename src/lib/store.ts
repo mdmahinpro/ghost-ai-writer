@@ -45,8 +45,8 @@ import { buildCalendar, migrateCalendar, pulseCalendars, publishCalendarItemNow,
 import { repairArticleSlugs } from "./slug-repair.ts";
 import { claimLease, heartbeat } from "./worker-api";
 import { embeddingProvider } from "./embed-key";
-import { attachAuthor, generateAuthorForTopic, normalizeAuthorProfile } from "./authors";
-import { avatarSeed, capturePortrait, isStoredPortrait } from "./avatar";
+import { PHD_YEARS, attachAuthor, avatarUrlFor, generateAuthorForTopic, normalizeAuthorProfile } from "./authors";
+import { avatarSeed, capturePortrait, dedupePortraits, isStoredPortrait } from "./avatar";
 import { parseIntentStage } from "./stage-contracts";
 import {
   newResearchProject,
@@ -254,6 +254,7 @@ export type AppState = Persisted & {
    * later article by that author reuses the same picture.
    */
   captureAuthorPortrait: (id: string) => Promise<void>;
+  captureMissingPortraits: () => Promise<void>;
   patchAuthor: (id: string, patch: Partial<AuthorProfile>) => void;
   logEvent: (siteId: string, tone: Activity["tone"], message: string) => void;
   acceptModelStage: (
@@ -1395,11 +1396,44 @@ auditNow: () => {
         // author from one article to the next.
         if (created[0]) void get().captureAuthorPortrait(created[0].id);
       },
+      /**
+       * Repair authors that predate portrait capture, or whose capture failed.
+       * The generator answers with a new stranger per request and ignores its
+       * query, so an uncaptured author does not merely look generic — every
+       * author that falls back shares one face with the others. Sequential on
+       * purpose: parallel captures race the CDN clock and can hand back the
+       * same cached face twice.
+       */
+      captureMissingPortraits: async () => {
+        for (const author of get().authors) {
+          if (/^undefined-Year/.test(author.role)) {
+            const year = PHD_YEARS[author.id.length % PHD_YEARS.length]!;
+            get().patchAuthor(author.id, { role: author.role.replace(/^undefined-Year/, `${year}-Year`) });
+          }
+          // Authors written by an older build point at a face generator that
+          // ignores its query and answers with a new stranger per request, so
+          // the whole roster shared one cached face. Rewrite those to this
+          // author's own stable library portrait before capturing.
+          const url = String(author.avatarUrl ?? "");
+          if (!url || /thispersondoesnotexist\.com|wsrv\.nl|images\.weserv\.nl/i.test(url)) {
+            get().patchAuthor(author.id, { avatarUrl: avatarUrlFor(author.id, author.name) });
+          }
+        }
+        // Two authors can hash to the same library index; the roster keeps the
+        // first claim and the others move to the next free face.
+        for (const patch of dedupePortraits(get().authors)) {
+          get().patchAuthor(patch.id, { avatarUrl: patch.avatarUrl });
+        }
+        for (const author of get().authors) {
+          if (isStoredPortrait(author.avatarUrl)) continue;
+          await get().captureAuthorPortrait(author.id);
+        }
+      },
       captureAuthorPortrait: async (id) => {
         const author = get().authors.find((candidate) => candidate.id === id);
         if (!author || isStoredPortrait(author.avatarUrl)) return;
         const seed = avatarSeed(author.avatarUrl) ?? `${author.id}:${author.name}`;
-        const captured = await capturePortrait(seed);
+        const captured = await capturePortrait(seed, author.name);
         if (!captured) return;
         set((s) => ({
           authors: s.authors.map((candidate) =>
@@ -2690,6 +2724,10 @@ function hydrateFromServer(): Promise<void> {
           /* fresh install */
         }
       }
+      // Authors created before portrait capture existed carry only a generator
+      // URL, which resolves to the same stranger for all of them. Repair once
+      // per boot; already-captured authors are skipped inside the action.
+      void useApp.getState().captureMissingPortraits();
     })();
   }
   return hydratingServer;

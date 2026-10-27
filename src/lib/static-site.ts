@@ -5,17 +5,57 @@ import { avatarUrlFor } from "./authors.ts";
 import { AD_CODE_LIMIT, AD_SLOT_IDS, defaultAdSlots, type AdSlotConfig, type AdSlotId, type Article, type AuthorProfile, type Site } from "./types.ts";
 import { esc } from "./utils.ts";
 
+/**
+ * The card's one caption: the article's own description, never the keyword.
+ * The keyword is title-shaped, so printing it above the title read as the same
+ * sentence twice — "post phd career transition…" over "From Academia to
+ * Industry R&D". The description says something the title does not, which is
+ * what a lede is for; a card with neither falls back to the title alone.
+ * Exported so the studio preview renders the identical caption.
+ */
+export function cardLedeText(article: {
+  title?: string;
+  keyword?: string;
+  metaDescription?: string;
+  excerpt?: string;
+}): string {
+  const text = (article.metaDescription || article.excerpt || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const norm = (value: string) => value.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  const lede = norm(text);
+  if (!lede) return "";
+  // Some generated articles store the keyword itself as the excerpt; printing
+  // that is the duplicate caption all over again, so a caption that only
+  // restates the keyword or the title is no caption at all. Generated ledes
+  // also tend to open with the keyword — "field notes after a failed
+  // experiment is the question this page answers" — which reads as the title
+  // twice, so an opening that echoes either one is dropped too.
+  if (article.keyword && lede === norm(article.keyword)) return "";
+  if (article.title && lede === norm(article.title)) return "";
+  for (const echo of [article.keyword, article.title]) {
+    const probe = echo ? norm(echo) : "";
+    if (probe && probe.length > 12 && lede.includes(probe)) return "";
+  }
+  return text.slice(0, 118);
+}
+
+function cardLede(article: { title?: string; keyword?: string; metaDescription?: string; excerpt?: string }): string {
+  const text = cardLedeText(article);
+  return text ? `<span class="lede">${esc(text)}</span>` : "";
+}
+
 function css(): string {
   return `
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap');
     :root { color-scheme: light; --bg: #f7f3ea; --card: #fffdf8; --ink: #1b1813; --muted: #5b5449; --faint: #8a8171; --line: #e4dac6; --accent: #8a5a12; }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
-    body { margin: 0; background: radial-gradient(1200px 620px at 50% -12%, #fffaf1, transparent 68%), var(--bg); color: var(--ink); font: 18px/1.7 Georgia, "Iowan Old Style", serif; -webkit-font-smoothing: antialiased; }
+    body { margin: 0; background: radial-gradient(1200px 620px at 50% -12%, #fffaf1, transparent 68%), var(--bg); color: var(--ink); font: 19px/1.75 "Newsreader", Georgia, "Iowan Old Style", serif; font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
     header, main, footer { width: min(1040px, calc(100% - 32px)); margin-inline: auto; }
     header { padding: 30px 0 14px; display: flex; justify-content: space-between; gap: 16px; align-items: baseline; border-bottom: 1px solid var(--line); }
     a { color: var(--accent); }
     a:hover { text-decoration-thickness: 2px; }
-    .mark { font-family: "Outfit", "Avenir Next", sans-serif; letter-spacing: 0.16em; text-transform: uppercase; font-size: 12px; text-decoration: none; }
+    .mark { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase; font-size: 12px; text-decoration: none; }
     h1 { font-weight: 500; font-size: clamp(30px, 4.6vw, 44px); line-height: 1.13; margin: 16px 0 10px; letter-spacing: -0.01em; }
     h2 { font-weight: 500; font-size: 26px; line-height: 1.2; margin: 34px 0 8px; }
     img { display: block; width: 100%; height: auto; border-radius: 12px; }
@@ -29,13 +69,13 @@ function css(): string {
     article.post figure.article-hero { margin: 6px 0 26px; border-radius: 16px; overflow: hidden; box-shadow: 0 16px 36px -26px rgba(34, 24, 6, 0.55); background: #eee4cf; }
     article.post figure.article-hero img { aspect-ratio: 16/9; object-fit: cover; width: 100%; height: auto; }
     .card strong { font-weight: 600; line-height: 1.3; }
-    .meta { font-family: "Outfit", "Avenir Next", sans-serif; font-size: 13px; letter-spacing: 0.04em; color: var(--muted); }
+    .meta { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 13px; letter-spacing: 0.04em; color: var(--muted); }
     main > h1 + p { color: var(--muted); max-width: 60ch; }
     footer { margin-top: 40px; padding: 28px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
     article.post { width: min(720px, 100%); }
     /* Article body: the full markdown-subset the generator can emit. */
     article.post p { margin: 0 0 18px; }
-    article.post h2, article.post h3, article.post h4 { font-family: "Outfit", "Avenir Next", sans-serif; line-height: 1.25; margin: 34px 0 10px; scroll-margin-top: 20px; }
+    article.post h2, article.post h3, article.post h4 { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; line-height: 1.25; margin: 34px 0 10px; scroll-margin-top: 20px; }
     article.post h2 { font-size: 26px; }
     article.post h3 { font-size: 21px; margin-top: 26px; }
     article.post h4 { font-size: 18px; margin-top: 22px; }
@@ -56,7 +96,7 @@ function css(): string {
     article.post table { width: 100%; border-collapse: collapse; font-size: 16px; margin: 20px 0; }
     article.post .table-scroll table { margin: 0; }
     article.post th, article.post td { border: 1px solid var(--line); padding: 9px 11px; text-align: left; vertical-align: top; }
-    article.post thead th { font-family: "Outfit", "Avenir Next", sans-serif; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; background: #efe6d2; }
+    article.post thead th { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; background: #efe6d2; }
     article.post tbody tr:nth-child(even) td { background: #faf5ea; }
     article.post blockquote { margin: 20px 0; padding: 12px 18px; border-left: 4px solid #d9cdb4; background: var(--card); border-radius: 0 12px 12px 0; color: var(--muted); font-style: italic; }
     article.post blockquote p:last-child { margin-bottom: 0; }
@@ -64,12 +104,12 @@ function css(): string {
     article.post code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; background: #efe6d2; border-radius: 4px; padding: 1px 5px; }
     article.post pre code { display: block; background: none; padding: 0; font-size: 14px; white-space: pre; }
     article.post figure.code-block { margin: 20px 0; }
-    article.post figure.code-block figcaption { font-family: "Outfit", "Avenir Next", sans-serif; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0 0 4px; }
+    article.post figure.code-block figcaption { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0 0 4px; }
     /* The card lede: real prose under the photo, never the keyword printed twice. */
-    .card .lede { display: block; margin: 7px 0 2px; font-family: "Outfit", "Avenir Next", sans-serif; font-size: 12.5px; line-height: 1.5; text-transform: none; letter-spacing: 0; color: var(--faint); }
+    .card .lede { display: block; margin: 7px 0 2px; font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 12.5px; line-height: 1.5; text-transform: none; letter-spacing: 0; color: var(--faint); }
     article.post figure.code-block pre { margin: 0; }
     article.post aside.callout { margin: 20px 0; padding: 13px 17px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
-    article.post aside.callout .callout-title { margin: 0 0 6px; font-family: "Outfit", "Avenir Next", sans-serif; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; }
+    article.post aside.callout .callout-title { margin: 0 0 6px; font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; }
     article.post aside.callout p:last-child { margin-bottom: 0; }
     article.post aside.callout-note, article.post aside.callout-important { border-left: 4px solid var(--accent); }
     article.post aside.callout-tip { border-left: 4px solid #2f6b3a; }
@@ -81,11 +121,11 @@ function css(): string {
     .byline { display: flex; gap: 14px; align-items: flex-start; margin: 20px 0 8px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); }
     .byline img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 8px 18px -12px rgba(34, 24, 6, 0.6); }
     .byline .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-    .byline .badges span { font-family: "Outfit", "Avenir Next", sans-serif; font-size: 11px; letter-spacing: 0.04em; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); background: var(--bg); }
+    .byline .badges span { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 11px; letter-spacing: 0.04em; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); background: var(--bg); }
     /* Rule 6 ad slots: empty slots collapse and cannot shift layout. */
     .ad-slot { margin: 20px 0; }
     .ad-slot:empty { display: none; margin: 0; }
-    .ad-slot-label { display: block; font-family: "Outfit", "Avenir Next", sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); border: 1px dashed #d9cdb4; border-radius: 10px; padding: 10px 12px; text-align: center; background: var(--card); }
+    .ad-slot-label { display: block; font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); border: 1px dashed #d9cdb4; border-radius: 10px; padding: 10px 12px; text-align: center; background: var(--card); }
     .ad-rail { display: none; }
     @media (min-width: 1200px) {
       .post-layout { display: grid; grid-template-columns: minmax(0, 720px) 300px; gap: 32px; align-items: start; }
@@ -264,7 +304,7 @@ export function authorNameBylineHtml(
   const meta = [beat, city].map((part) => part?.trim()).filter(Boolean).join(" · ");
   const avatar = avatarImgHtml({
     name: label,
-    avatarUrl: avatarUrlFor(`${slug}:${label}`),
+    avatarUrl: avatarUrlFor(`${slug}:${label}`, label),
   } as AuthorProfile);
   return `<div class="byline">
   ${avatar}
@@ -299,15 +339,6 @@ export function staticFiles(
   const slot = (id: AdSlotId) => adSlotHtml(site, id, preview);
   // home_feed: after the sixth card, only when the feed has at least seven posts.
   const feedAd = pages.length >= 7 ? slot("home_feed") : "";
-  // The card's caption. It used to be the raw keyword — "post phd career
-// transition from academia to industry r d" printed above "From Academia to
-// Industry R&D", the same words twice, the first one lowercase and unreadable.
-// The description says something the title does not, which is what a lede is
-// for; a card with neither falls back to the title alone.
-function cardLede(article: { metaDescription?: string; excerpt?: string }): string {
-  const text = (article.metaDescription || article.excerpt || "").replace(/\s+/g, " ").trim().slice(0, 118);
-  return text ? `<span class="lede">${esc(text)}</span>` : "";
-}
 
 const home = `<!doctype html>
 <html lang="en">
