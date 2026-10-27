@@ -393,13 +393,13 @@ export function DeliveryPage() {
               <div className="mt-3 flex flex-wrap gap-2">
                 {!deploy && build.status === "succeeded" ? (
                   <Button variant="ghost" disabled={packing} onClick={() => void uploadLive(build.id)}>
-                    {packing ? "Uploading…" : "Upload live (cPanel)"}
+                    {packing ? "Uploading… (also pushes to the CMS)" : "Upload live (cPanel + CMS)"}
                   </Button>
                 ) : null}
                 {build.status === "succeeded" ? (
                   <>
                     <Button variant="ghost" disabled={mirroring} onClick={() => void mirrorToCms()}>
-                      {mirroring ? "Mirroring…" : "Mirror articles to the CMS"}
+                      {mirroring ? "Syncing…" : "Re-sync an existing build"}
                     </Button>
                     {mirrorNote ? <span className="text-xs text-muted">{mirrorNote}</span> : null}
                   </>

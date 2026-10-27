@@ -1,9 +1,13 @@
 @import "tailwindcss";
 
 @theme {
-  /* --- type ---------------------------------------------------------- */
+  /* --- type ----------------------------------------------------------
+   * Midday pairs a serif display face with a neutral UI sans. "Instrument
+   * Serif" for headings, Inter for everything functional, JetBrains Mono for
+   * numbers so columns of figures line up.
+   */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
   --font-editorial: "Instrument Serif", Georgia, "Times New Roman", serif;
   --font-serif: Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -11,47 +15,49 @@
   --tracking-caption: 0.08em;
 
   /*
-   * Base ramp: midnight (dark). The `html[data-theme="…"]` blocks below
-   * override the colour ramp per mode; radios, motion, and shell geometry
-   * live here and never change.
+   * Base ramp: Paper (light) — the default. The `html[data-theme="…"]` blocks
+   * below override this per mode; radii, motion and shell geometry live here
+   * and never change.
    */
-  --color-bg: #0a0d0b;
-  --color-elev: #101411;
-  --color-surface: #141814;
-  --color-surface-2: #1c211c;
-  --color-line: #232a24;
-  --color-line-strong: #36413a;
+  --color-bg: #ffffff;
+  --color-elev: #f7f7f7;
+  --color-surface: #ffffff;
+  --color-surface-2: #f7f7f7;
+  --color-line: #e5e5e5;
+  --color-line-strong: #d4d4d4;
 
   /* --- text ---------------------------------------------------------- */
-  --color-fg: #e8ede8;
-  --color-muted: #9ea99f;
-  --color-faint: #77837a;
-  /* brass / brass-2 / ink are legacy aliases of accent / accent-hover / on-accent */
+  --color-fg: #1a1a1a;
+  --color-muted: #666666;
+  --color-faint: #6f6f6f;
 
-  /* --- accent (actions, links, live status) -------------------------- */
-  --color-accent: #62d3a5;
-  --color-accent-hover: #7fe0b8;
-  --color-on-accent: #08130d;
+  /* --- accent (black ink; inverts to white in midnight) --------------- */
+  --color-accent: #111111;
+  --color-accent-hover: #000000;
+  --color-on-accent: #ffffff;
   /* legacy aliases: older screens reference brass / brass-2 / ink */
-  --color-brass: #62d3a5;
-  --color-brass-2: #7fe0b8;
-  --color-ink: #08130d;
+  --color-brass: #111111;
+  --color-brass-2: #000000;
+  --color-ink: #ffffff;
 
   /* --- semantic ------------------------------------------------------ */
-  --color-ok: #5ede9e;
-  --color-warn: #e0a55f;
-  --color-danger: #f98a8a;
-  --color-paper: #0a0d0b;
-  --color-paper-ink: #e8ede8;
-  --color-paper-muted: #9ea99f;
+  --color-ok: #15803d;
+  --color-warn: #b45309;
+  --color-danger: #b91c1c;
+  --color-paper: #ffffff;
+  --color-paper-ink: #1a1a1a;
+  --color-paper-muted: #666666;
 
-  /* --- radii, elevation, motion -------------------------------------- */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.625rem;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.24);
-  --shadow-sm: 0 2px 6px rgb(0 0 0 / 0.28), 0 1px 2px rgb(0 0 0 / 0.24);
+  /* --- radii, elevation, motion --------------------------------------
+   * Midday's scale: 12px cards, 8px controls, 6px chips. Elevation is a
+   * whisper — hairlines do the structural work.
+   */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.1);
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   /* --- app shell geometry (one source of truth for every breakpoint) -- */
@@ -63,67 +69,68 @@
 }
 
 /*
- * Midnight — the default mode. Flat near-black green canvas; cards sit one
- * half-step lighter with a hairline border and no shadow. The pattern is the
- * Supabase-grade console treatment: readable at 2 a.m., quiet by default.
+ * Midnight — near-black neutral canvas; cards sit one half-step lighter with a
+ * hairline border and no drama. Midday's dark counterpart: the chrome is
+ * colourless so the content is the only thing with weight. The accent is white
+ * here (a black primary button would vanish), which is exactly how Midday
+ * inverts its own black accent.
  */
 html[data-theme="midnight"] {
-  --color-bg: #0a0d0b;
-  --color-elev: #101411;
-  --color-surface: #141814;
-  --color-surface-2: #1c211c;
-  --color-line: #232a24;
-  --color-line-strong: #36413a;
-  --color-fg: #e8ede8;
-  --color-muted: #9ea99f;
-  --color-faint: #77837a;
-  --color-accent: #62d3a5;
-  --color-accent-hover: #7fe0b8;
-  --color-on-accent: #08130d;
-  --color-brass: #62d3a5;
-  --color-brass-2: #7fe0b8;
-  --color-ink: #08130d;
-  --color-ok: #5ede9e;
-  --color-warn: #e0a55f;
-  --color-danger: #f98a8a;
-  --color-paper: #0a0d0b;
-  --color-paper-ink: #e8ede8;
-  --color-paper-muted: #9ea99f;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.35);
-  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.5);
+  --color-bg: #0a0a0a;
+  --color-elev: #111111;
+  --color-surface: #161616;
+  --color-surface-2: #1f1f1f;
+  --color-line: #262626;
+  --color-line-strong: #3a3a3a;
+  --color-fg: #f5f5f5;
+  --color-muted: #a3a3a3;
+  --color-faint: #7a7a7a;
+  --color-accent: #f5f5f5;
+  --color-accent-hover: #ffffff;
+  --color-on-accent: #0a0a0a;
+  --color-brass: #f5f5f5;
+  --color-brass-2: #ffffff;
+  --color-ink: #0a0a0a;
+  --color-ok: #4ade80;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+  --color-paper: #0a0a0a;
+  --color-paper-ink: #f5f5f5;
+  --color-paper-muted: #a3a3a3;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.6);
   color-scheme: dark;
 }
 
 /*
- * Paper — the light mode. A tinted off-white canvas (never flat #fff) keeps
- * white cards honest, and the hairline line carries all the structure. The
- * accent inverts to a deep forest green so primary actions read the same
- * weight in both modes.
+ * Paper — Midday's own light mode: a pure white canvas, #f7f7f7 for recessed
+ * chrome like the sidebar, #e5e5e5 hairlines, and black as the accent. No
+ * tint, no brand colour in the chrome — the accent is the ink itself.
  */
 html[data-theme="paper"] {
-  --color-bg: #f3f5f0;
-  --color-elev: #eef1ec;
+  --color-bg: #ffffff;
+  --color-elev: #f7f7f7;
   --color-surface: #ffffff;
-  --color-surface-2: #f9faf8;
-  --color-line: #e2e7e0;
-  --color-line-strong: #cdd6cc;
-  --color-fg: #101511;
-  --color-muted: #545e56;
-  --color-faint: #5f6a5c;
-  --color-accent: #1a4d3a;
-  --color-accent-hover: #236349;
-  --color-on-accent: #f3f5f0;
-  --color-brass: #1a4d3a;
-  --color-brass-2: #236349;
-  --color-ink: #f3f5f0;
-  --color-ok: #1a7a4a;
+  --color-surface-2: #f7f7f7;
+  --color-line: #e5e5e5;
+  --color-line-strong: #d4d4d4;
+  --color-fg: #1a1a1a;
+  --color-muted: #666666;
+  --color-faint: #6f6f6f;
+  --color-accent: #111111;
+  --color-accent-hover: #000000;
+  --color-on-accent: #ffffff;
+  --color-brass: #111111;
+  --color-brass-2: #000000;
+  --color-ink: #ffffff;
+  --color-ok: #15803d;
   --color-warn: #b45309;
   --color-danger: #b91c1c;
   --color-paper: #ffffff;
-  --color-paper-ink: #101511;
-  --color-paper-muted: #545e56;
-  --shadow-xs: 0 1px 2px rgb(16 21 17 / 0.05);
-  --shadow-sm: 0 4px 16px -8px rgb(16 21 17 / 0.12);
+  --color-paper-ink: #1a1a1a;
+  --color-paper-muted: #666666;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-sm: 0 4px 16px -8px rgb(0 0 0 / 0.1);
   color-scheme: light;
 }
 

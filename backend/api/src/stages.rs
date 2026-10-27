@@ -1721,6 +1721,29 @@ pub(crate) async fn ghost_config(
     site_id: i64,
     website_id: Option<i64>,
 ) -> Result<(String, Option<String>, Option<String>), sqlx::Error> {
+    // Resolve the connection from the site's linked `websites` row first. The
+    // caller may not know the numeric id (the upload path only has a site),
+    // and the browser snapshot is not a reliable home for a credential — a
+    // cleared tab store used to read as "never connected".
+    let Some((workspace_id, uid)) = sqlx::query_as::<_, (i64, Option<String>)>(
+        "SELECT workspace_id, client_uid FROM sites WHERE id = ?",
+    )
+    .bind(site_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(("SANDBOX".to_string(), None, None));
+    };
+    let website_id = match website_id {
+        Some(id) => Some(id),
+        None => sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT website_id FROM sites WHERE id = ? AND website_id IS NOT NULL",
+        )
+        .bind(site_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten(),
+    };
     if let Some(wid) = website_id {
         let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT ghost_mode, ghost_url, ghost_admin_key_enc FROM websites WHERE id = ?",
@@ -1744,15 +1767,6 @@ pub(crate) async fn ghost_config(
             }
         }
     }
-    let Some((workspace_id, uid)) = sqlx::query_as::<_, (i64, Option<String>)>(
-        "SELECT workspace_id, client_uid FROM sites WHERE id = ?",
-    )
-    .bind(site_id)
-    .fetch_optional(pool)
-    .await?
-    else {
-        return Ok(("SANDBOX".to_string(), None, None));
-    };
     let payload: Option<String> =
         sqlx::query_scalar("SELECT payload FROM app_state WHERE workspace_id = ?")
             .bind(workspace_id)

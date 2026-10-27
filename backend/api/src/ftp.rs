@@ -678,19 +678,25 @@ pub(crate) async fn ftp_upload(
     // CMS permanently out of step — work that has to happen must not depend on a
     // tab staying open. The outcome rides back on the upload's own answer, so a
     // silent CMS is visible here instead of being discovered days later.
+    //
+    // The mirror gets the site's own `website_id`, not `None`. Passing `None`
+    // skipped the `websites` lookup entirely and left it reading only the
+    // browser snapshot, so a connection saved anywhere the snapshot did not
+    // carry answered "no ghost url/key configured" on every single upload —
+    // even with a key that tested green a second earlier.
     if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT client_uid FROM sites \
-             WHERE workspace_id = ?1 AND COALESCE(client_uid, '') != '' \
-             ORDER BY id LIMIT 1",
+        let row: Option<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT COALESCE(NULLIF(client_uid, ''), CAST(id AS TEXT)), website_id FROM sites \
+             WHERE workspace_id = ?1 \
+             ORDER BY CASE WHEN COALESCE(client_uid, '') != '' THEN 0 ELSE 1 END, id LIMIT 1",
         )
         .bind(workspace_id)
         .fetch_optional(&st.pool)
         .await
         .ok()
         .flatten();
-        if let Some((site_ref,)) = row {
-            let ghost = crate::stages::mirror_to_ghost(&st.pool, &site_ref, None).await;
+        if let Some((site_ref, website_id)) = row {
+            let ghost = crate::stages::mirror_to_ghost(&st.pool, &site_ref, website_id).await;
             if let Some(object) = result.as_object_mut() {
                 object.insert("ghost".to_string(), ghost);
             }

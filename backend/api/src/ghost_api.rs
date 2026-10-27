@@ -345,10 +345,45 @@ pub(crate) async fn check_ghost_url(Json(req): Json<GhostUrlRequest>) -> Json<se
     }
 }
 /// List providers for a workspace. Keys are never returned — only `key_hint`.
+/// Test the key *and keep it*. A green test that forgets the key is how this
+/// pipeline spent days reporting "no ghost url/key configured" against a
+/// connection the operator had just verified — the credential lived only in
+/// the browser snapshot, which the server cannot rely on. Persisting here
+/// makes `websites` the single source of truth the publish path reads.
 pub(crate) async fn ghost_test(
+    axum::extract::State(st): axum::extract::State<crate::AppState>,
     Json(req): Json<crate::ghost_api::GhostTarget>,
 ) -> Json<serde_json::Value> {
-    Json(crate::ghost_api::test_connection(&req).await)
+    let mut out = crate::ghost_api::test_connection(&req).await;
+    if out.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        let origin = out
+            .get("origin")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(req.url.trim())
+            .to_string();
+        let key = req.admin_key.trim().to_string();
+        if !key.is_empty() && !key.contains('•') {
+            let sealed = crate::secrets::seal_secret(&key);
+            let saved = sqlx::query(
+                "UPDATE websites SET ghost_mode = 'LIVE', ghost_url = ?, ghost_admin_key_enc = ? \
+                 WHERE id = (SELECT website_id FROM sites \
+                             WHERE workspace_id = ?1 AND website_id IS NOT NULL \
+                             ORDER BY id LIMIT 1)",
+            )
+            .bind(&origin)
+            .bind(&sealed)
+            .bind(crate::default_workspace())
+            .execute(&st.pool)
+            .await;
+            if let Some(object) = out.as_object_mut() {
+                object.insert(
+                    "saved".to_string(),
+                    serde_json::Value::Bool(matches!(saved, Ok(r) if r.rows_affected() > 0)),
+                );
+            }
+        }
+    }
+    Json(out)
 }
 pub(crate) async fn ghost_sync(
     Json(req): Json<crate::ghost_api::GhostTarget>,

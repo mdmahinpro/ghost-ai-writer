@@ -1,33 +1,33 @@
 /**
  * Appearance — one design, two modes.
  *
- * The studio is a single editorial-green console pattern (pattern sources:
- * Supabase's dark console, Semrush and hilos' light dashboards, Klaviyo's SaaS
- * chrome in Mobbin) with exactly two modes:
+ * The system is Midday's (Mobbin, the finance-ops dashboard): a strictly
+ * neutral base, black as the accent, serif display headings over an Inter UI,
+ * 12px cards and 8px controls on an 8px rhythm. Nothing in the chrome competes
+ * with the content, which is the point for a studio whose subject is text.
  *
- *   · Midnight — near-black green canvas for long night sessions.
- *   · Paper    — tinted off-white canvas for bright rooms.
+ *   · Paper    — white canvas, black accent, light hairlines.
+ *   · Midnight — near-black canvas, white accent, dark hairlines.
  *
- * Depth comes from a slightly lighter surface plus a 1px hairline border, not
- * from colour drama or stacked shadows. Text is three grades (fg / muted /
- * faint), numbers are mono with tabular figures, and the accent is forest
- * green — actions, links, and live status all sit on it.
+ * The accent inverts per mode: a black primary button on white, a white one on
+ * black. Semantic colour is reserved for state (ok / danger) so a green badge
+ * still means "healthy" and not "this is the brand".
  *
- * Every component reads CSS variables from a single
- * `html[data-theme="midnight"|“paper"]`, so switching modes touches no
- * component code: one attribute, the whole app follows. The 17 tokens below
- * are mirrored verbatim in src/styles.css, which the Rule 7 release gate
- * asserts byte-for-byte, so the TS and CSS cannot drift.
+ * Every component reads CSS variables off a single
+ * `html[data-theme="midnight"|"paper"]`, so switching touches no component
+ * code: one attribute, the whole app follows. The 17 tokens below are mirrored
+ * verbatim in src/styles.css, which the Rule 7 release gate asserts, so the TS
+ * and CSS cannot drift.
  */
 
 export type ThemeId = "midnight" | "paper";
 
 export const THEMES: { id: ThemeId; canvas: string; label: string }[] = [
-  { id: "midnight", canvas: "#0a0d0b", label: "Midnight" },
-  { id: "paper", canvas: "#f3f5f0", label: "Paper" },
+  { id: "midnight", canvas: "#0a0a0a", label: "Midnight" },
+  { id: "paper", canvas: "#ffffff", label: "Paper" },
 ];
 
-export const DEFAULT_THEME: ThemeId = "midnight";
+export const DEFAULT_THEME: ThemeId = "paper";
 
 /** Every mode defines all of these, in both TS and CSS. */
 export const THEME_TOKEN_KEYS = [
@@ -55,47 +55,47 @@ export type ThemeTokens = Record<ThemeTokenKey, string>;
 
 export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
   midnight: {
-    bg: "#0a0d0b",
-    elev: "#101411",
-    surface: "#141814",
-    "surface-2": "#1c211c",
-    line: "#232a24",
-    "line-strong": "#36413a",
-    fg: "#e8ede8",
-    muted: "#9ea99f",
-    faint: "#77837a",
-    brass: "#62d3a5",
-    "brass-2": "#7fe0b8",
-    ink: "#08130d",
-    ok: "#5ede9e",
-    danger: "#f98a8a",
-    paper: "#0a0d0b",
-    "paper-ink": "#e8ede8",
-    "paper-muted": "#9ea99f",
+    bg: "#0a0a0a",
+    elev: "#111111",
+    surface: "#161616",
+    "surface-2": "#1f1f1f",
+    line: "#262626",
+    "line-strong": "#3a3a3a",
+    fg: "#f5f5f5",
+    muted: "#a3a3a3",
+    faint: "#7a7a7a",
+    brass: "#f5f5f5",
+    "brass-2": "#ffffff",
+    ink: "#0a0a0a",
+    ok: "#4ade80",
+    danger: "#f87171",
+    paper: "#0a0a0a",
+    "paper-ink": "#f5f5f5",
+    "paper-muted": "#a3a3a3",
   },
   paper: {
-    bg: "#f3f5f0",
-    elev: "#eef1ec",
+    bg: "#ffffff",
+    elev: "#f7f7f7",
     surface: "#ffffff",
-    "surface-2": "#f9faf8",
-    line: "#e2e7e0",
-    "line-strong": "#cdd6cc",
-    fg: "#101511",
-    muted: "#545e56",
-    faint: "#5f6a5c",
-    brass: "#1a4d3a",
-    "brass-2": "#236349",
-    ink: "#f3f5f0",
-    ok: "#1a7a4a",
+    "surface-2": "#f7f7f7",
+    line: "#e5e5e5",
+    "line-strong": "#d4d4d4",
+    fg: "#1a1a1a",
+    muted: "#666666",
+    faint: "#6f6f6f",
+    brass: "#111111",
+    "brass-2": "#000000",
+    ink: "#ffffff",
+    ok: "#15803d",
     danger: "#b91c1c",
     paper: "#ffffff",
-    "paper-ink": "#101511",
-    "paper-muted": "#545e56",
+    "paper-ink": "#1a1a1a",
+    "paper-muted": "#666666",
   },
 };
 
 export function themeLabel(id: ThemeId): string {
-  return THEMES.find((theme) => theme.id === id)?.label ?? "Midnight";
+  return THEMES.find((theme) => theme.id === id)?.label ?? "Paper";
 }
 
 export function contrastRatio(hexA: string, hexB: string): number {

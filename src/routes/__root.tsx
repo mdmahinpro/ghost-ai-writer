@@ -26,13 +26,13 @@ export const Route = createRootRoute({
   component: () => (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#0a0d0b" />
+        <meta name="theme-color" content="#ffffff" />
         <meta name="apple-mobile-web-app-title" content="Ghost AI Writer" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <script
           dangerouslySetInnerHTML={{
             __html:
-              '(function(){try{var raw=localStorage.getItem("gaw-theme");var L=["light","paper","daylight","sepia","rose","clay","editorial"],D=["dark","midnight","forest","ocean","telemetry","crimson","graphite"];var t="midnight";if(raw&&L.indexOf(raw)>=0)t="paper";else if(raw&&(D.indexOf(raw)>=0||raw==="midnight"))t="midnight";var el=document.documentElement;el.setAttribute("data-theme",t);var c={midnight:"#0a0d0b",paper:"#f3f5f0"}[t];var m=document.querySelector(\'meta[name="theme-color"]\');if(m)m.setAttribute("content",c);}catch(e){}})();',
+              '(function(){try{var raw=localStorage.getItem("gaw-theme");var L=["light","paper","daylight","sepia","rose","clay","editorial"],D=["dark","midnight","forest","ocean","telemetry","crimson","graphite"];var t="paper";if(raw&&D.indexOf(raw)>=0)t="midnight";else if(raw&&L.indexOf(raw)>=0)t="paper";var el=document.documentElement;el.setAttribute("data-theme",t);var c={midnight:"#0a0a0a",paper:"#ffffff"}[t];var m=document.querySelector(\'meta[name="theme-color"]\');if(m)m.setAttribute("content",c);}catch(e){}})();',
           }}
         />
         <HeadContent />
