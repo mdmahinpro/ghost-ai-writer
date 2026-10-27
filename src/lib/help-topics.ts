@@ -238,6 +238,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         lede: "The switch that spends your tokens while you sleep.",
         body: [
           "Automation fills the next slot on schedule. Turn it on when the defaults, the key and the connection have all been proven on a real article.",
+          "Before you rely on it, press Preview what automation would queue beside the switches. That is a dry run: it asks the server what the next pulse would do and writes nothing at all. It tells you which items are due, when the next write and the next publish are, and whether any due item would be skipped because the calendar has no server site id yet.",
           "Turning it off stops new slots from being created. It does not cancel a run that is already in flight.",
         ],
       },
