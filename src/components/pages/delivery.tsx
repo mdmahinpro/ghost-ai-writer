@@ -162,9 +162,11 @@ export function DeliveryPage() {
         return;
       }
       const host = result.host || saved.host;
-      // The CMS catches up on its own now: a deploy that went live should not
-      // leave Ghost behind until someone remembers to press a second button.
-      void mirrorArticlesToCms({ data: { site_ref: site.id } });
+      // The CMS push now happens on the server, inside the upload itself, and
+      // rides back on this same answer. Nothing is left for this tab to do —
+      // which is the point: a tab is allowed to close, and a CMS that needed a
+      // second browser step was a CMS that stayed empty.
+      const ghost = result.ghost;
       // The provider card in this browser is a leftover from the localStorage
       // era and still reads "not_connected"; sync it from the connection the
       // server just used, or packageBuild refuses to record the deploy and the
@@ -180,7 +182,18 @@ export function DeliveryPage() {
       });
       const deployId = packageBuild(buildId, "cpanel");
       if (deployId) void probe(deployId);
-      setUploadNote(deployId ? `Uploaded ${result.files} files to ${host}. Run Live probe before calling the site live.` : `Uploaded ${result.files} files, but the deploy was held. Check the route-diff card.`);
+      // Say what the CMS actually did. "Uploaded" on its own is the sentence
+      // that hid an empty CMS for days.
+      const cmsLine = ghost
+        ? ghost.ok
+          ? ` CMS: ${ghost.pushed ?? 0} pushed${ghost.failed?.length ? `, ${ghost.failed.length} failed (${ghost.failed[0]})` : ""} · ${ghost.published ?? 0} live · mode ${ghost.mode ?? "SANDBOX"}.`
+          : ` The files are live but the CMS refused: ${ghost.error ?? ghost.failed?.[0] ?? "no reason given"}.`
+        : "";
+      setUploadNote(
+        deployId
+          ? `Uploaded ${result.files} files to ${host}. Run Live probe before calling the site live.${cmsLine}`
+          : `Uploaded ${result.files} files, but the deploy was held. Check the route-diff card.${cmsLine}`,
+      );
     } catch (error) {
       if (!settled) setUploadNote(error instanceof Error ? error.message : "Upload failed.");
     } finally {

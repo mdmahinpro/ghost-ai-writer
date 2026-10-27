@@ -666,17 +666,37 @@ pub(crate) async fn ftp_upload(
     State(st): State<AppState>,
     Json(req): Json<FtpUploadRequest>,
 ) -> Json<serde_json::Value> {
-    let target = match ftp_creds::target(
-        &st.pool,
-        req.workspace_id.unwrap_or(1),
-        Some(req.target.clone()),
-    )
-    .await
-    {
+    let workspace_id = req.workspace_id.unwrap_or(1);
+    let target = match ftp_creds::target(&st.pool, workspace_id, Some(req.target.clone())).await {
         Ok(resolved) => resolved,
         Err(error) => return Json(serde_json::json!({ "ok": false, "error": error })),
     };
-    Json(crate::ftp::upload_via(&target, req.via, &req.files).await)
+    let target_ref = target.clone();
+    let mut result = crate::ftp::upload_via(&target_ref, req.via, &req.files).await;
+    // An upload that went live pushes to the CMS in the same breath. This used
+    // to be the browser's job, which meant closing the tab left the blog and the
+    // CMS permanently out of step — work that has to happen must not depend on a
+    // tab staying open. The outcome rides back on the upload's own answer, so a
+    // silent CMS is visible here instead of being discovered days later.
+    if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT client_uid FROM sites \
+             WHERE workspace_id = ?1 AND COALESCE(client_uid, '') != '' \
+             ORDER BY id LIMIT 1",
+        )
+        .bind(workspace_id)
+        .fetch_optional(&st.pool)
+        .await
+        .ok()
+        .flatten();
+        if let Some((site_ref,)) = row {
+            let ghost = crate::stages::mirror_to_ghost(&st.pool, &site_ref, None).await;
+            if let Some(object) = result.as_object_mut() {
+                object.insert("ghost".to_string(), ghost);
+            }
+        }
+    }
+    Json(result)
 }
 pub(crate) async fn index_now(
     Json(req): Json<crate::ftp::IndexNowRequest>,

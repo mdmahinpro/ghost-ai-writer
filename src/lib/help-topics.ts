@@ -367,8 +367,9 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: "Mirror articles to your CMS",
         lede: "Getting Ghost caught up, automatically and by hand.",
         body: [
-          "Publishing pushes to Ghost at the moment the article goes live. A successful cPanel upload also mirrors on its own, so a deploy never leaves the CMS behind.",
-          "Mirror articles to the CMS on the Delivery page is the manual catch-up: it pushes every finished article Ghost does not already have, as a draft, and skips the ones it has. It answers with the resolved mode and connection, so an empty run says why instead of looking like success.",
+          "The CMS is kept level with the site by two paths, and neither needs a browser: publishing an article pushes it to Ghost at that moment, and a successful upload pushes everything Ghost is missing as part of the upload itself. The upload's own answer reports what the CMS did — how many posts were pushed, how many are live, and the mode — so an empty CMS is visible on the Delivery page instead of being discovered days later.",
+          "Posts arrive in the state the site already shows them in: an article that is live on the public site lands as a published post in Ghost, and anything not published arrives as a draft. That means the CMS is a real copy you can edit and control, not a queue of drafts.",
+          "Mirror articles to the CMS on the Delivery page is the manual catch-up, for the case where the connection was saved after the articles were written. It skips anything Ghost already has, so pressing it twice is harmless, and it answers with the resolved mode and connection so an empty run says why instead of looking like success.",
         ],
       },
       {

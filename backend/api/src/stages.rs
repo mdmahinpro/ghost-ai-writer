@@ -1841,8 +1841,9 @@ pub async fn mirror_to_ghost(
             "error": "No Ghost connection is saved for this site yet. Connect the CMS on Connections, then run this again.",
         });
     };
-    let rows: Vec<(i64, String, String, String, Option<String>)> = match sqlx::query_as(
-        "SELECT id, title, slug, COALESCE(content_json, ''), featured_image_url FROM articles \
+    let rows: Vec<(i64, String, String, String, Option<String>, String)> = match sqlx::query_as(
+        "SELECT id, title, slug, COALESCE(content_json, ''), featured_image_url, COALESCE(status, 'draft') \
+         FROM articles \
          WHERE site_id = ? AND status != 'DELETED' AND COALESCE(content_json, '') != '' \
            AND (ghost_post_id IS NULL OR ghost_post_id = '') \
          ORDER BY id",
@@ -1855,8 +1856,18 @@ pub async fn mirror_to_ghost(
         Err(error) => return json!({ "ok": false, "error": error.to_string() }),
     };
     let mut pushed = 0usize;
+    let mut live = 0usize;
     let mut failed: Vec<String> = Vec::new();
-    for (id, title, slug, markdown, image) in rows {
+    for (id, title, slug, markdown, image, status) in rows {
+        // The CMS gets the article in the state the site already shows it in. A
+        // page that is live on the public site but a draft in Ghost is the one
+        // mismatch that wastes an editor's afternoon; anything not published
+        // still arrives as a draft, so nothing goes live that was not asked for.
+        let ghost_status = if status == "published" {
+            "published"
+        } else {
+            "draft"
+        };
         match crate::ghost::push_post(
             Some(&url),
             Some(&key),
@@ -1864,7 +1875,7 @@ pub async fn mirror_to_ghost(
             &slug,
             &markdown,
             image.as_deref(),
-            "draft",
+            ghost_status,
         )
         .await
         {
@@ -1878,7 +1889,12 @@ pub async fn mirror_to_ghost(
                 .execute(pool)
                 .await;
                 match stored {
-                    Ok(_) => pushed += 1,
+                    Ok(_) => {
+                        pushed += 1;
+                        if ghost_status == "published" {
+                            live += 1;
+                        }
+                    }
                     Err(error) => failed.push(format!("{slug}: {error}")),
                 }
             }
@@ -1890,6 +1906,7 @@ pub async fn mirror_to_ghost(
         "mode": mode,
         "url": url,
         "pushed": pushed,
+        "published": live,
         "failed": failed,
     })
 }

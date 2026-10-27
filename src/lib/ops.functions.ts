@@ -60,9 +60,29 @@ export async function testFtpLogin(input: {
 
 export async function uploadFtps(input: {
   data: FtpTarget & { workspace_id?: number; files?: { name: string; base64: string }[] };
-}): Promise<{ ok: true; files: number; host: string } | { ok: false; error: string }> {
+}): Promise<
+  | {
+      ok: true;
+      files: number;
+      host: string;
+      /** What the server's CMS push did as part of the upload, when it got that far. */
+      ghost?: { ok: boolean; mode?: string; pushed?: number; published?: number; failed?: string[]; error?: string };
+    }
+  | { ok: false; error: string }
+> {
   const d = input?.data ?? {};
-  const res = await post<{ ok: boolean; files?: number; host?: string; error?: string }>(
+  const res = await post<{
+    ok: boolean;
+    files?: number;
+    host?: string;
+    error?: string;
+    /**
+     * The CMS push the server does as part of the upload. Absent means the
+     * upload did not get far enough to try; present with `ok: false` means the
+     * files are live and the CMS refused, with its own reason.
+     */
+    ghost?: { ok: boolean; mode?: string; pushed?: number; published?: number; failed?: string[]; error?: string };
+  }>(
     "/api/v1/ftp/upload",
     {
       host: d.host ?? "",
@@ -81,7 +101,12 @@ export async function uploadFtps(input: {
   );
   if (!res.ok) return { ok: false, error: res.error };
   if (!res.data.ok) return { ok: false, error: res.data.error ?? "The upload failed." };
-  return { ok: true, files: res.data.files ?? 0, host: res.data.host ?? d.host ?? "" };
+  return {
+    ok: true,
+    files: res.data.files ?? 0,
+    host: res.data.host ?? d.host ?? "",
+    ghost: res.data.ghost,
+  };
 }
 
 export async function submitIndexNow(input: {
