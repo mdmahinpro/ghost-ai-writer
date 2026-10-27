@@ -125,7 +125,7 @@ export function RunsPage() {
                         <span aria-hidden="true">·</span>
                         <span className="num">{mine.length} jobs</span>
                         <span aria-hidden="true">·</span>
-                        <span className="num">{relTime(run.createdAt)}</span>
+                        <span className="num">{run.createdAt ? relTime(run.createdAt) : "—"}</span>
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">

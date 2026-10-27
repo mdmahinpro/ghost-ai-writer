@@ -67,8 +67,11 @@ export function newResearchProject(input: {
   const project: ResearchProject = {
     id: uid("res"),
     siteId: input.siteId,
-    niche: input.niche.trim(),
-    notes: input.notes.trim(),
+    // Bounded on purpose: this text rides in every one of the eleven stage
+    // prompts, so an accidental 200 KB paste cost 200 KB × 11 in input tokens.
+    // The cap is far above a real niche brief.
+    niche: input.niche.trim().slice(0, 240),
+    notes: input.notes.trim().slice(0, 4000),
     createdAt: input.now,
     status: "partial",
     breadth: input.breadth,
@@ -207,6 +210,49 @@ function parseJson(systemShapeError: string, text: string): unknown {
   }
 }
 
+/**
+ * Model output is trimmed to these ceilings instead of being rejected.
+ *
+ * The schema caps describe the shape we want to keep, not a promise a model
+ * keeps: a reply with 26 terminology terms is still a correct answer, and
+ * failing the stage over it burned a model call and stopped the whole project
+ * at R1 ("Too big: expected array to have <=20 items"). Trimming degrades a
+ * long list to a shorter one; it never invents or drops required fields, so a
+ * genuinely wrong answer still fails validation and gets the retry.
+ */
+const LIST_CAPS: Record<string, number> = {
+  subNiches: 10,
+  terminology: 20,
+  personas: 6,
+  problems: 12,
+  clusters: 8,
+  queries: 40,
+  intents: 120,
+  mapped: 120,
+  scores: 12,
+};
+
+const MAX_ARRAY = 200;
+const MAX_STRING = 4000;
+
+function tidy(value: unknown, depth = 0): unknown {
+  if (depth > 6) return value;
+  if (typeof value === "string") return value.trim().slice(0, MAX_STRING);
+  if (Array.isArray(value)) return value.slice(0, MAX_ARRAY).map((item) => tidy(item, depth + 1));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      const cap = LIST_CAPS[key];
+      out[key] =
+        cap && Array.isArray(item)
+          ? item.slice(0, cap).map((entry) => tidy(entry, depth + 1))
+          : tidy(item, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
 async function askValidated(
   chat: ResearchChat,
   prompt: { system: string; user: string },
@@ -240,7 +286,13 @@ async function askValidated(
  * stages are skipped — a rerun continues from what is missing and never
  * re-charges the rest.
  */
-export async function runResearch(data: Persisted, projectId: string, chat: ResearchChat | undefined, now: number): Promise<Persisted> {
+export async function runResearch(
+  data: Persisted,
+  projectId: string,
+  chat: ResearchChat | undefined,
+  now: number,
+  onProgress?: (data: Persisted) => void,
+): Promise<Persisted> {
   const project = data.research.find((item) => item.id === projectId);
   if (!project || project.archived) return data;
   // Normalize defensively (legacy rows restored from old blobs).
@@ -253,6 +305,16 @@ export async function runResearch(data: Persisted, projectId: string, chat: Rese
   const site = data.sites.find((item) => item.id === project.siteId) ?? data.sites[0];
   if (!site) return data;
   project.attempts += 1;
+  // Stream each stage transition to the caller. Without this the studio showed
+  // nothing at all until the whole eleven-stage run returned — a project that
+  // spends a minute per model call looked frozen for ten minutes and gave no
+  // sign which stage was paying for the wait.
+  const emit = () => {
+    project.stagesCompleted = project.stages.filter((stage) => stage.status === "done").length;
+    project.status = projectStatus(project);
+    onProgress?.(data);
+  };
+  emit();
 
   for (const def of RESEARCH_STAGES) {
     const record = stageOf(project, def.key);
@@ -261,10 +323,12 @@ export async function runResearch(data: Persisted, projectId: string, chat: Rese
     if (def.key === "semantic-consolidation") {
       const started = now;
       record.status = "running";
+      emit();
       const queries = project.output.queries ?? [];
       if (!queries.length) {
         record.status = "failed";
         record.error = "No queries survived R5 — R7 has nothing to consolidate.";
+        emit();
         break;
       }
       const { queries: deduped, merged } = dedupeQueries(queries);
@@ -275,11 +339,13 @@ export async function runResearch(data: Persisted, projectId: string, chat: Rese
       record.startedAt ||= started;
       record.finishedAt = now;
       record.durationMs = 40;
+      emit();
       continue;
     }
 
     if (def.key === "action-class") {
       record.status = "running";
+      emit();
       const queries = project.output.queries ?? [];
       const coverage = project.output.coverage ?? [];
       const { actions, skipped } = classifyActions(queries, coverage);
@@ -290,21 +356,32 @@ export async function runResearch(data: Persisted, projectId: string, chat: Rese
       record.startedAt ||= now;
       record.finishedAt = now;
       record.durationMs = 30;
+      emit();
       continue;
     }
 
     if (!chat) {
       record.status = "failed";
       record.error = NO_RESEARCH_KEY;
-      project.status = projectStatus(project);
+      emit();
       break;
     }
     record.status = "running";
     record.startedAt = now;
     record.attempts += 1;
+    emit();
     const validateFor = (schema: z.ZodTypeAny, name: string) => (value: unknown) => {
-      const parsed = schema.safeParse(value);
-      return parsed.success ? ({ ok: true as const, value: parsed.data }) : ({ ok: false as const, error: `${name} validation failed: ${parsed.error.issues.map((issue) => issue.message).join("; ")}` });
+      const parsed = schema.safeParse(tidy(value));
+      return parsed.success
+        ? { ok: true as const, value: parsed.data }
+        : {
+            ok: false as const,
+            // Name the offending field: "validation failed" alone told the
+            // operator nothing and told the retry even less.
+            error: `${name} validation failed: ${parsed.error.issues
+              .map((issue) => `${issue.path.join(".") || "response"}: ${issue.message}`)
+              .join("; ")}`,
+          };
     };
     try {
       const prompt = stagePrompt(def.key, project, data, site);
@@ -390,11 +467,13 @@ export async function runResearch(data: Persisted, projectId: string, chat: Rese
       record.finishedAt = now;
       record.error = undefined;
       record.durationMs = Math.max(50, record.tokens ? 600 : 0);
+      emit();
     } catch (error) {
       // Safe stop: honest failure, later stages stay pending and uncharged.
       record.status = "failed";
       record.error = error instanceof Error ? error.message : String(error);
       record.finishedAt = now;
+      emit();
       break;
     }
   }

@@ -290,7 +290,9 @@ export function toUiRun(run: ServerRun, siteUid: string): Run {
     publishMode: "draft",
     modelKeyId: "server",
     allowVariants: false,
-    createdAt: 0,
+    // The server sends an ISO timestamp and this used to hardcode 0, so every
+    // server run rendered as "20754d ago" (1 Jan 1970).
+    createdAt: run.createdAt ? Date.parse(run.createdAt) || 0 : 0,
     status: runStatus(run.status),
   };
 }

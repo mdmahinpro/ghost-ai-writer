@@ -2082,7 +2082,17 @@ auditNow: () => {
               return { ok: true as const, text: outcome.value.text, usage: outcome.value.usage };
             }
           : undefined;
-        await runResearch(data, researchId, chat, Date.now());
+        await runResearch(data, researchId, chat, Date.now(), (live) => {
+          // Stream stages into the store as they happen. The engine mutates one
+          // clone across the whole run, so the row is replaced (not appended)
+          // and the page re-renders the moment a stage flips.
+          const row = live.research.find((item) => item.id === researchId);
+          if (!row) return;
+          set((cur) => ({
+            ...cur,
+            research: cur.research.map((item) => (item.id === researchId ? { ...row } : item)),
+          }));
+        });
         set((cur) => ({
           ...cur,
           research: cur.research.map((item) => (item.id === researchId ? data.research.find((row) => row.id === researchId) ?? item : item)),
@@ -2664,19 +2674,38 @@ function startPipelinePoll(): void {
   pipelinePollStarted = true;
   const tick = async () => {
     let active = false;
-    if (!document.hidden && !pipelinePollInFlight && !advancing) {
-      pipelinePollInFlight = true;
-      try {
-        active = await pollServerPipeline();
-      } catch {
-        active = false;
-      } finally {
-        pipelinePollInFlight = false;
+    let delay = 6000;
+    try {
+      const cur = useApp.getState();
+      // "Busy" is this browser's view, not the server's: a run sitting QUEUED
+      // (worker about to claim it) reported active=false and dropped the poll to
+      // 15s, so the six stages sat still for a quarter of a minute at a time.
+      // Reading progress is safe from any tab, including one holding the worker
+      // lease — the `advancing` guard used to skip exactly those tabs, which are
+      // the ones a user watches.
+      const busy = cur.jobs.some((job) => job.status === "queued" || job.status === "running");
+      if (!document.hidden && !pipelinePollInFlight) {
+        pipelinePollInFlight = true;
+        try {
+          active = await pollServerPipeline();
+        } catch {
+          active = false;
+        } finally {
+          pipelinePollInFlight = false;
+        }
       }
+      delay = active || busy ? 1200 : 6000;
+    } catch {
+      // Scheduling lives in `finally`. When it lived at the end of the body, a
+      // single throw (a bad snapshot, a merge on a half-shaped row) ended the
+      // loop for the rest of the session and the six stages never moved again —
+      // the UI froze with no error anywhere.
+      delay = 6000;
+    } finally {
+      window.setTimeout(tick, delay);
     }
-    window.setTimeout(tick, active ? 2500 : 15000);
   };
-  window.setTimeout(tick, 1500);
+  window.setTimeout(tick, 400);
 }
 
 /** Slow cross-window/context merge: window A's workspaces reach window B in seconds. */

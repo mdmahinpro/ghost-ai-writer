@@ -287,3 +287,34 @@ test("plan from research builds a review plan from the model universe", async ()
   assert.equal(plan.pillarTitle, "A note system that survives week three");
   assert.ok(plan.clusters.length >= 2);
 });
+
+test("R1 trims an over-long model reply instead of failing the whole stage", async () => {
+  // The live failure: a chatty reply returned more terms than the schema's cap
+  // and the stage died with "Too big: expected array to have <=20 items",
+  // stopping the project at the first of eleven stages.
+  const { chat } = makeChat();
+  const overfull: RChat = async (prompt) => {
+    const stage = Number(prompt.system.match(/stage (\d+) of an 11-stage/)?.[1] ?? "0");
+    if (stage !== 1) return chat(prompt);
+    return {
+      ok: true,
+      text: JSON.stringify({
+        entityMap: "PhD study, supervision, funding, and the daily work of research",
+        subNiches: Array.from({ length: 14 }, (_, i) => `sub niche ${i}`),
+        terminology: Array.from({ length: 26 }, (_, i) => `term ${i}`),
+        purpose: "Explain what a PhD actually costs a student, day to day.",
+      }),
+      usage: { prompt: 500, completion: 300, total: 800 },
+    };
+  };
+  const data = fixture({ research: [project()] });
+  const id = data.research[0]!.id;
+  const seen: number[] = [];
+  const done = await runResearch(data, id, overfull, 2000, (live) => seen.push(live.research[0]!.stagesCompleted));
+  const row = done.research[0]!;
+  const failures = row.stages.filter((stage) => stage.status === "failed").map((stage) => `${stage.key}: ${stage.error}`);
+  assert.equal(row.status, "ready", failures.join("; "));
+  assert.equal(row.output.niche!.terminology.length, 20, "the over-long list is trimmed, not rejected");
+  assert.equal(row.output.niche!.subNiches.length, 10);
+  assert.ok(seen.length > 2, "stage progress streams to the caller while the run is in flight");
+});

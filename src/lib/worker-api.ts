@@ -58,17 +58,21 @@ function toWire(input: WorkInput) {
 }
 
 function fromWire(w: WireBeat, ticks: number): WorkerBeat {
+  // A response without a lease (an older API build, a proxy error page that
+  // still parsed as JSON) used to throw a TypeError here, which took down the
+  // whole worker tick. Treat a missing lease as "not granted" instead.
+  const lease = w.lease ?? { holder: "", expires_at: 0, granted: false };
   return {
-    online: w.online,
-    lastBeatAt: w.last_beat_at,
-    activeJobs: w.active_jobs,
+    online: Boolean(w.online),
+    lastBeatAt: Number(w.last_beat_at) || 0,
+    activeJobs: Number(w.active_jobs) || 0,
     nextCalendarPulseAt: w.next_calendar_pulse_at ?? undefined,
-    serverNow: w.server_now,
+    serverNow: Number(w.server_now) || Date.now(),
     ticks,
     lease: {
-      holder: w.lease.holder,
-      expiresAt: w.lease.expires_at,
-      granted: w.lease.granted,
+      holder: String(lease.holder ?? ""),
+      expiresAt: Number(lease.expires_at) || 0,
+      granted: Boolean(lease.granted),
     },
   };
 }

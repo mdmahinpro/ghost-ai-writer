@@ -261,9 +261,14 @@ export async function enqueueKeywords(input: {
     keywords: input.keywords,
   });
   if (!res.ok) return res;
+  const raw = res.data as { inserted?: unknown; created?: unknown; queued?: unknown; run_id?: number };
+  const counted = [raw.inserted, raw.created, raw.queued].find((value) => typeof value === "number" && Number.isFinite(value));
   return {
     ok: true,
-    data: { inserted: res.data.inserted, runId: res.data.run_id },
+    // The count is only ever used for the notice, but `undefined` in that
+    // sentence ("Queued undefined keywords") is worse than a fallback: if the
+    // response ever renames the field, report what was actually sent.
+    data: { inserted: typeof counted === "number" ? counted : input.keywords.length, runId: raw.run_id ?? 0 },
   };
 }
 

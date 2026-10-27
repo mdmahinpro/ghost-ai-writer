@@ -4,15 +4,19 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  AlertTriangle,
   BookOpen,
   Cable,
   CalendarDays,
   ChartColumn,
+  CheckCircle2,
+  CircleAlert,
   CircleHelp,
   CreditCard,
   Files,
   Globe,
   Inbox,
+  Info,
   KeyRound,
   LayoutDashboard,
   ListTree,
@@ -97,6 +101,49 @@ function active(href: string, path: string) {
   return path === href || path.startsWith(`${href}/`);
 }
 
+type Notice = NonNullable<ReturnType<typeof useApp.getState>["notice"]>;
+
+const NOTICE_TONE: Record<Notice["tone"], { icon: LucideIcon; badge: string; rule: string }> = {
+  ok: { icon: CheckCircle2, badge: "bg-ok/10 text-ok", rule: "bg-ok/70" },
+  warn: { icon: AlertTriangle, badge: "bg-brass/10 text-brass", rule: "bg-brass/70" },
+  danger: { icon: CircleAlert, badge: "bg-danger/10 text-danger", rule: "bg-danger/70" },
+  info: { icon: Info, badge: "bg-elev text-muted", rule: "bg-line-strong" },
+};
+
+/**
+ * A notice is a card, not a line of text: tone icon, the message, a dismiss
+ * control, and — for the two tones that expire on their own — a hairline that
+ * counts the time down. Warnings and errors stay until they are dismissed,
+ * because a failure that disappears after four seconds is a failure nobody
+ * reads.
+ */
+function NoticeToast({ notice, onDismiss }: { notice: Notice; onDismiss: () => void }) {
+  const tone = NOTICE_TONE[notice.tone];
+  const Icon = tone.icon;
+  const sticky = notice.tone === "warn" || notice.tone === "danger";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="toast-in pointer-events-auto relative flex w-full items-start gap-3 overflow-hidden rounded-xl border border-line bg-surface-2/95 py-3 pr-11 pl-3 shadow-[0_20px_44px_-28px_rgba(0,0,0,0.95)] backdrop-blur"
+    >
+      <span aria-hidden="true" className={`grid size-7 shrink-0 place-items-center rounded-lg ${tone.badge}`}>
+        <Icon className="size-4" />
+      </span>
+      <p className="min-w-0 flex-1 text-[13px] leading-5 text-fg">{notice.text}</p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss notification"
+        className="absolute top-1.5 right-1.5 grid size-7 place-items-center rounded-md text-muted transition-colors duration-150 hover:bg-elev hover:text-fg focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+      >
+        <X className="size-3.5" aria-hidden="true" />
+      </button>
+      {sticky ? null : <span aria-hidden="true" className={`toast-countdown absolute inset-x-0 bottom-0 h-0.5 origin-left ${tone.rule}`} />}
+    </div>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const [open, setOpen] = useState(false);
@@ -169,6 +216,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!notice) return;
+    // Only the two quiet tones expire; a warning or an error waits for the
+    // dismiss control, and the countdown hairline is not drawn for them.
+    if (notice.tone === "warn" || notice.tone === "danger") return;
     const t = window.setTimeout(() => clearNotice(), 4200);
     return () => window.clearTimeout(t);
   }, [notice, clearNotice]);
@@ -467,9 +517,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <HumanizePipeline />
       <DeskWorkers />
       {notice ? (
-        <div className="fixed bottom-[calc(var(--tabbar-h)+var(--safe-bottom)+0.75rem)] left-4 right-4 z-50 mx-auto max-w-md rounded-md border border-line bg-elev px-4 py-3 text-sm text-fg shadow-sm md:bottom-6 md:left-auto md:right-6">
-          {notice.text}
-          <span className="ml-2 text-faint">{relTime(Date.now())}</span>
+        <div className="pointer-events-none fixed inset-x-4 bottom-[calc(var(--tabbar-h)+var(--safe-bottom)+0.75rem)] z-50 mx-auto flex max-w-sm justify-end md:inset-x-auto md:right-6 md:bottom-6 md:mx-0 md:w-[380px]">
+          <NoticeToast notice={notice} onDismiss={clearNotice} />
         </div>
       ) : null}
     </div>
