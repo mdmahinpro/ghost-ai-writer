@@ -80,7 +80,12 @@ export function ConnectionsPage() {
     setBusy(true);
     try {
       const result = await testGhostConnection({ data: { url: checked.url, adminKey } });
-      if (result.ok) markLive(result.origin, result.version, maskKey(adminKey), keepKey ? adminKey.trim() : undefined);
+      // The real key travels to the store whenever the field has one. The
+      // "keep key" box used to gate this, which meant a connection that tested
+      // fine could never publish: the server holds only `id:••••1234`, and a
+      // masked string is not a key. A connection that cannot push is not a
+      // connection.
+      if (result.ok) markLive(result.origin, result.version, maskKey(adminKey), adminKey.trim() || undefined);
       else failGhost(result.error);
     } catch (error) {
       failGhost(error instanceof Error ? error.message : "Live test failed.");

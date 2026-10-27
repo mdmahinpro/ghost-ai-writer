@@ -65,6 +65,8 @@ function css(): string {
     article.post pre code { display: block; background: none; padding: 0; font-size: 14px; white-space: pre; }
     article.post figure.code-block { margin: 20px 0; }
     article.post figure.code-block figcaption { font-family: "Outfit", "Avenir Next", sans-serif; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0 0 4px; }
+    /* The card lede: real prose under the photo, never the keyword printed twice. */
+    .card .lede { display: block; margin: 7px 0 2px; font-family: "Outfit", "Avenir Next", sans-serif; font-size: 12.5px; line-height: 1.5; text-transform: none; letter-spacing: 0; color: var(--faint); }
     article.post figure.code-block pre { margin: 0; }
     article.post aside.callout { margin: 20px 0; padding: 13px 17px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
     article.post aside.callout .callout-title { margin: 0 0 6px; font-family: "Outfit", "Avenir Next", sans-serif; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -297,7 +299,17 @@ export function staticFiles(
   const slot = (id: AdSlotId) => adSlotHtml(site, id, preview);
   // home_feed: after the sixth card, only when the feed has at least seven posts.
   const feedAd = pages.length >= 7 ? slot("home_feed") : "";
-  const home = `<!doctype html>
+  // The card's caption. It used to be the raw keyword — "post phd career
+// transition from academia to industry r d" printed above "From Academia to
+// Industry R&D", the same words twice, the first one lowercase and unreadable.
+// The description says something the title does not, which is what a lede is
+// for; a card with neither falls back to the title alone.
+function cardLede(article: { metaDescription?: string; excerpt?: string }): string {
+  const text = (article.metaDescription || article.excerpt || "").replace(/\s+/g, " ").trim().slice(0, 118);
+  return text ? `<span class="lede">${esc(text)}</span>` : "";
+}
+
+const home = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -319,7 +331,7 @@ ${slot("site_top")}
       .map((article) => {
         const featured = article.images.find((image) => image.role === "featured") ?? article.images[0];
         const photo = featured ? `<img src="${esc(articleImageSrc(featured, article.keyword || article.title))}" alt="${esc(featured.alt || article.title)}" width="474" height="274" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : "";
-        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}<span class="meta">${esc(article.keyword)}</span><strong>${esc(article.title)}</strong></a>`;
+        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}${cardLede(article)}<strong>${esc(article.title)}</strong></a>`;
       })
       .join("\n")}
     ${feedAd}
@@ -328,7 +340,7 @@ ${slot("site_top")}
       .map((article) => {
         const featured = article.images.find((image) => image.role === "featured") ?? article.images[0];
         const photo = featured ? `<img src="${esc(articleImageSrc(featured, article.keyword || article.title))}" alt="${esc(featured.alt || article.title)}" width="474" height="274" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : "";
-        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}<span class="meta">${esc(article.keyword)}</span><strong>${esc(article.title)}</strong></a>`;
+        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}${cardLede(article)}<strong>${esc(article.title)}</strong></a>`;
       })
       .join("\n")}
   </div>
@@ -451,7 +463,7 @@ ${bodyEnd}
     ${own
       .map(
         (article) =>
-          `<a class="card" href="../../post/${esc(article.slug)}/"><span class="meta">${esc(article.keyword)}</span><strong>${esc(article.title)}</strong></a>`,
+          `<a class="card" href="../../post/${esc(article.slug)}/">${cardLede(article)}<strong>${esc(article.title)}</strong></a>`,
       )
       .join("\n")}
   </div>

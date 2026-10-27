@@ -1796,7 +1796,13 @@ pub(crate) async fn ghost_config(
     } else {
         "SANDBOX"
     };
-    Ok((mode.to_string(), field("url"), field("adminKey")))
+    // `keyHint` is the masked form ("id:••••1234") shown in the UI as a hint.
+    // It is not a key, and treating it as one produced the most misleading
+    // failure this pipeline has: a connection that tested fine, a request that
+    // said "no ghost url/key configured", and nothing in the message pointing at
+    // the mask. A masked value is a missing key.
+    let key = field("adminKey").filter(|value| !value.contains('•'));
+    Ok((mode.to_string(), field("url"), key))
 }
 
 /// Push every finished article this site owns into Ghost as a draft, for the ones
