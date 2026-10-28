@@ -2124,6 +2124,35 @@ pub async fn run_validation(
         }
     }
 
+    // 3b. Humanize. Forced, not optional: this is the last point where the
+    // prose is still ours to change, and nothing ships with its AI tells
+    // intact. The deterministic scrub always runs; the audit and rewrite
+    // passes run whenever a key answers, and a rewrite that breaks the
+    // markdown skeleton is thrown away rather than published.
+    let author_name: Option<String> =
+        sqlx::query_scalar("SELECT author_name FROM articles WHERE id = ?")
+            .bind(article_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    let humanizer_context = crate::humanize::Context {
+        title: title.clone(),
+        keyword: keyword.to_string(),
+        author_name: author_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| crate::byline::for_article(site_id, keyword).0),
+        author_voice: String::new(),
+        banned_phrases: Vec::new(),
+    };
+    let humanized = crate::humanize::humanize(Some(engine), &markdown, &humanizer_context).await;
+    let humanizer_score = humanized.score;
+    let humanizer_note = humanized.note.clone();
+    let humanizer_passes = humanized.passes;
+    let humanizer_llm = humanized.llm;
+    let humanizer_stripped = humanized.stripped.join("; ");
+    let humanizer_spend = humanized.spend.clone();
+    markdown = humanized.markdown;
+
     // 4. Measure. `uniqueness_score` is the UI number (TS uniquenessAgainst
     // over the section headings); `gate.max_similarity` is the gate's own
     // worst case, kept in the payload for the audit trail.
@@ -2326,7 +2355,9 @@ pub async fn run_validation(
         "UPDATE articles SET status = ?, slug = ?, content_json = ?, content_format = 'markdown', \
          uniqueness_score = ?, coverage_score = ?, intent_match = ?, ghost_post_id = ?, \
          published_at = COALESCE(?, published_at), \
-         author_name = ?, author_slug = ?, author_beat = ?, author_city = ? WHERE id = ?",
+         author_name = ?, author_slug = ?, author_beat = ?, author_city = ?, \
+         humanized = 1, humanizer_score = ?, humanizer_passes = ?, humanizer_note = ?, \
+         humanizer_stripped = ? WHERE id = ?",
     )
     .bind(&article_status)
     .bind(&slug)
@@ -2347,15 +2378,20 @@ pub async fn run_validation(
     .bind(&author_slug)
     .bind(&author_beat)
     .bind(&author_city)
+    .bind(humanizer_score as i64)
+    .bind(humanizer_passes as i64)
+    .bind(&humanizer_note)
+    .bind(&humanizer_stripped)
     .bind(article_id)
     .execute(pool)
     .await?;
 
-    // Record stage 6 committed (billed as zero — no model call in this stage).
+    // Record stage 6 committed. The humanizer's model passes bill here: they
+    // are part of validation now.
     let outcome = StageOutcome {
-        tokens_in: 0,
-        tokens_out: 0,
-        cost_usd: 0.0,
+        tokens_in: humanizer_spend.tokens_in,
+        tokens_out: humanizer_spend.tokens_out,
+        cost_usd: humanizer_spend.cost_usd,
         repairs: 0,
     };
     record_stage(
@@ -2382,6 +2418,13 @@ pub async fn run_validation(
             "excerpt": meta_json.get("excerpt"),
             "tags": meta_json.get("tags"),
             "slug": slug,
+            "humanizer": {
+                "score": humanizer_score,
+                "passes": humanizer_passes,
+                "llm": humanizer_llm,
+                "note": humanizer_note,
+                "stripped": humanizer_stripped,
+            },
         }),
         now,
     )

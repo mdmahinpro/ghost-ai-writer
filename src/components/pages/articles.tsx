@@ -3,8 +3,7 @@ import { useMemo, useState, useEffect } from "react";
 import { HumanizeBanner, HUMANIZER_MISSING } from "@/components/humanize-pipeline";
 import { AuthorAvatar } from "@/components/pages/authors";
 import { bingChecks, bingScore, alignKeywordToQuery, nearDuplicateSibling } from "@/lib/bing";
-import { composeArticle, keyCallsModel, keyPool, measureArticle, uniquenessAgainst } from "@/lib/engine";
-import { authorVoiceBlock } from "@/lib/authors";
+import { composeArticle, measureArticle, uniquenessAgainst } from "@/lib/engine";
 import { inboundCount } from "@/lib/link-graph";
 import { stripVerify } from "@/lib/markdown";
 import { articleFromMarkdown, ensureMarkdownLinks } from "@/lib/rewrite";
@@ -12,6 +11,8 @@ import { applyFetchedImages } from "@/lib/media-html";
 import { placeImages } from "@/lib/images.functions";
 import { articleImageSrc } from "@/lib/image-urls";
 import { useApp, useHydrated } from "@/lib/store";
+import { serverIdOf } from "@/lib/server-pipeline-merge";
+import { WORKSPACE_ID } from "@/lib/ftp-credentials";
 import { forgetArticles } from "@/lib/ops.functions";
 import type { Article } from "@/lib/types";
 import { Badge, Button, Card, Empty, PageIntro, SkeletonRows, StateNote, StatusGlyph, statusTone, fieldClass, fieldCompact } from "@/components/ui";
@@ -376,9 +377,54 @@ export function ArticleDetail({ id }: { id: string }) {
   const checks = bingChecks(article, corpus, site);
   const score = bingScore(checks);
 
-  // One-click repairs for the three checklist items that are code-fixable.
+  // The server runs the humanizer and assigns the byline; the tab only shows
+  // the result. Doing it here meant the work died with the tab and every other
+  // reader of this article kept the old prose.
+  async function repairOnServer() {
+    if (!article) return;
+    const articleId = serverIdOf(article.id);
+    if (!articleId) {
+      setNote("This article exists only in this browser. Generate it on the server, then humanize it here.");
+      return;
+    }
+    setBusy(true);
+    setNote("");
+    try {
+      const { repairArticle } = await import("@/lib/ops.functions");
+      const result = await repairArticle({
+        data: { workspace_id: WORKSPACE_ID, article_id: articleId, site_ref: siteId ?? "" },
+      });
+      if (!result.ok) {
+        setNote(result.error);
+        return;
+      }
+      const body = articleFromMarkdown(result.markdown);
+      useApp.getState().patchArticle(article.id, {
+        ...body,
+        humanized: true,
+        humanizerScore: result.score,
+        humanizerPasses: result.passes,
+        humanizerNote: result.note,
+        bulletproof: true,
+        authorName: result.authorName,
+        authorBeat: result.authorBeat,
+        authorCity: result.authorCity,
+      });
+      setNote(`Humanized on the server · ${result.note} · prose purity ${result.score}/100`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : "Humanization failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // One-click repairs for the checklist items that are code-fixable.
   function fixCheck(id: string) {
     if (!article) return;
+    if (id === "human" || id === "author") {
+      void repairOnServer();
+      return;
+    }
     if (id === "index") {
       const url = publicUrl.trim();
       patchSite({ robots: "index,follow", ...(url ? { publicUrl: url } : {}) });
@@ -418,43 +464,7 @@ export function ArticleDetail({ id }: { id: string }) {
   }
 
   async function humanize() {
-    setBusy(true);
-    setNote("");
-    try {
-      const { humanizeWithBlader } = await import("@/lib/humanizer");
-      const { keyPoolChat } = await import("@/lib/rewrite");
-      const state = useApp.getState();
-      const pool = keyPool(state, site?.voice.modelKeyId, Date.now(), site?.id).filter((key) => keyCallsModel(key));
-      const result = await humanizeWithBlader({
-        chat: keyPoolChat({ keys: pool, onPenalty: (keyId, status, error) => useApp.getState().penalizeKey(keyId, status, error) }),
-        markdown: article!.markdown,
-        keyword: article!.keyword,
-        title: article!.title,
-        authorName: author?.name ?? article!.authorName,
-        authorVoice: author ? authorVoiceBlock(author) : undefined,
-        authorBannedPhrases: [...(site?.voice.bannedPhrases ?? []), ...(author?.voice.bannedPhrases ?? [])],
-      });
-      const linked = ensureMarkdownLinks(result.markdown, article!.links.map((link) => ({ anchor: link.anchor, slug: link.targetSlug })));
-      const body = articleFromMarkdown(linked);
-      const withImages = applyFetchedImages(body.html, body.markdown, article!.images, article!.keyword);
-      useApp.getState().patchArticle(article!.id, {
-        ...body,
-        html: withImages.html,
-        markdown: withImages.markdown,
-        humanized: true,
-        humanNote: result.note,
-        humanizerScore: result.score,
-        humanizerStripped: result.stripped,
-        humanizerPasses: result.passes,
-        humanizerNote: result.note,
-        bulletproof: true,
-      });
-      setNote(`${result.note} · prose purity ${result.score}/100`);
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : "Humanization failed.");
-    } finally {
-      setBusy(false);
-    }
+    await repairOnServer();
   }
 
   const stats: [string, string][] = [

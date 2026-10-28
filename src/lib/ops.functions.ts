@@ -241,6 +241,50 @@ async function forgetArticlesRequest(payload: {
   return { ok: true };
 }
 
+/**
+ * Humanize one article on the server, and give it a byline if it has none.
+ *
+ * The Fix buttons used to run the humanizer in the tab, which meant the work
+ * died with the tab and every other reader of that article still saw the old
+ * prose. The server owns it now: the row is rewritten once, for everyone.
+ */
+export async function repairArticle(input: {
+  data: { workspace_id: number; article_id: number; site_ref: string };
+}): Promise<
+  | {
+      ok: true;
+      markdown: string;
+      score: number;
+      passes: number;
+      note: string;
+      authorName: string;
+      authorSlug: string;
+      authorBeat: string;
+      authorCity: string;
+    }
+  | { ok: false; error: string }
+> {
+  const res = await post<{
+    ok: boolean;
+    error?: string;
+    article?: {
+      markdown: string;
+      score: number;
+      passes: number;
+      note: string;
+      authorName: string;
+      authorSlug: string;
+      authorBeat: string;
+      authorCity: string;
+    };
+  }>("/api/v1/articles/repair", input.data);
+  if (!res.ok) return { ok: false, error: res.error };
+  if (!res.data.ok || !res.data.article) {
+    return { ok: false, error: res.data.error ?? "The server refused the repair." };
+  }
+  return { ok: true, ...res.data.article };
+}
+
 export async function mirrorArticlesToCms(input: {
   data: { site_ref: string; website_id?: number };
 }): Promise<

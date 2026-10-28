@@ -65,6 +65,11 @@ export type ServerArticle = {
   authorSlug: string | null;
   authorBeat: string | null;
   authorCity: string | null;
+  /** 1 once validation humanized it; rows written before that step send 0. */
+  humanized: number | null;
+  humanizerScore: number | null;
+  humanizerPasses: number | null;
+  humanizerNote: string | null;
 };
 
 /** One internal link, as the server reports it from `article_links`. */
@@ -178,6 +183,10 @@ type RawArticle = {
   author_slug: string | null;
   author_beat: string | null;
   author_city: string | null;
+  humanized?: number | null;
+  humanizer_score?: number | null;
+  humanizer_passes?: number | null;
+  humanizer_note?: string | null;
 };
 
 /** One internal link row as it arrives over the wire. */
@@ -336,6 +345,10 @@ export async function pipelineSnapshot(input: {
           authorSlug: a.author_slug,
           authorBeat: a.author_beat,
           authorCity: a.author_city,
+          humanized: a.humanized ?? null,
+          humanizerScore: a.humanizer_score ?? null,
+          humanizerPasses: a.humanizer_passes ?? null,
+          humanizerNote: a.humanizer_note ?? null,
         }),
       ),
       runs: (raw.runs ?? []).map(

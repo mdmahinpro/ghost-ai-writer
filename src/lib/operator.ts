@@ -296,8 +296,8 @@ export function publishCalendarItemNow(data: Persisted, calendarId: string, item
  */
 export async function pulseCalendars(data: Persisted, now: number): Promise<Persisted | null> {
   if (data.workerPaused) return null;
-  let next = structuredClone(data);
-  let changed = syncCalendarItems(next);
+  const next = structuredClone(data);
+  const changed = syncCalendarItems(next);
   // Queuing due `autoGenerate` items is NOT done here any more. The Rust
   // calendar pulse (`backend/api/src/calendar.rs`) owns it, so a scheduled
   // article starts writing whether or not a tab is open. Doing it in both

@@ -40,6 +40,14 @@ const ID = "srv" as const;
 
 export const serverJobId = (n: number) => `${ID}_job_${n}`;
 export const serverArticleId = (n: number) => `${ID}_art_${n}`;
+
+/**
+ * The server's own id, back out of a UI id.
+ *
+ * Acted-on-by-the-server actions (humanize, byline repair) need the row's real
+ * primary key; the namespaced UI id is all the page holds.
+ */
+export const serverIdOf = (id: string): number => Number(id.split("_").pop() ?? 0) || 0;
 export const serverRunId = (n: number) => `${ID}_run_${n}`;
 
 /** Server job status → the UI's vocabulary. */
@@ -276,6 +284,13 @@ export function toUiArticle(article: ServerArticle, siteUid: string, links: Serv
     // The row's own creation stamp. This was hardcoded to 0, so every
     // server-backed article showed its age from 1970 ("20755d ago").
     publishedAt: article.createdAt ? Date.parse(article.createdAt) || 0 : 0,
+    // Humanization runs inside validation now, so the row knows its own score.
+    // Without this the "Bulletproof humanization" check could never pass on a
+    // server-written article, no matter what the pipeline did to it.
+    humanized: Number(article.humanized ?? 0) === 1,
+    humanizerScore: article.humanizerScore ?? undefined,
+    humanizerPasses: article.humanizerPasses ?? undefined,
+    humanizerNote: article.humanizerNote ?? undefined,
   };
 }
 

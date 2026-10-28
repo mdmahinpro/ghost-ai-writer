@@ -16,6 +16,7 @@
 
 use axum::{extract::Query, extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -66,6 +67,12 @@ pub struct ArticleSummary {
     pub author_slug: Option<String>,
     pub author_beat: Option<String>,
     pub author_city: Option<String>,
+    /// Humanization verdict, written by validation. `humanized` false on rows
+    /// that predate the stage, so the checklist can tell "not yet" from "failed".
+    pub humanized: Option<i64>,
+    pub humanizer_score: Option<i64>,
+    pub humanizer_passes: Option<i64>,
+    pub humanizer_note: Option<String>,
 }
 
 /// One internal link row, as the checklist needs it: which article it belongs
@@ -183,7 +190,8 @@ pub async fn pipeline_state(
         "SELECT id, job_id, site_id, title, slug, keyword, status, created_at,
                 engine, uniqueness_score, intent_match, coverage_score,
                 featured_image_url, featured_alt, content_json, meta_json,
-                author_name, author_slug, author_beat, author_city
+                author_name, author_slug, author_beat, author_city,
+                humanized, humanizer_score, humanizer_passes, humanizer_note
            FROM articles
           WHERE site_id IN (SELECT id FROM sites WHERE workspace_id = ?1)
             AND (?2 IS NULL OR site_id = ?2)
@@ -360,6 +368,128 @@ pub(crate) struct ForgetArticlesRequest {
     /// The site as the studio names it (`sites.client_uid`), or a numeric id.
     site_ref: String,
     slugs: Vec<String>,
+}
+
+/// Humanize one article on demand, and give it a byline if it has none.
+///
+/// This is what the article page's Fix buttons call. The pipeline humanizes
+/// every article during validation, so this exists for rows that were written
+/// before that step existed (and for re-running it after an edit). The work
+/// happens here, on the server, not in the tab that asked for it.
+#[derive(Debug, Deserialize)]
+pub(crate) struct RepairArticleRequest {
+    pub workspace_id: i64,
+    pub article_id: i64,
+    /// The site the browser has open. Used to refuse a row that belongs to a
+    /// different workspace, so a stale tab cannot rewrite someone else's page.
+    #[serde(default)]
+    pub site_ref: String,
+}
+
+pub(crate) async fn repair_article(
+    State(st): State<AppState>,
+    Json(req): Json<RepairArticleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    /// (site_id, title, keyword, content_json, author_name)
+    type RepairRow = (i64, String, String, Option<String>, Option<String>);
+    let row: Option<RepairRow> = sqlx::query_as(
+        "SELECT a.site_id, a.title, COALESCE(a.keyword, ''), a.content_json, a.author_name \
+           FROM articles a JOIN sites s ON s.id = a.site_id \
+          WHERE a.id = ?1 AND s.workspace_id = ?2 AND a.status != 'DELETED'",
+    )
+    .bind(req.article_id)
+    .bind(req.workspace_id)
+    .fetch_optional(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+    let Some((site_id, title, keyword, content_json, author_name)) = row else {
+        return Err(ApiError::BadRequest("no such article in this workspace"));
+    };
+    if !req.site_ref.trim().is_empty() {
+        let site_uid: Option<String> = sqlx::query_scalar(
+            "SELECT COALESCE(NULLIF(client_uid, ''), CAST(id AS TEXT)) FROM sites WHERE id = ?",
+        )
+        .bind(site_id)
+        .fetch_optional(&st.pool)
+        .await
+        .map_err(ApiError::Db)?;
+        if site_uid.as_deref().is_some_and(|uid| uid != req.site_ref.trim()) {
+            return Err(ApiError::BadRequest(
+                "that article belongs to another site in this workspace",
+            ));
+        }
+    }
+
+    // The stored payload is `{markdown, faq}`; only the prose is rewritten.
+    let payload: Value = content_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or_else(|| json!({}));
+    let markdown = payload
+        .get("markdown")
+        .and_then(|m| m.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if markdown.trim().is_empty() {
+        return Err(ApiError::BadRequest("this article has no prose to humanize"));
+    }
+
+    // A byline is part of the repair: the checklist gates on a named author,
+    // and the deterministic byline is the same one validation would assign.
+    let (name, writer_slug, beat, city) = crate::byline::for_article(site_id, &keyword);
+    let author_name = author_name.filter(|n| !n.trim().is_empty()).unwrap_or(name);
+    let context = crate::humanize::Context {
+        title: title.clone(),
+        keyword: keyword.clone(),
+        author_name: author_name.clone(),
+        author_voice: String::new(),
+        banned_phrases: Vec::new(),
+    };
+    let engine = crate::provider::load_engine(&st.pool, req.workspace_id, "text").await.ok();
+    let humanized = crate::humanize::humanize(engine.as_ref(), &markdown, &context).await;
+
+    let mut next = payload.clone();
+    if let Some(object) = next.as_object_mut() {
+        object.insert("markdown".to_string(), json!(humanized.markdown));
+    } else {
+        next = json!({ "markdown": humanized.markdown });
+    }
+    sqlx::query(
+        "UPDATE articles SET content_json = ?, content_format = 'markdown', humanized = 1, \
+         humanizer_score = ?, humanizer_passes = ?, humanizer_note = ?, humanizer_stripped = ?, \
+         author_name = ?, author_slug = ?, author_beat = ?, author_city = ? WHERE id = ?",
+    )
+    .bind(next.to_string())
+    .bind(humanized.score as i64)
+    .bind(humanized.passes as i64)
+    .bind(&humanized.note)
+    .bind(humanized.stripped.join("; "))
+    .bind(&author_name)
+    .bind(&writer_slug)
+    .bind(&beat)
+    .bind(&city)
+    .bind(req.article_id)
+    .execute(&st.pool)
+    .await
+    .map_err(ApiError::Db)?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "article": {
+            "id": req.article_id,
+            "markdown": humanized.markdown,
+            "humanized": true,
+            "score": humanized.score,
+            "passes": humanized.passes,
+            "llm": humanized.llm,
+            "note": humanized.note,
+            "stripped": humanized.stripped,
+            "authorName": author_name,
+            "authorSlug": writer_slug,
+            "authorBeat": beat,
+            "authorCity": city,
+        }
+    })))
 }
 
 /// Mark articles deleted, by site and slug.
@@ -693,7 +823,9 @@ mod tests {
                  engine TEXT, ghost_post_id TEXT, published_at TEXT, uniqueness_score REAL,
                  intent_match REAL, coverage_score REAL, featured_image_url TEXT,
                  featured_alt TEXT, content_json TEXT, meta_json TEXT, content_format TEXT,
-                 author_name TEXT, author_slug TEXT, author_beat TEXT, author_city TEXT)",
+                 author_name TEXT, author_slug TEXT, author_beat TEXT, author_city TEXT,
+                 humanized INTEGER NOT NULL DEFAULT 0, humanizer_score INTEGER,
+                 humanizer_passes INTEGER, humanizer_note TEXT, humanizer_stripped TEXT)",
             "CREATE TABLE article_links (id INTEGER PRIMARY KEY AUTOINCREMENT,
                  article_id INTEGER NOT NULL, direction TEXT NOT NULL DEFAULT 'INCOMING',
                  target_article_id INTEGER, target_slug TEXT, target_title TEXT,
@@ -807,6 +939,7 @@ mod tests {
         Router::new()
             .route("/api/v1/pipeline/state", get(pipeline_state))
             .route("/api/v1/pipeline/requeue", post(requeue_job))
+            .route("/api/v1/articles/repair", post(repair_article))
             .with_state(crate::AppState { pool })
     }
 
@@ -842,6 +975,55 @@ mod tests {
             .unwrap();
         let json = serde_json::from_slice(&bytes).unwrap();
         (status, json)
+    }
+
+    #[tokio::test]
+    async fn repairing_an_article_humanizes_it_and_records_the_score() {
+        let pool = pool().await;
+        seed(&pool).await;
+        // Prose full of tells, as a pre-humanizer row would be.
+        let dirty = "It's not just a grinder, it's a ritual. I hope this helps.\n\n                     We delve into the tapestry of beans — carefully.";
+        sqlx::query("UPDATE articles SET content_json = ?, author_name = NULL WHERE id = 1")
+            .bind(serde_json::json!({ "markdown": dirty, "faq": [] }).to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/articles/repair")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "workspace_id": 1, "article_id": 1, "site_ref": "site_one" })
+                    .to_string(),
+            ))
+            .unwrap();
+        let resp = app(pool.clone()).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["ok"], true, "{body}");
+        let markdown = body["article"]["markdown"].as_str().expect("markdown");
+        assert!(!markdown.contains('—'), "dashes are scrubbed: {markdown}");
+        assert!(
+            !markdown.to_lowercase().contains("i hope this helps"),
+            "residue is scrubbed: {markdown}"
+        );
+        assert!(
+            body["article"]["authorName"].as_str().is_some_and(|n| !n.is_empty()),
+            "a byline is assigned: {body}"
+        );
+
+        // The row itself now carries the verdict, which is what the checklist reads.
+        let row: (i64, Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT humanized, humanizer_score, author_name FROM articles WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, 1, "humanized flag set");
+        assert!(row.1.unwrap_or(0) > 0, "a score is recorded");
+        assert!(row.2.is_some_and(|n| !n.is_empty()), "byline persisted");
     }
 
     #[tokio::test]

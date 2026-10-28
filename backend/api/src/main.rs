@@ -30,6 +30,7 @@ mod ftp_creds;
 mod gate;
 mod ghost;
 mod ghost_api;
+mod humanize;
 mod image;
 mod images;
 mod lease;
@@ -177,6 +178,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/state/reset", post(state::reset_state))
         .route("/v1/pipeline/state", get(pipeline::pipeline_state))
         .route("/v1/articles/forget", post(pipeline::forget_articles))
+        .route("/v1/articles/repair", post(pipeline::repair_article))
         .route("/v1/calendar/preview", get(calendar::calendar_preview))
         // Orders: place, list, cancel. No payment provider lives here — the row
         // is the record of what was bought and for how long.
