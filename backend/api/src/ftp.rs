@@ -518,6 +518,10 @@ pub struct LoginRequest {
     /// Which workspace's sealed password to fall back to when the browser sends none.
     #[serde(default)]
     pub workspace_id: Option<i64>,
+    /// Which site's connection this is. Each site has its own hosting login, so a
+    /// blank password has to resolve against the site, not the whole account.
+    #[serde(default)]
+    pub site_uid: Option<String>,
 }
 
 fn step(name: &str, started: Instant, ok: bool, detail: String) -> Value {
@@ -653,7 +657,8 @@ pub(crate) async fn ftp_test(
     // so the form can submit the other fields without ever holding the secret.
     if req.target.password.trim().is_empty() {
         let workspace = req.workspace_id.unwrap_or(1);
-        match ftp_creds::target(&st.pool, workspace, Some(req.target.clone())).await {
+        let site = req.site_uid.clone().unwrap_or_default();
+        match ftp_creds::target(&st.pool, workspace, &site, Some(req.target.clone())).await {
             Ok(resolved) => req.target = resolved,
             Err(error) => {
                 return Json(serde_json::json!({ "ok": false, "error": error }));
@@ -667,7 +672,10 @@ pub(crate) async fn ftp_upload(
     Json(req): Json<FtpUploadRequest>,
 ) -> Json<serde_json::Value> {
     let workspace_id = req.workspace_id.unwrap_or(1);
-    let target = match ftp_creds::target(&st.pool, workspace_id, Some(req.target.clone())).await {
+    let site_uid = req.site_uid.clone().unwrap_or_default();
+    let target = match ftp_creds::target(&st.pool, workspace_id, &site_uid, Some(req.target.clone()))
+        .await
+    {
         Ok(resolved) => resolved,
         Err(error) => return Json(serde_json::json!({ "ok": false, "error": error })),
     };
@@ -687,10 +695,11 @@ pub(crate) async fn ftp_upload(
     if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         let row: Option<(String, Option<i64>)> = sqlx::query_as(
             "SELECT COALESCE(NULLIF(client_uid, ''), CAST(id AS TEXT)), website_id FROM sites \
-             WHERE workspace_id = ?1 \
+             WHERE workspace_id = ?1 AND (?2 = '' OR client_uid = ?2) \
              ORDER BY CASE WHEN COALESCE(client_uid, '') != '' THEN 0 ELSE 1 END, id LIMIT 1",
         )
         .bind(workspace_id)
+        .bind(&site_uid)
         .fetch_optional(&st.pool)
         .await
         .ok()
@@ -718,6 +727,8 @@ pub(crate) struct FtpUploadRequest {
     via: Option<String>,
     #[serde(default)]
     workspace_id: Option<i64>,
+    #[serde(default)]
+    site_uid: Option<String>,
     #[serde(default)]
     files: Vec<crate::ftp::UploadedFile>,
 }
@@ -1042,6 +1053,7 @@ mod live_tests {
             target: target.clone(),
             via: None,
             workspace_id: None,
+            site_uid: None,
         };
         let login = test_login(&request).await;
         assert_eq!(login["ok"], true, "login + LIST failed: {login}");

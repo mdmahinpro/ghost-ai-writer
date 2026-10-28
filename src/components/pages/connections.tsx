@@ -78,7 +78,7 @@ export function ConnectionsPage() {
   // response — only whether one is on file — so the form can render without it.
   useEffect(() => {
     let live = true;
-    void loadFtpCredentials().then((saved) => {
+    void loadFtpCredentials(siteId).then((saved) => {
       if (!live || !saved) return;
       setFtpHost(saved.host);
       setFtpUser(saved.username);
@@ -94,7 +94,9 @@ export function ConnectionsPage() {
     return () => {
       live = false;
     };
-  }, [verifyProvider]);
+    // siteId is a dependency: switching workspace must re-read that site's
+    // connection instead of leaving the previous one on screen.
+  }, [siteId, verifyProvider]);
 
   async function testLive() {
     const checked = validateGhostUrl(url);
@@ -104,7 +106,7 @@ export function ConnectionsPage() {
     }
     setBusy(true);
     try {
-      const result = await testGhostConnection({ data: { url: checked.url, adminKey } });
+      const result = await testGhostConnection({ data: { url: checked.url, adminKey, siteRef: siteId } });
       // The real key travels to the store whenever the field has one. The
       // "keep key" box used to gate this, which meant a connection that tested
       // fine could never publish: the server holds only `id:••••1234`, and a
@@ -407,6 +409,7 @@ export function ConnectionsPage() {
                     onToggleSteps={() => setShowFtpSteps((open) => !open)}
                     onSave={async (fields) => {
                       const result = await saveFtpCredentials({
+                        siteUid: siteId,
                         host: fields.host,
                         username: fields.user,
                         password: fields.password,
@@ -446,7 +449,7 @@ export function ConnectionsPage() {
                         setFtpTone("danger");
                         setFtpNote("No final answer. The host did not finish explicit TLS within 25 seconds. Check the hostname, port 21, and password.");
                       }, 25000);
-                      void testFtpLogin({ data: { ...fields, workspace_id: WORKSPACE_ID } })
+                      void testFtpLogin({ data: { ...fields, workspace_id: WORKSPACE_ID, site_uid: siteId } })
                         .then((result) => {
                           if (settled) return;
                           setFtpSteps(result.steps ?? []);
@@ -479,7 +482,7 @@ export function ConnectionsPage() {
                     onDisconnect={() => {
                       // Clearing the card must clear the sealed secret as well, or the
                       // connection survives the disconnect server-side.
-                      void forgetFtpCredentials().then((removed) => {
+                      void forgetFtpCredentials(siteId).then((removed) => {
                         setFtpHasPassword(removed ? false : false);
                         setFtpPass("");
                         setFtpNote("Disconnected. The saved login was removed from the server.");

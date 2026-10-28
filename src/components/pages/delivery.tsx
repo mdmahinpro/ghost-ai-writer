@@ -178,7 +178,7 @@ export function DeliveryPage() {
     // browser copy of the provider card is a leftover from when the password
     // lived in localStorage, and it reads "not_connected" even after a verified
     // test, so it must not be the thing that decides whether to upload.
-    const saved = await loadFtpCredentials();
+    const saved = await loadFtpCredentials(siteId);
     if (!saved?.has_password) {
       setUploadNote("No live copy yet. Save the cPanel connection on Connections first.");
       return;
@@ -204,6 +204,7 @@ export function DeliveryPage() {
           path: saved.remote_dir || "/public_html",
           via: "ftps",
           workspace_id: WORKSPACE_ID,
+          site_uid: siteId,
           files,
         },
       });

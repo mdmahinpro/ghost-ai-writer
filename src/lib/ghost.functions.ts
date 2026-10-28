@@ -10,13 +10,20 @@ import { post } from "./api-client";
 type GhostCall = { data: { url: string; adminKey: string } };
 
 export async function testGhostConnection(input: {
-  data: { url?: string; adminKey?: string };
+  data: { url?: string; adminKey?: string; siteRef?: string };
 }): Promise<
   { ok: true; version: string; origin: string } | { ok: false; version: string; origin: string; error: string }
 > {
   const res = await post<{ ok: boolean; version?: string; origin?: string; error?: string }>(
     "/api/v1/ghost/test",
-    { url: input?.data?.url ?? "", admin_key: input?.data?.adminKey ?? "" },
+    {
+      url: input?.data?.url ?? "",
+      admin_key: input?.data?.adminKey ?? "",
+      // Which site this connection belongs to. The server wrote a verified key
+      // to the first site in the account until this was sent, so connecting a
+      // second site overwrote the first one's Ghost.
+      site_ref: input?.data?.siteRef ?? "",
+    },
   );
   if (!res.ok) return { ok: false, version: "", origin: "", error: res.error };
   if (!res.data.ok) {

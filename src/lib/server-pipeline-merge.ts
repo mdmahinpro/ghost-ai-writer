@@ -273,7 +273,9 @@ export function toUiArticle(article: ServerArticle, siteUid: string, links: Serv
       postId: "",
       shots: 0,
     },
-    publishedAt: 0,
+    // The row's own creation stamp. This was hardcoded to 0, so every
+    // server-backed article showed its age from 1970 ("20755d ago").
+    publishedAt: article.createdAt ? Date.parse(article.createdAt) || 0 : 0,
   };
 }
 
@@ -327,10 +329,17 @@ export function mergeSnapshot(
     else linksByArticle.set(link.articleId, [link]);
   }
 
+  // A row the operator deleted is gone, not a draft. Keeping it here meant the
+  // next poll put every deleted article straight back on the page, which reads
+  // as "deleting does nothing".
+  const liveArticles = snapshot.articles.filter(
+    (a) => a.status.toUpperCase() !== "DELETED",
+  );
+
   return {
     jobs: [...snapshot.jobs.map((j) => toUiJob(j, siteUid, snapshot.stages ?? [])), ...keepLocalJobs],
     articles: [
-      ...snapshot.articles.map((a) =>
+      ...liveArticles.map((a) =>
         toUiArticle(a, siteUid, linksByArticle.get(a.id) ?? []),
       ),
       ...keepLocalArticles,

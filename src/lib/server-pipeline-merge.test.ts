@@ -266,3 +266,36 @@ test("merging leaves a different site's server rows alone", () => {
 
   assert.ok(merged.jobs.some((j) => j.id === serverJobId(1)));
 });
+
+test("a deleted server article stays deleted instead of returning as a draft", () => {
+  const snapshot = {
+    jobs: [],
+    runs: [],
+    stages: [],
+    links: [],
+    articles: [
+      serverArticle({ id: 4, status: "PUBLISHED", slug: "kept" }),
+      serverArticle({ id: 5, status: "DELETED", slug: "deleted" }),
+    ],
+  } as unknown as PipelineSnapshot;
+
+  const merged = mergeSnapshot(SITE, snapshot, { jobs: [], articles: [], runs: [] });
+  const slugs = merged.articles.map((article) => article.slug);
+  assert.deepEqual(slugs, ["kept"], "the DELETED row must not be merged back");
+});
+
+test("a server article's age comes from its own created stamp", () => {
+  const withStamp = toUiArticle(
+    serverArticle({ createdAt: "2026-10-01T09:30:00Z" }),
+    SITE,
+    [],
+  );
+  assert.equal(
+    withStamp.publishedAt,
+    Date.parse("2026-10-01T09:30:00Z"),
+    "the age column reads publishedAt, so it must carry the row's stamp",
+  );
+
+  const withoutStamp = toUiArticle(serverArticle({ createdAt: null }), SITE, []);
+  assert.equal(withoutStamp.publishedAt, 0, "no stamp stays unknown rather than inventing one");
+});

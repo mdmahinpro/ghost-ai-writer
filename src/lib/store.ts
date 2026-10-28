@@ -2556,8 +2556,12 @@ export function startServerSync(): void {
     timer = undefined;
     const data = snap(useApp.getState());
     try {
+      const purges = drainPurges();
       const res = await post<{ success: boolean; generation: number }>("/api/v1/state", {
         workspace_id: WORKSPACE_ID,
+        // Tombstones ride with the snapshot, or another window's next save
+        // reinstates everything this one deleted.
+        purges,
         state: { ...data, __generation: lastServerGeneration || undefined },
       });
       if (res.ok && res.data?.generation) lastServerGeneration = String(res.data.generation);

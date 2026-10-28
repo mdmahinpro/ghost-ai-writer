@@ -46,6 +46,43 @@ pub struct StateEnvelope {
 pub struct SaveStateInput {
     pub workspace_id: i64,
     pub state: serde_json::Value,
+    /// Ids the browser deleted since its last save. Another window's stale copy
+    /// used to be able to push a deleted article back into the shared snapshot;
+    /// the tombstone is what makes a delete stick for every window.
+    #[serde(default)]
+    pub purges: Purges,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct Purges {
+    #[serde(default)]
+    pub sites: Vec<String>,
+    #[serde(default)]
+    pub keys: Vec<String>,
+    #[serde(default)]
+    pub articles: Vec<String>,
+}
+
+impl Purges {
+    fn is_empty(&self) -> bool {
+        self.sites.is_empty() && self.keys.is_empty() && self.articles.is_empty()
+    }
+}
+
+/// Drop the tombstoned rows from a snapshot collection before it is stored.
+fn drop_ids(state: &mut serde_json::Value, field: &str, ids: &[String]) {
+    if ids.is_empty() {
+        return;
+    }
+    let Some(rows) = state.get_mut(field).and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    rows.retain(|row| {
+        row.get("id")
+            .and_then(|id| id.as_str())
+            .map(|id| !ids.iter().any(|dead| dead == id))
+            .unwrap_or(true)
+    });
 }
 
 /// What POST /api/v1/state returns. Both Serialize (server → client) and
@@ -117,6 +154,11 @@ pub async fn save_state(
     // client sends plaintext (it must, to render a masked hint); the store is
     // not the place to keep it in the clear.
     let mut state = input.state;
+    if !input.purges.is_empty() {
+        drop_ids(&mut state, "articles", &input.purges.articles);
+        drop_ids(&mut state, "sites", &input.purges.sites);
+        drop_ids(&mut state, "keys", &input.purges.keys);
+    }
     crate::secrets::encrypt_tree(&mut state);
     let payload =
         serde_json::to_string(&state).map_err(|_| ApiError::BadRequest("invalid state JSON"))?;
@@ -276,6 +318,28 @@ mod tests {
     };
     use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
     use tower::ServiceExt;
+
+    #[test]
+    fn a_tombstoned_article_is_removed_from_the_stored_snapshot() {
+        let mut state = serde_json::json!({
+            "articles": [{"id": "srv_art_1"}, {"id": "srv_art_2"}],
+            "sites": [{"id": "site_a"}],
+            "keys": [{"id": "key_1"}],
+        });
+        drop_ids(&mut state, "articles", &["srv_art_1".to_string()]);
+        drop_ids(&mut state, "sites", &["site_a".to_string()]);
+        drop_ids(&mut state, "keys", &[]);
+
+        let ids: Vec<&str> = state["articles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["srv_art_2"], "only the tombstoned row goes");
+        assert!(state["sites"].as_array().unwrap().is_empty());
+        assert_eq!(state["keys"].as_array().unwrap().len(), 1);
+    }
 
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()

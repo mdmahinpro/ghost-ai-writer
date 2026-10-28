@@ -147,12 +147,27 @@ export function ArticlesPage() {
                 return;
               }
               const slugs = articles.filter((article) => picked.includes(article.id)).map((article) => article.slug);
-              // The server keeps its own copy of every article, so tell it too —
-              // otherwise the CMS mirror keeps pushing rows the studio dropped.
-              if (siteId && slugs.length) void forgetArticles({ data: { site_ref: siteId, slugs } });
-              deleteArticles(picked);
-              setPicked([]);
-              setConfirmDelete(false);
+              const doomed = picked;
+              void (async () => {
+                // The server keeps its own copy of every article. Dropping only
+                // the browser's rows left the server's list intact, and the next
+                // poll merged them straight back — which reads as "delete does
+                // nothing". Await the server and say so when it refuses.
+                if (siteId && slugs.length) {
+                  const res = await forgetArticles({ data: { site_ref: siteId, slugs } });
+                  if (!res.ok) {
+                    useApp.setState({
+                      notice: {
+                        tone: "warn",
+                        text: `Removed from this browser, but the server copy stayed (${res.error}). They can reappear on the next sync.`,
+                      },
+                    });
+                  }
+                }
+                deleteArticles(doomed);
+                setPicked([]);
+                setConfirmDelete(false);
+              })();
             }}
           >
             {confirmDelete ? `Delete ${picked.length} for good` : `Delete${picked.length ? ` (${picked.length})` : ""}`}

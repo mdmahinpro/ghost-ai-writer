@@ -22,7 +22,7 @@ export async function uploadAutoBuild(
   // The connection is whatever the server holds for this workspace: the browser
   // no longer has the password, and its provider card still reads "not_connected"
   // after a verified test. Asking the API is the only check that means anything.
-  const saved = await loadFtpCredentials();
+  const saved = await loadFtpCredentials(site.id);
   if (!saved?.has_password) {
     return { ok: false, reason: "Upload skipped. No cPanel connection is saved for this workspace, so the auto-rebuild was recorded and not sent." };
   }
@@ -57,6 +57,7 @@ export async function uploadAutoBuild(
       path: saved.remote_dir || "/public_html",
       via: "ftps",
       workspace_id: WORKSPACE_ID,
+      site_uid: site.id,
       files,
     },
   });

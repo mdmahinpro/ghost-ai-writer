@@ -18,6 +18,9 @@ use sqlx::SqlitePool;
 #[derive(Debug, Serialize)]
 pub struct SavedFtp {
     pub workspace_id: i64,
+    /// The browser site this login belongs to. Empty on a row saved before
+    /// connections were per site.
+    pub site_uid: String,
     pub host: String,
     pub username: String,
     pub port: i64,
@@ -32,6 +35,10 @@ pub struct SavedFtp {
 #[derive(Debug, Deserialize)]
 pub struct SaveRequest {
     pub workspace_id: i64,
+    /// Which browser site this login is for. A workspace can hold several, and
+    /// without this every one of them shared a single FTP login.
+    #[serde(default)]
+    pub site_uid: String,
     pub host: String,
     pub username: String,
     /// Leave empty to keep the password already on file — the form never has to
@@ -65,9 +72,10 @@ type Row = (
     Option<String>,
 );
 
-fn shape(workspace_id: i64, row: Row) -> SavedFtp {
+fn shape(workspace_id: i64, site_uid: &str, row: Row) -> SavedFtp {
     SavedFtp {
         workspace_id,
+        site_uid: site_uid.to_string(),
         host: row.0,
         username: row.1,
         // row.2 is password_enc; never handed to a caller of `load`.
@@ -80,16 +88,29 @@ fn shape(workspace_id: i64, row: Row) -> SavedFtp {
     }
 }
 
-pub async fn load(pool: &SqlitePool, workspace_id: i64) -> Result<Option<SavedFtp>, String> {
+/// Read the connection saved for one site.
+///
+/// A workspace holds several sites and each has its own hosting login, so the
+/// row is addressed by `(workspace, site)`. An empty `site_uid` means the
+/// account-level row written before connections were per site; a caller that
+/// knows its site never reaches it, which is what stops a new workspace from
+/// inheriting the previous site's login.
+pub async fn load(
+    pool: &SqlitePool,
+    workspace_id: i64,
+    site_uid: &str,
+) -> Result<Option<SavedFtp>, String> {
+    let site = site_uid.trim();
     let row: Option<Row> = sqlx::query_as(
         "SELECT host, username, password_enc, port, remote_dir, public_url, trust_cert, verified_at \
-         FROM ftp_connections WHERE workspace_id = ?1",
+         FROM ftp_connections WHERE workspace_id = ?1 AND site_uid = ?2",
     )
     .bind(workspace_id)
+    .bind(site)
     .fetch_optional(pool)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(row.map(|row| shape(workspace_id, row)))
+    Ok(row.map(|row| shape(workspace_id, site, row)))
 }
 
 pub async fn save(pool: &SqlitePool, req: &SaveRequest, now: &str) -> Result<SavedFtp, String> {
@@ -98,10 +119,13 @@ pub async fn save(pool: &SqlitePool, req: &SaveRequest, now: &str) -> Result<Sav
     if host.is_empty() || username.is_empty() {
         return Err("Hostname and username are both required.".into());
     }
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT password_enc FROM ftp_connections WHERE workspace_id = ?1")
-            .bind(req.workspace_id)
-            .fetch_optional(pool)
+    let site = req.site_uid.trim();
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT password_enc FROM ftp_connections WHERE workspace_id = ?1 AND site_uid = ?2",
+    )
+    .bind(req.workspace_id)
+    .bind(site)
+    .fetch_optional(pool)
             .await
             .map_err(|error| error.to_string())?;
     let password = req.password.trim();
@@ -117,9 +141,9 @@ pub async fn save(pool: &SqlitePool, req: &SaveRequest, now: &str) -> Result<Sav
     };
     sqlx::query(
         "INSERT INTO ftp_connections \
-           (workspace_id, host, username, password_enc, port, remote_dir, public_url, trust_cert, verified_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
-         ON CONFLICT(workspace_id) DO UPDATE SET \
+           (workspace_id, site_uid, host, username, password_enc, port, remote_dir, public_url, trust_cert, verified_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+         ON CONFLICT(workspace_id, site_uid) DO UPDATE SET \
            host=excluded.host, username=excluded.username, password_enc=excluded.password_enc, \
            port=excluded.port, remote_dir=excluded.remote_dir, public_url=excluded.public_url, \
            trust_cert=excluded.trust_cert, \
@@ -127,6 +151,7 @@ pub async fn save(pool: &SqlitePool, req: &SaveRequest, now: &str) -> Result<Sav
            updated_at=excluded.updated_at",
     )
     .bind(req.workspace_id)
+    .bind(site)
     .bind(host)
     .bind(username)
     .bind(&password_enc)
@@ -139,14 +164,15 @@ pub async fn save(pool: &SqlitePool, req: &SaveRequest, now: &str) -> Result<Sav
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
-    load(pool, req.workspace_id)
+    load(pool, req.workspace_id, site)
         .await?
         .ok_or_else(|| "The connection was written but could not be read back.".to_string())
 }
 
-pub async fn forget(pool: &SqlitePool, workspace_id: i64) -> Result<bool, String> {
-    let result = sqlx::query("DELETE FROM ftp_connections WHERE workspace_id = ?1")
+pub async fn forget(pool: &SqlitePool, workspace_id: i64, site_uid: &str) -> Result<bool, String> {
+    let result = sqlx::query("DELETE FROM ftp_connections WHERE workspace_id = ?1 AND site_uid = ?2")
         .bind(workspace_id)
+        .bind(site_uid.trim())
         .execute(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -160,12 +186,15 @@ pub async fn forget(pool: &SqlitePool, workspace_id: i64) -> Result<bool, String
 pub async fn target(
     pool: &SqlitePool,
     workspace_id: i64,
+    site_uid: &str,
     overrides: Option<FtpTarget>,
 ) -> Result<FtpTarget, String> {
-    let saved = load(pool, workspace_id).await?;
-    let sealed: Option<(String,)> =
-        sqlx::query_as("SELECT password_enc FROM ftp_connections WHERE workspace_id = ?1")
-            .bind(workspace_id)
+    let saved = load(pool, workspace_id, site_uid).await?;
+    let sealed: Option<(String,)> = sqlx::query_as(
+        "SELECT password_enc FROM ftp_connections WHERE workspace_id = ?1 AND site_uid = ?2",
+    )
+    .bind(workspace_id)
+    .bind(site_uid.trim())
             .fetch_optional(pool)
             .await
             .map_err(|error| error.to_string())?;
@@ -240,7 +269,11 @@ pub(crate) async fn load_ftp_credentials(
     State(st): State<AppState>,
     Query(params): Query<WorkspaceQuery>,
 ) -> Result<Json<Option<crate::ftp_creds::SavedFtp>>, ApiError> {
-    crate::ftp_creds::load(&st.pool, params.workspace_id.unwrap_or(1))
+    crate::ftp_creds::load(
+        &st.pool,
+        params.workspace_id.unwrap_or(1),
+        params.site_uid.as_deref().unwrap_or(""),
+    )
         .await
         .map(Json)
         .map_err(ApiError::Invalid)
@@ -249,7 +282,11 @@ pub(crate) async fn forget_ftp_credentials(
     State(st): State<AppState>,
     Query(params): Query<WorkspaceQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let removed = crate::ftp_creds::forget(&st.pool, params.workspace_id.unwrap_or(1))
+    let removed = crate::ftp_creds::forget(
+        &st.pool,
+        params.workspace_id.unwrap_or(1),
+        params.site_uid.as_deref().unwrap_or(""),
+    )
         .await
         .map_err(ApiError::Invalid)?;
     Ok(Json(serde_json::json!({ "removed": removed })))
@@ -259,6 +296,9 @@ pub(crate) async fn forget_ftp_credentials(
 pub(crate) struct WorkspaceQuery {
     #[serde(default)]
     workspace_id: Option<i64>,
+    /// Which site's connection to read. Absent means the account-level row.
+    #[serde(default)]
+    site_uid: Option<String>,
 }
 
 #[cfg(test)]
@@ -277,11 +317,14 @@ mod tests {
             .unwrap();
         sqlx::query(
             "CREATE TABLE ftp_connections (
-               workspace_id INTEGER PRIMARY KEY REFERENCES workspaces(id),
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+               site_uid TEXT NOT NULL DEFAULT '',
                host TEXT NOT NULL, username TEXT NOT NULL, password_enc TEXT NOT NULL,
                port INTEGER NOT NULL DEFAULT 21, remote_dir TEXT NOT NULL DEFAULT '/public_html',
                public_url TEXT NOT NULL DEFAULT '', trust_cert INTEGER NOT NULL DEFAULT 1,
-               verified_at TEXT, updated_at TEXT NOT NULL)",
+               verified_at TEXT, updated_at TEXT NOT NULL,
+               UNIQUE (workspace_id, site_uid))",
         )
         .execute(&pool)
         .await
@@ -292,6 +335,7 @@ mod tests {
     fn request(password: &str) -> SaveRequest {
         SaveRequest {
             workspace_id: 1,
+            site_uid: "site_alpha".into(),
             host: "ftp.example.com".into(),
             username: "u605638561".into(),
             password: password.into(),
@@ -348,7 +392,7 @@ mod tests {
             .expect("second");
         assert_eq!(saved.host, "ftp2.example.com");
         assert!(saved.has_password);
-        let target = target(&pool, 1, None).await.expect("target");
+        let target = target(&pool, 1, "site_alpha", None).await.expect("target");
         assert_eq!(target.password, "keep-me");
         assert_eq!(target.host, "ftp2.example.com");
     }
@@ -376,7 +420,7 @@ mod tests {
             path: None,
             trust_cert: None,
         };
-        let target = target(&pool, 1, Some(typed)).await.expect("target");
+        let target = target(&pool, 1, "site_alpha", Some(typed)).await.expect("target");
         assert_eq!(target.password, "new");
         assert_eq!(
             target.host, "ftp.example.com",
@@ -390,7 +434,51 @@ mod tests {
         save(&pool, &request("x"), "2026-01-01T00:00:00Z")
             .await
             .expect("save");
-        assert!(forget(&pool, 1).await.expect("forget"));
-        assert!(load(&pool, 1).await.expect("load").is_none());
+        assert!(forget(&pool, 1, "site_alpha").await.expect("forget"));
+        assert!(load(&pool, 1, "site_alpha").await.expect("load").is_none());
+    }
+
+    #[tokio::test]
+    async fn each_site_keeps_its_own_login() {
+        let pool = pool().await;
+        save(&pool, &request("alpha-secret"), "2026-01-01T00:00:00Z")
+            .await
+            .expect("alpha");
+        let mut beta = request("beta-secret");
+        beta.site_uid = "site_beta".into();
+        beta.host = "ftp.beta.example".into();
+        beta.public_url = Some("https://beta.example".into());
+        save(&pool, &beta, "2026-01-01T00:00:00Z")
+            .await
+            .expect("beta");
+
+        let alpha = load(&pool, 1, "site_alpha")
+            .await
+            .expect("load")
+            .expect("alpha row");
+        let beta_row = load(&pool, 1, "site_beta")
+            .await
+            .expect("load")
+            .expect("beta row");
+        assert_eq!(alpha.host, "ftp.example.com");
+        assert_eq!(beta_row.host, "ftp.beta.example");
+        assert_eq!(alpha.site_uid, "site_alpha");
+
+        // A site with nothing saved must not inherit the neighbour's login.
+        assert!(load(&pool, 1, "site_gamma").await.expect("load").is_none());
+        assert_eq!(
+            target(&pool, 1, "site_alpha", None)
+                .await
+                .expect("alpha target")
+                .password,
+            "alpha-secret"
+        );
+        assert_eq!(
+            target(&pool, 1, "site_beta", None)
+                .await
+                .expect("beta target")
+                .password,
+            "beta-secret"
+        );
     }
 }

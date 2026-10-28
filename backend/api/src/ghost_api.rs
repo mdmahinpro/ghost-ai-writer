@@ -76,6 +76,11 @@ pub struct GhostTarget {
     pub url: String,
     #[serde(default)]
     pub admin_key: String,
+    /// The browser site this connection belongs to. Without it a verified key
+    /// was written to the *first* site in the workspace, so connecting a second
+    /// site silently overwrote the first one's Ghost.
+    #[serde(default)]
+    pub site_ref: String,
 }
 
 fn client() -> &'static reqwest::Client {
@@ -414,15 +419,19 @@ pub(crate) async fn ghost_test(
         let key = req.admin_key.trim().to_string();
         if !key.is_empty() && !key.contains('•') {
             let sealed = crate::secrets::seal_secret(&key);
+            let site_ref = req.site_ref.trim();
             let saved = sqlx::query(
                 "UPDATE websites SET ghost_mode = 'LIVE', ghost_url = ?, ghost_admin_key_enc = ? \
                  WHERE id = (SELECT website_id FROM sites \
                              WHERE workspace_id = ?1 AND website_id IS NOT NULL \
-                             ORDER BY id LIMIT 1)",
+                               AND (?2 = '' OR client_uid = ?2) \
+                             ORDER BY CASE WHEN COALESCE(client_uid, '') != '' THEN 0 ELSE 1 END, \
+                                      id LIMIT 1)",
             )
             .bind(&origin)
             .bind(&sealed)
             .bind(crate::default_workspace())
+            .bind(site_ref)
             .execute(&st.pool)
             .await;
             if let Some(object) = out.as_object_mut() {
@@ -768,6 +777,7 @@ pub async fn publish(req: &PublishRequest) -> Value {
     let target = GhostTarget {
         url: req.url.clone(),
         admin_key: req.admin_key.clone(),
+        site_ref: String::new(),
     };
     let (origin, token) = match resolve(&target) {
         Ok(pair) => pair,
@@ -1011,6 +1021,7 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
     let target = GhostTarget {
         url: req.url.clone(),
         admin_key: req.admin_key.clone(),
+        site_ref: String::new(),
     };
     let (origin, token) = match resolve(&target) {
         Ok(pair) => pair,
