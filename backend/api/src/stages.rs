@@ -318,19 +318,39 @@ pub fn validate_metadata(v: &Value) -> Result<Metadata, Vec<String>> {
 }
 
 /// Their stage-1 prompt shape: intent + coverage contract, no prose yet.
-pub fn blueprint_prompt(keyword: &str, site: &str) -> (String, String) {
+pub fn blueprint_prompt(keyword: &str, site: &str, existing: &[String]) -> (String, String) {
     let system = format!(
         "You plan articles for the site {site}. You return only JSON.\n\
          Work out what the searcher actually needs, then state the coverage contract \
          the draft must satisfy. Sections are questions or concrete claims, never \
-         labels like 'Introduction' or 'Conclusion'. No marketing language."
+         labels like 'Introduction' or 'Conclusion'. No marketing language.\n\
+         When the site has already published on this topic you must take a \
+         different route: a new reader question, a narrower case, or a concrete \
+         comparison the existing pages do not make. Do not restate their sections \
+         in different words."
     );
+    // The site's own back catalogue. Without this the planner re-derived the
+    // same six sections for every keyword in a cluster, which is why
+    // uniqueness sat at 51-70% no matter how long the article was.
+    let avoid = if existing.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nAlready published on this site — do not repeat these angles, titles or sections:\n{}",
+            existing
+                .iter()
+                .map(|line| format!("- {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
     let user = format!(
-        "Keyword: {keyword}\n\n\
+        "Keyword: {keyword}{avoid}\n\n\
          Return JSON with exactly these keys:\n\
          - intent: the search intent in a few words\n\
-         - angle: the specific angle this article takes\n\
-         - titleHint: a working title\n\
+         - angle: the specific angle this article takes, and how it differs from \
+           anything already published on the site\n\
+         - titleHint: a working title that no published page already uses\n\
          - mustCover: array of 3 to 10 facts or questions the draft must cover\n\
          - sections: array of 1 to 12 objects, each {{\"heading\": string, \"covers\": string}}\n\
          Every mustCover item must map to at least one section."
@@ -836,7 +856,37 @@ pub async fn run_blueprint(
     now: &str,
 ) -> Result<StageOutcome, StageError> {
     let article_id = ensure_article(pool, job_id, site_id, website_id, keyword, now).await?;
-    let (system, user) = blueprint_prompt(keyword, site_name);
+    // What this site has already published, as a list the planner can avoid.
+    // Titles alone are not enough: the sections are what it was copying.
+    let existing_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT title, COALESCE(keyword, ''), content_json FROM articles \
+         WHERE site_id = ? AND id != ? AND status != 'DELETED' ORDER BY id DESC LIMIT 25",
+    )
+    .bind(site_id)
+    .bind(article_id)
+    .fetch_all(pool)
+    .await?;
+    let existing: Vec<String> = existing_rows
+        .iter()
+        .map(|(title, keyword, content)| {
+            let heads = content
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                .and_then(|payload| {
+                    payload
+                        .get("markdown")
+                        .and_then(|m| m.as_str())
+                        .map(|markdown| markdown_sections(markdown, title).join(" / "))
+                })
+                .unwrap_or_default();
+            if heads.is_empty() {
+                format!("\"{title}\" (query: {keyword})")
+            } else {
+                format!("\"{title}\" (query: {keyword}) — sections: {heads}")
+            }
+        })
+        .collect();
+    let (system, user) = blueprint_prompt(keyword, site_name, &existing);
     let (bp, spend, attempts) = call_validated(
         pool,
         engine,
@@ -1537,21 +1587,25 @@ pub fn uniqueness_against(
     if corpus.is_empty() {
         return 1.0;
     }
-    let mine = content_tokens(&format!("{title} {keyword} {heads}"));
+    let mine_heads = content_tokens(heads);
+    let mine_keys = content_tokens(keyword);
     let mut max: f64 = 0.0;
     for item in corpus {
+        // An article is a duplicate when it says the same things, not when its
+        // title shares words. Sections carry the argument, so they dominate;
+        // when a sibling predates heading capture its title stands in, which is
+        // the closest thing it has to a content signature.
+        let their_heads = if item.heads.trim().is_empty() {
+            content_tokens(&item.title)
+        } else {
+            content_tokens(&item.heads)
+        };
+        let head_overlap = token_overlap(&mine_heads, &their_heads);
         let title_hit = crate::gate::lexical_similarity(title, &item.title)
             .max(crate::gate::lexical_similarity(&slugify(title), &item.slug));
-        let overlap = token_overlap(
-            &mine,
-            &content_tokens(&format!("{} {}", item.title, item.keyword)),
-        );
-        let combined = title_hit * 0.75 + overlap * 0.25;
-        max = max.max(if title_hit > 0.82 {
-            title_hit
-        } else {
-            combined
-        });
+        let keyword_overlap = token_overlap(&mine_keys, &content_tokens(&item.keyword));
+        let combined = head_overlap * 0.72 + title_hit * 0.18 + keyword_overlap * 0.10;
+        max = max.max(combined);
     }
     // TS: `Math.round((1 - max) * 1000) / 1000` — the stored number is the
     // displayed one, rounded to three decimals. (`* 1000.0 / 1000.0` would be
@@ -1964,8 +2018,8 @@ pub async fn run_validation(
 
     // 1 + 2. Corpus and gate. The job's own article is excluded: its slug and
     // keyword are this article's, so including it would be an L1 self-refusal.
-    let corpus_rows: Vec<(i64, String, String, String)> = sqlx::query_as(
-        "SELECT id, title, COALESCE(keyword, ''), slug FROM articles \
+    let corpus_rows: Vec<(i64, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, title, COALESCE(keyword, ''), slug, content_json FROM articles \
          WHERE site_id = ? AND id != ? AND status != 'DELETED' ORDER BY id",
     )
     .bind(site_id)
@@ -1980,10 +2034,20 @@ pub async fn run_validation(
     let (links_min, links_max) = (2usize, 4usize);
     let corpus: Vec<crate::gate::CorpusItem> = corpus_rows
         .iter()
-        .map(|(_, t, k, s)| crate::gate::CorpusItem {
+        .map(|(_, t, k, s, content)| crate::gate::CorpusItem {
             title: t.clone(),
             keyword: k.clone(),
             slug: s.clone(),
+            heads: content
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                .and_then(|payload| {
+                    payload
+                        .get("markdown")
+                        .and_then(|m| m.as_str())
+                        .map(|markdown| markdown_sections(markdown, t).join(" "))
+                })
+                .unwrap_or_default(),
         })
         .collect();
 
@@ -2041,7 +2105,7 @@ pub async fn run_validation(
     let mut ranked: Vec<(f64, String, String)> = Vec::new();
     let mine_label = format!("{title} {keyword}");
     let mine_md = crate::gate::hash_embed(&mine_label);
-    for (_aid, t, k, s) in &corpus_rows {
+    for (_aid, t, k, s, _content) in &corpus_rows {
         let their_label = format!("{t} {k}");
         let sim = crate::gate::cosine(&mine_md, &crate::gate::hash_embed(&their_label))
             .max(crate::gate::lexical_similarity(&mine_label, &their_label));
@@ -2091,8 +2155,8 @@ pub async fn run_validation(
         }
         corpus_rows
             .iter()
-            .find(|(_, _, _, s)| s == slug)
-            .map(|(_, t, _, _)| t.clone())
+            .find(|(_, _, _, s, _)| s == slug)
+            .map(|(_, t, _, _, _)| t.clone())
     };
     let mut link_targets: Vec<(String, String, String)> = Vec::new();
     for link in model_links {
@@ -2435,6 +2499,63 @@ pub async fn run_validation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Uniqueness is a content measure now, so two pages can share a topic and
+    /// still be distinct — and two pages that repeat each other cannot hide
+    /// behind different titles.
+    #[test]
+    fn uniqueness_follows_the_sections_not_the_title() {
+        let corpus = [crate::gate::CorpusItem {
+            title: "How to store coffee beans".to_string(),
+            keyword: "coffee storage".to_string(),
+            slug: "how-to-store-coffee-beans".to_string(),
+            heads: "How long beans keep / Freezer versus cupboard / What oxygen does to roast".to_string(),
+        }];
+        // Same topic, same title shape, completely different argument.
+        let different = uniqueness_against(
+            "How to store coffee beans",
+            "coffee storage",
+            "Why one-way valves matter / Storing in the bag it came in / When stale is still fine",
+            &corpus,
+        );
+        assert!(
+            different > 0.7,
+            "different sections must score high even with a near-identical title: {different}"
+        );
+
+        // Same argument, rewritten.
+        let repeated = uniqueness_against(
+            "Storing coffee: how long beans keep",
+            "coffee storage",
+            "How long beans keep / Freezer versus cupboard / What oxygen does to roast",
+            &corpus,
+        );
+        assert!(
+            repeated < 0.35,
+            "the same sections must score as a duplicate: {repeated}"
+        );
+        assert!(different > repeated, "{different} should beat {repeated}");
+    }
+
+    #[test]
+    fn the_planner_is_told_what_the_site_already_published() {
+        let (_, user) = blueprint_prompt(
+            "coffee storage",
+            "Coffee Daily",
+            &["\"How to store coffee beans\" (query: coffee storage) — sections: How long beans keep / Freezer versus cupboard".to_string()],
+        );
+        assert!(user.contains("Already published on this site"), "{user}");
+        assert!(user.contains("How long beans keep"), "the sections to avoid are listed: {user}");
+        assert!(
+            user.contains("how it differs from"),
+            "the angle must say how it differs: {user}"
+        );
+
+        // A brand new site has nothing to avoid, so the block stays out.
+        let (_, fresh) = blueprint_prompt("coffee storage", "Coffee Daily", &[]);
+        assert!(!fresh.contains("Already published on this site"), "{fresh}");
+    }
+
 
     /// Models wrap JSON in fences or add prose around it. Parsing the raw text
     /// turned those replies into hard stage failures even though the JSON was

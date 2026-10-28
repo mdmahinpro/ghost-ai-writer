@@ -413,14 +413,21 @@ function tokenOverlap(left: string[], right: string[]): number {
 
 export function uniquenessAgainst(title: string, keyword: string, corpus: CorpusItem[], sections?: { heading: string; paragraphs: string[] }[]): number {
   if (!corpus.length) return 1;
-  const heads = (sections ?? []).map((section) => section.heading).join(" ");
-  const mine = contentTokens(`${title} ${keyword} ${heads}`);
+  // Section headings carry the argument, so they dominate the comparison. The
+  // old formula weighted the title at 0.75, which made two genuinely different
+  // articles on neighbouring keywords score ~50% and hid real duplication
+  // behind a number nobody could act on. Mirrors `uniqueness_against` in
+  // backend/api/src/stages.rs — the two must agree, or the page and the stored
+  // score disagree about the same article.
+  const mineHeads = contentTokens((sections ?? []).map((section) => section.heading).join(" "));
+  const mineKeys = contentTokens(keyword);
   let max = 0;
   for (const item of corpus) {
+    const theirHeads = item.sample?.trim() ? contentTokens(item.sample) : contentTokens(item.title);
+    const headOverlap = tokenOverlap(mineHeads, theirHeads);
     const titleHit = Math.max(lexicalSimilarity(title, item.title), lexicalSimilarity(slugify(title), item.slug));
-    const overlap = tokenOverlap(mine, contentTokens(`${item.title} ${item.keyword}`));
-    const combined = titleHit * 0.75 + overlap * 0.25;
-    max = Math.max(max, titleHit > 0.82 ? titleHit : combined);
+    const keywordOverlap = tokenOverlap(mineKeys, contentTokens(item.keyword));
+    max = Math.max(max, headOverlap * 0.72 + titleHit * 0.18 + keywordOverlap * 0.1);
   }
   return Math.round((1 - max) * 1000) / 1000;
 }

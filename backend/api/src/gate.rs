@@ -153,6 +153,11 @@ pub struct CorpusItem {
     pub title: String,
     pub keyword: String,
     pub slug: String,
+    /// The page's section headings, joined. This is what makes a "content
+    /// uniqueness" number measure content: before it existed the score was
+    /// mostly a title comparison, so two articles on neighbouring keywords
+    /// scored ~50% no matter how different the prose was.
+    pub heads: String,
 }
 
 /// `gateText` with `allowVariants = false` (the publish path), plus the
@@ -354,6 +359,7 @@ mod tests {
             title: "When A PhD Stipend Stops".into(),
             keyword: "stipend cut guidance".into(),
             slug: "when-a-phd-stipend-stops".into(),
+            heads: String::new(),
         }];
         let g = gate_text("Totally Different Title", "Stipend Cut Guidance!", &corpus);
         assert!(matches!(g.layer, "L1"));
@@ -368,6 +374,7 @@ mod tests {
             title: "From Academia to Industry R&D".into(),
             keyword: "phd career transition from academia to industry r&d".into(),
             slug: "phd-career-transition-academia-to-industry-rd".into(),
+            heads: String::new(),
         }];
         let g = gate_text(
             "Leaving Academia For Industry",
@@ -385,6 +392,7 @@ mod tests {
             title: "From Academia to Industry R&D".into(),
             keyword: "phd career transition academia to industry r&d".into(),
             slug: "phd-career-transition-academia-to-industry-rd".into(),
+            heads: String::new(),
         }];
         let g = gate_text(
             "How To Respond To Peer Review Comments",
@@ -403,6 +411,7 @@ mod tests {
             title: "Something Else".into(),
             keyword: "unrelated keyword".into(),
             slug: "my-slug".into(),
+            heads: String::new(),
         }];
         let g = gate_text("My Slug", "completely separate", &corpus);
         assert!(matches!(g.layer, "L1"), "slug match is L1: {g:?}");
@@ -414,6 +423,7 @@ mod tests {
             title: "The 2026 Guide To Resolving Herd Health Conflicts".into(),
             keyword: "herd health conflict guide".into(),
             slug: "g-a".into(),
+            heads: String::new(),
         }];
         let g = gate_text(
             "The 2026 Guide To Resolving Herd Health Conflicts",
@@ -430,11 +440,13 @@ mod tests {
                 title: "Cold Storage For Winter Feed".into(),
                 keyword: "winter feed storage".into(),
                 slug: "winter-feed".into(),
+                heads: String::new(),
             },
             CorpusItem {
                 title: "Reading A Calfs Eye Teeth".into(),
                 keyword: "calf age estimation".into(),
                 slug: "calf-teeth".into(),
+                heads: String::new(),
             },
         ];
         let g = gate_text(

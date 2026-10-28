@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { cosine, embed, embedAllForL3, embedForL3, normalize } from "./l3-embed.ts";
+import { uniquenessAgainst } from "./engine.ts";
 
 function lexical(left: string, right: string): number {
   const a = new Set(normalize(left).split(/\s+/).filter(Boolean));
@@ -89,4 +90,35 @@ test("a reworded title shares one provider vector and clears the L3 cosine gate"
   assert.equal(bundled.source, "provider");
   assert.equal(bundled.vectors[0]!.length, bundled.vectors[1]!.length);
   assert.ok(cosine(bundled.vectors[0]!, bundled.vectors[1]!) > 0.88);
+});
+
+test("uniqueness measures the article, not its title", () => {
+  const corpus = [
+    {
+      title: "How to store coffee beans",
+      keyword: "coffee storage",
+      slug: "how-to-store-coffee-beans",
+      sample: "How long beans keep. Freezer versus cupboard. What oxygen does to roast",
+    },
+  ];
+
+  // Same query and near-identical title, completely different argument.
+  const different = uniquenessAgainst("How to store coffee beans", "coffee storage", corpus, [
+    { heading: "Why one-way valves matter", paragraphs: [] },
+    { heading: "Storing in the bag it came in", paragraphs: [] },
+    { heading: "When stale is still fine", paragraphs: [] },
+  ]);
+  assert.ok(different > 0.7, `different sections must score high: ${different}`);
+
+  // Same argument, reworded: the sections repeat, so this is the duplicate.
+  const repeated = uniquenessAgainst("Storing coffee: how long beans keep", "coffee storage", corpus, [
+    { heading: "How long beans keep", paragraphs: [] },
+    { heading: "Freezer versus cupboard", paragraphs: [] },
+    { heading: "What oxygen does to roast", paragraphs: [] },
+  ]);
+  assert.ok(repeated < 0.35, `the same sections must score as a duplicate: ${repeated}`);
+  assert.ok(different > repeated, `${different} should beat ${repeated}`);
+
+  // No siblings, nothing to overlap with.
+  assert.equal(uniquenessAgainst("How to store coffee beans", "coffee storage", [], []), 1);
 });
