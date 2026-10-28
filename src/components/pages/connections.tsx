@@ -166,7 +166,7 @@ export function ConnectionsPage() {
               {ghost.corpus === "SYNCING" ? "Syncing…" : "Sync inventory"}
             </Button>
             <Button disabled={busy} onClick={() => void testLive()}>
-              {busy ? "Testing…" : "Connect & verify live"}
+              {busy ? "Testing…" : ghost.status === "connected" ? "Verify again" : "Connect & verify live"}
             </Button>
           </div>
         }
@@ -177,9 +177,18 @@ export function ConnectionsPage() {
           <StatusPill status={ghost.status} />
           {ghost.version ? <Pill>{ghost.version}</Pill> : null}
           <StatusPill status={ghost.corpus} />
-          <Button variant="danger" size="sm" className="ml-auto" onClick={disconnectGhost}>
-            Disconnect
-          </Button>
+          {ghost.status === "connected" ? (
+            <Button variant="danger" size="sm" className="ml-auto" onClick={disconnectGhost}>
+              Disconnect
+            </Button>
+          ) : (
+            /* Nothing is connected, so "Disconnect" was an offer to undo something
+               that did not exist — and the page had no way to connect from the
+               card at all. Offer the action that is actually available. */
+            <Button size="sm" className="ml-auto" disabled={busy} onClick={() => void testLive()}>
+              {busy ? "Connecting…" : "Connect"}
+            </Button>
+          )}
         </div>
         <div className="space-y-4 px-5 py-4">
           <p className="text-[13px] leading-6 text-muted">

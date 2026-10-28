@@ -82,6 +82,56 @@ fn client() -> &'static reqwest::Client {
     ghost::client()
 }
 
+/// Name why the request never reached Ghost.
+///
+/// reqwest's Display is the same "error sending request for url (…)" for every
+/// transport failure — DNS, refused connection, timeout, and an untrusted
+/// certificate all read alike. The cause is only in the source chain, so read
+/// it and say what happened: the operator was shown "error sending request" for
+/// a host serving its hosting panel's default certificate, and went looking for
+/// a bad key when the problem was the domain's TLS.
+fn transport_error(origin: &str, error: &reqwest::Error) -> String {
+    let mut chain = String::new();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(error);
+    while let Some(cause) = source {
+        chain.push_str(&cause.to_string().to_ascii_lowercase());
+        chain.push(' ');
+        source = std::error::Error::source(cause);
+    }
+    if chain.contains("certificate")
+        || chain.contains("unknownissuer")
+        || chain.contains("notvalidforname")
+        || chain.contains("handshake")
+    {
+        return format!(
+            "{origin} served a TLS certificate that is not trusted, so the request never reached \
+             Ghost. This is not a key problem: fix the domain's certificate (a hosting panel's \
+             default certificate is the usual cause) — browsers refuse this URL for the same \
+             reason. Detail: {}",
+            ghost::safe_message(chain.trim())
+        );
+    }
+    if chain.contains("dns") || chain.contains("lookup") || chain.contains("name or service") {
+        return format!(
+            "{origin} does not resolve in DNS. Check the hostname — a cms. subdomain that was \
+             never created lands here."
+        );
+    }
+    if error.is_timeout() || chain.contains("timed out") {
+        return format!(
+            "{origin} did not answer within 25 s. The host may be down, or something in front of \
+             it is dropping connections."
+        );
+    }
+    if error.is_connect() || chain.contains("connection refused") {
+        return format!(
+            "Nothing accepted a connection at {origin}. The host resolved, but no HTTPS service \
+             is listening there."
+        );
+    }
+    ghost::safe_message(&error.to_string())
+}
+
 /// Call the Admin API. Redirects are refused: a redirect means the URL is not
 /// the canonical origin, and the token must not be replayed to a new host.
 async fn admin_get(origin: &str, path: &str, token: &str) -> Result<(u16, String), String> {
@@ -91,7 +141,7 @@ async fn admin_get(origin: &str, path: &str, token: &str) -> Result<(u16, String
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| ghost::safe_message(&e.to_string()))?;
+        .map_err(|e| transport_error(origin, &e))?;
     let status = resp.status();
     if status.is_redirection() {
         return Err("Redirects are blocked. Use the canonical https origin.".to_string());
@@ -609,7 +659,7 @@ async fn admin_json(
     let resp = request
         .send()
         .await
-        .map_err(|e| ghost::safe_message(&e.to_string()))?;
+        .map_err(|e| transport_error(origin, &e))?;
     let status = resp.status();
     if status.is_redirection() {
         return Err("Redirects are blocked. Use the canonical https origin.".to_string());
