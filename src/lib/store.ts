@@ -193,6 +193,8 @@ export type AppState = Persisted & {
   connectStudio: () => void;
   disconnectGhost: () => void;
   markLive: (url: string, version: string, hint: string, adminKey?: string) => void;
+  /** Accept (or stop accepting) this site's Ghost certificate. */
+  setGhostTrust: (trust: boolean) => void;
   failGhost: (message: string) => void;
   beginStudioSync: () => void;
   applyLiveInventory: (posts: { id: string; title: string; slug: string; status: "PUBLISHED" | "DRAFT" }[], note?: string) => void;
@@ -921,6 +923,13 @@ export const useApp = create<AppState>()(
                     corpus: "EMPTY",
                   },
                 },
+          ),
+        })),
+      setGhostTrust: (trust) =>
+        set((s) => ({
+          ...s,
+          sites: s.sites.map((site) =>
+            site.id !== s.activeSiteId ? site : { ...site, ghost: { ...site.ghost, trustCert: trust } },
           ),
         })),
       failGhost: (message) =>

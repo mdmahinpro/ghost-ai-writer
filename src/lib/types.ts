@@ -377,6 +377,13 @@ export type GhostConn = {
   lastSyncAt?: number;
   syncReadyAt?: number;
   lastError?: string;
+  /**
+   * Accept this origin's certificate even though the OS does not trust it.
+   * A CMS subdomain behind a hosting panel routinely serves the panel's default
+   * self-signed certificate, and every client refuses the handshake — so the
+   * connection could never be tested, synced or published to. Off by default.
+   */
+  trustCert?: boolean;
   /** Kept only in this browser so live publish can upload images and POST once. Cleared on disconnect. */
   adminKey?: string;
   /** ghost = Admin API pages. local-demo = this browser's articles, Ghost was not called. */

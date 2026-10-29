@@ -1770,11 +1770,18 @@ fn word_count(text: &str) -> i64 {
 /// synced snapshot. `sites.client_uid` is the bridge — it holds the snapshot's
 /// site id. Without this fallback every LIVE run resolved `Unconfigured` and
 /// held its article, so Ghost was never attempted at all.
+/// The published site's Ghost connection: mode, origin, sealed Admin key, and
+/// whether the operator accepted an origin certificate the OS does not trust.
+pub(crate) type GhostConn = (String, Option<String>, Option<String>, bool);
+
+/// A `websites` row as the publish path reads it.
+type WebsiteRow = (String, Option<String>, Option<String>, Option<i64>);
+
 pub(crate) async fn ghost_config(
     pool: &SqlitePool,
     site_id: i64,
     website_id: Option<i64>,
-) -> Result<(String, Option<String>, Option<String>), sqlx::Error> {
+) -> Result<GhostConn, sqlx::Error> {
     // Resolve the connection from the site's linked `websites` row first. The
     // caller may not know the numeric id (the upload path only has a site),
     // and the browser snapshot is not a reliable home for a credential — a
@@ -1786,7 +1793,7 @@ pub(crate) async fn ghost_config(
     .fetch_optional(pool)
     .await?
     else {
-        return Ok(("SANDBOX".to_string(), None, None));
+        return Ok(("SANDBOX".to_string(), None, None, false));
     };
     let website_id = match website_id {
         Some(id) => Some(id),
@@ -1799,13 +1806,13 @@ pub(crate) async fn ghost_config(
         .flatten(),
     };
     if let Some(wid) = website_id {
-        let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT ghost_mode, ghost_url, ghost_admin_key_enc FROM websites WHERE id = ?",
+        let row: Option<WebsiteRow> = sqlx::query_as(
+            "SELECT ghost_mode, ghost_url, ghost_admin_key_enc, ghost_trust_cert FROM websites WHERE id = ?",
         )
         .bind(wid)
         .fetch_optional(pool)
         .await?;
-        if let Some((mode, url, key)) = row {
+        if let Some((mode, url, key, trust)) = row {
             let url = url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
             let key = key
                 .map(|k| {
@@ -1817,7 +1824,7 @@ pub(crate) async fn ghost_config(
                 })
                 .filter(|k| !k.is_empty());
             if url.is_some() && key.is_some() {
-                return Ok((mode, url, key));
+                return Ok((mode, url, key, trust.unwrap_or(0) != 0));
             }
         }
     }
@@ -1850,7 +1857,7 @@ pub(crate) async fn ghost_config(
         })
         .and_then(|row| row.get("ghost"));
     let Some(ghost) = ghost else {
-        return Ok(("SANDBOX".to_string(), None, None));
+        return Ok(("SANDBOX".to_string(), None, None, false));
     };
     let field = |key: &str| {
         ghost
@@ -1870,7 +1877,11 @@ pub(crate) async fn ghost_config(
     // said "no ghost url/key configured", and nothing in the message pointing at
     // the mask. A masked value is a missing key.
     let key = field("adminKey").filter(|value| !value.contains('•'));
-    Ok((mode.to_string(), field("url"), key))
+    let trust = ghost
+        .get("trustCert")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok((mode.to_string(), field("url"), key, trust))
 }
 
 /// Push every finished article this site owns into Ghost as a draft, for the ones
@@ -1904,7 +1915,7 @@ pub async fn mirror_to_ghost(
         Some(site_id) => site_id,
         None => return json!({ "ok": false, "error": format!("No site matches {site_ref}.") }),
     };
-    let (mode, url, key) = match ghost_config(pool, site_id, website_id).await {
+    let (mode, url, key, trust) = match ghost_config(pool, site_id, website_id).await {
         Ok(resolved) => resolved,
         Err(error) => return json!({ "ok": false, "error": error.to_string() }),
     };
@@ -1943,8 +1954,11 @@ pub async fn mirror_to_ghost(
             "draft"
         };
         match crate::ghost::push_post(
-            Some(&url),
-            Some(&key),
+            crate::ghost::PushTarget {
+                url: Some(&url),
+                admin_key: Some(&key),
+                trust_cert: trust,
+            },
             &title,
             &slug,
             &markdown,
@@ -2269,7 +2283,8 @@ pub async fn run_validation(
     // what stops a retry from double-publishing.
     // The connection the operator saved: the website row when it carries one,
     // otherwise the studio's synced snapshot (see `ghost_config`).
-    let (ghost_mode, ghost_url, ghost_key) = ghost_config(pool, site_id, website_id).await?;
+    let (ghost_mode, ghost_url, ghost_key, ghost_trust) =
+        ghost_config(pool, site_id, website_id).await?;
     // Stage 4's packaged metadata (slug, excerpt, tags) — read before the slug
     // decision, because the packaged slug is what publish prefers.
     let meta_raw: Option<String> =
@@ -2317,8 +2332,11 @@ pub async fn run_validation(
     let article_status: String;
     if ghost_mode == "LIVE" {
         match crate::ghost::push_post(
-            ghost_url.as_deref(),
-            ghost_key.as_deref(),
+            crate::ghost::PushTarget {
+                url: ghost_url.as_deref(),
+                admin_key: ghost_key.as_deref(),
+                trust_cert: ghost_trust,
+            },
             &title,
             &slug,
             &markdown,
@@ -2351,8 +2369,11 @@ pub async fn run_validation(
         if let (Some(u), Some(k)) = (ghost_url.as_deref(), ghost_key.as_deref()) {
             if !u.trim().is_empty() && !k.trim().is_empty() {
                 match crate::ghost::push_post(
-                    Some(u),
-                    Some(k),
+                    crate::ghost::PushTarget {
+                        url: Some(u),
+                        admin_key: Some(k),
+                        trust_cert: ghost_trust,
+                    },
                     &title,
                     &slug,
                     &markdown,
@@ -2499,6 +2520,47 @@ pub async fn run_validation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The publish path has to honour the certificate the operator accepted,
+    /// or the connection tests green and the article still never reaches Ghost.
+    #[tokio::test]
+    async fn the_saved_connection_carries_its_trust_flag() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for sql in [
+            "CREATE TABLE sites (id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, \
+             client_uid TEXT, website_id INTEGER)",
+            "CREATE TABLE websites (id INTEGER PRIMARY KEY, \
+             ghost_mode TEXT NOT NULL DEFAULT 'SANDBOX', ghost_url TEXT, \
+             ghost_admin_key_enc TEXT, ghost_trust_cert INTEGER NOT NULL DEFAULT 0)",
+            "CREATE TABLE app_state (workspace_id INTEGER PRIMARY KEY, payload TEXT)",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO websites (id, ghost_mode, ghost_url, ghost_admin_key_enc, ghost_trust_cert) \
+             VALUES (1, 'LIVE', 'https://cms.example', 'id:secret', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO sites (id, workspace_id, client_uid, website_id) VALUES (1, 1, 'site_one', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (mode, url, key, trust) = ghost_config(&pool, 1, Some(1)).await.unwrap();
+        assert_eq!(mode, "LIVE");
+        assert_eq!(url.as_deref(), Some("https://cms.example"));
+        assert_eq!(key.as_deref(), Some("id:secret"));
+        assert!(trust, "an accepted certificate must survive to the publish path");
+    }
+
 
     /// Uniqueness is a content measure now, so two pages can share a topic and
     /// still be distinct — and two pages that repeat each other cannot hide

@@ -7,14 +7,21 @@ import { post } from "./api-client";
  * not a model key, and it is not stored server-side. Signing the Admin JWT,
  * refusing private hosts and blocking redirects all happen in `ghost_api.rs`.
  */
-type GhostCall = { data: { url: string; adminKey: string } };
+type GhostCall = { data: { url: string; adminKey: string; siteRef?: string; trustCert?: boolean } };
 
 export async function testGhostConnection(input: {
-  data: { url?: string; adminKey?: string; siteRef?: string };
+  data: { url?: string; adminKey?: string; siteRef?: string; trustCert?: boolean };
 }): Promise<
-  { ok: true; version: string; origin: string } | { ok: false; version: string; origin: string; error: string }
+  | { ok: true; version: string; origin: string; verified: boolean }
+  | { ok: false; version: string; origin: string; error: string }
 > {
-  const res = await post<{ ok: boolean; version?: string; origin?: string; error?: string }>(
+  const res = await post<{
+    ok: boolean;
+    version?: string;
+    origin?: string;
+    verified?: boolean;
+    error?: string;
+  }>(
     "/api/v1/ghost/test",
     {
       url: input?.data?.url ?? "",
@@ -23,13 +30,22 @@ export async function testGhostConnection(input: {
       // to the first site in the account until this was sent, so connecting a
       // second site overwrote the first one's Ghost.
       site_ref: input?.data?.siteRef ?? "",
+      // Accept an untrusted certificate for this origin, if the operator said so.
+      trust_cert: input?.data?.trustCert ?? false,
     },
   );
   if (!res.ok) return { ok: false, version: "", origin: "", error: res.error };
   if (!res.data.ok) {
     return { ok: false, version: "", origin: "", error: res.data.error ?? "Live test failed." };
   }
-  return { ok: true, version: res.data.version ?? "unknown", origin: res.data.origin ?? "" };
+  return {
+    ok: true,
+    version: res.data.version ?? "unknown",
+    origin: res.data.origin ?? "",
+    // False when the operator accepted an untrusted certificate: the connection
+    // works, the host identity is unproven, and the UI has to say so.
+    verified: res.data.verified !== false,
+  };
 }
 
 export async function syncGhostPosts(input: GhostCall): Promise<
@@ -54,7 +70,12 @@ export async function syncGhostPosts(input: GhostCall): Promise<
     pages?: number;
     truncated?: boolean;
     error?: string;
-  }>("/api/v1/ghost/sync", { url: input?.data?.url ?? "", admin_key: input?.data?.adminKey ?? "" });
+  }>("/api/v1/ghost/sync", {
+    url: input?.data?.url ?? "",
+    admin_key: input?.data?.adminKey ?? "",
+    site_ref: input?.data?.siteRef ?? "",
+    trust_cert: input?.data?.trustCert ?? false,
+  });
   if (!res.ok) {
     return { ok: false, posts: [], pages: 0, truncated: false, error: res.error };
   }

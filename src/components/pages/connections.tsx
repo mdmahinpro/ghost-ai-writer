@@ -45,6 +45,7 @@ export function ConnectionsPage() {
   const applyLiveInventory = useApp((s) => s.applyLiveInventory);
   const fallbackInventory = useApp((s) => s.fallbackInventory);
   const auditNow = useApp((s) => s.auditNow);
+  const setGhostTrust = useApp((s) => s.setGhostTrust);
   const toggleProposal = useApp((s) => s.toggleProposal);
   const applyProposals = useApp((s) => s.applyProposals);
   const verifyProvider = useApp((s) => s.verifyProvider);
@@ -106,13 +107,25 @@ export function ConnectionsPage() {
     }
     setBusy(true);
     try {
-      const result = await testGhostConnection({ data: { url: checked.url, adminKey, siteRef: siteId } });
+      const result = await testGhostConnection({
+        data: { url: checked.url, adminKey, siteRef: siteId, trustCert: ghost.trustCert },
+      });
       // The real key travels to the store whenever the field has one. The
       // "keep key" box used to gate this, which meant a connection that tested
       // fine could never publish: the server holds only `id:••••1234`, and a
       // masked string is not a key. A connection that cannot push is not a
       // connection.
-      if (result.ok) markLive(result.origin, result.version, maskKey(adminKey), adminKey.trim() || undefined);
+      if (result.ok) {
+        markLive(result.origin, result.version, maskKey(adminKey), adminKey.trim() || undefined);
+        if (!result.verified) {
+          useApp.setState({
+            notice: {
+              tone: "warn",
+              text: `Connected to ${result.origin} over an unverified certificate (${result.version}). Publishing works, but the host identity is not proven.`,
+            },
+          });
+        }
+      }
       else failGhost(result.error);
     } catch (error) {
       failGhost(error instanceof Error ? error.message : "Live test failed.");
@@ -128,7 +141,9 @@ export function ConnectionsPage() {
     if (key && origin.startsWith("https://")) {
       setBusy(true);
       try {
-        const result = await syncGhostPosts({ data: { url: origin, adminKey: key } });
+        const result = await syncGhostPosts({
+          data: { url: origin, adminKey: key, siteRef: siteId, trustCert: ghost.trustCert },
+        });
         if (!result.ok) {
           // Keep the corpus usable: a sync that cannot reach Ghost must not
           // leave every run refused behind an EMPTY corpus.
@@ -216,6 +231,23 @@ export function ConnectionsPage() {
           <label className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-3 py-2.5 text-[12px] leading-5 text-muted">
             <input type="checkbox" className="mt-0.5 size-3.5 accent-brass" checked={keepKey} onChange={(e) => setKeepKey(e.target.checked)} />
             <span>Keep the Admin API key in this browser so new posts upload their photos and publish once. Disconnect wipes it.</span>
+          </label>
+          {/* A CMS subdomain behind a hosting panel usually serves the panel's
+              default self-signed certificate, which every client refuses — the
+              connection then cannot be tested, synced or published to at all.
+              Accepting it is the operator's call, and it is never the default. */}
+          <label className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-3 py-2.5 text-[12px] leading-5 text-muted">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-3.5 accent-brass"
+              checked={Boolean(ghost.trustCert)}
+              onChange={(e) => setGhostTrust(e.target.checked)}
+            />
+            <span>
+              Accept this origin&apos;s certificate even if it is not trusted (a hosting panel&apos;s default certificate is the usual
+              cause of <span className="text-fg">“served a certificate that is not trusted”</span>). Publishing then works over a host
+              identity nobody has verified — fix the certificate when you can.
+            </span>
           </label>
         </div>
       </Card>

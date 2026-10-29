@@ -72,6 +72,11 @@ pub fn admin_token(admin_key: &str, issued_at: u64) -> Option<String> {
 
 #[derive(Debug, Deserialize)]
 pub struct GhostTarget {
+    /// Accept a certificate the OS does not trust (a hosting panel's default
+    /// cert on a CMS subdomain is the common case). Off unless the operator
+    /// ticks it, and the connection is reported as unverified when it is on.
+    #[serde(default)]
+    pub trust_cert: bool,
     #[serde(default)]
     pub url: String,
     #[serde(default)]
@@ -83,8 +88,8 @@ pub struct GhostTarget {
     pub site_ref: String,
 }
 
-fn client() -> &'static reqwest::Client {
-    ghost::client()
+fn client_with(trust: bool) -> &'static reqwest::Client {
+    ghost::client_with_trust(trust)
 }
 
 /// Name why the request never reached Ghost.
@@ -111,8 +116,8 @@ fn transport_error(origin: &str, error: &reqwest::Error) -> String {
         return format!(
             "{origin} served a TLS certificate that is not trusted, so the request never reached \
              Ghost. This is not a key problem: fix the domain's certificate (a hosting panel's \
-             default certificate is the usual cause) — browsers refuse this URL for the same \
-             reason. Detail: {}",
+             default certificate is the usual cause) or accept this origin's certificate on \
+             the Ghost card to connect anyway. Detail: {}",
             ghost::safe_message(chain.trim())
         );
     }
@@ -139,8 +144,13 @@ fn transport_error(origin: &str, error: &reqwest::Error) -> String {
 
 /// Call the Admin API. Redirects are refused: a redirect means the URL is not
 /// the canonical origin, and the token must not be replayed to a new host.
-async fn admin_get(origin: &str, path: &str, token: &str) -> Result<(u16, String), String> {
-    let resp = client()
+async fn admin_get(
+    origin: &str,
+    path: &str,
+    token: &str,
+    trust: bool,
+) -> Result<(u16, String), String> {
+    let resp = client_with(trust)
         .get(format!("{origin}{path}"))
         .header("Authorization", ghost::auth_header(token))
         .header("Accept", "application/json")
@@ -196,7 +206,7 @@ pub async fn test_connection(target: &GhostTarget) -> Value {
         Ok(pair) => pair,
         Err(error) => return json!({ "ok": false, "error": error }),
     };
-    match admin_get(&origin, "/ghost/api/admin/posts/?limit=1&fields=id", &token).await {
+    match admin_get(&origin, "/ghost/api/admin/posts/?limit=1&fields=id", &token, target.trust_cert).await {
         Ok((status, body)) => {
             if status == 401 || status == 403 {
                 // Say what Ghost actually objected to. The blanket "refused the
@@ -241,7 +251,7 @@ pub async fn test_connection(target: &GhostTarget) -> Value {
         }
         Err(error) => return json!({ "ok": false, "error": error }),
     }
-    let version = match admin_get(&origin, "/ghost/api/admin/site/", &token).await {
+    let version = match admin_get(&origin, "/ghost/api/admin/site/", &token, target.trust_cert).await {
         Ok((status, body)) if (200..300).contains(&status) => {
             let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
             parsed
@@ -254,7 +264,14 @@ pub async fn test_connection(target: &GhostTarget) -> Value {
         }
         _ => "unknown".to_string(),
     };
-    json!({ "ok": true, "version": version, "origin": origin })
+    json!({
+        "ok": true,
+        "version": version,
+        "origin": origin,
+        // The connection works, but if the operator accepted an untrusted
+        // certificate the UI must say so rather than imply a verified host.
+        "verified": !target.trust_cert,
+    })
 }
 
 /// Walk every page of posts so the corpus the writer avoids is complete.
@@ -270,7 +287,7 @@ pub async fn sync_posts(target: &GhostTarget) -> Value {
         let path = format!(
             "/ghost/api/admin/posts/?limit={PAGE_LIMIT}&page={page}&formats=plaintext&fields=id,title,slug,status"
         );
-        let (status, body) = match admin_get(&origin, &path, &token).await {
+        let (status, body) = match admin_get(&origin, &path, &token, target.trust_cert).await {
             Ok(result) => result,
             Err(error) => return json!({ "ok": false, "error": error }),
         };
@@ -364,7 +381,7 @@ pub async fn probe(url: &str) -> Value {
         Ok(url) => url,
         Err(error) => return json!({ "ok": false, "error": error }),
     };
-    match client().get(&checked).send().await {
+    match client_with(false).get(&checked).send().await {
         Ok(resp) => {
             let status = resp.status();
             if status.is_redirection() {
@@ -422,6 +439,7 @@ pub(crate) async fn ghost_test(
             let site_ref = req.site_ref.trim();
             let saved = sqlx::query(
                 "UPDATE websites SET ghost_mode = 'LIVE', ghost_url = ?, ghost_admin_key_enc = ? \
+                 ghost_trust_cert = ? \
                  WHERE id = (SELECT website_id FROM sites \
                              WHERE workspace_id = ?1 AND website_id IS NOT NULL \
                                AND (?2 = '' OR client_uid = ?2) \
@@ -430,6 +448,7 @@ pub(crate) async fn ghost_test(
             )
             .bind(&origin)
             .bind(&sealed)
+            .bind(i64::from(req.trust_cert))
             .bind(crate::default_workspace())
             .bind(site_ref)
             .execute(&st.pool)
@@ -593,6 +612,9 @@ pub struct PublishRequest {
     pub url: String,
     #[serde(default)]
     pub admin_key: String,
+    /// Accept an untrusted certificate for this origin (see GhostTarget).
+    #[serde(default)]
+    pub trust_cert: bool,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
@@ -653,10 +675,11 @@ async fn admin_json(
     token: &str,
     method: &str,
     body: Option<Value>,
+    trust: bool,
 ) -> Result<(u16, String), String> {
     let mut request = match method {
-        "PUT" => client().put(format!("{origin}{path}")),
-        _ => client().post(format!("{origin}{path}")),
+        "PUT" => client_with(trust).put(format!("{origin}{path}")),
+        _ => client_with(trust).post(format!("{origin}{path}")),
     }
     .header("Authorization", ghost::auth_header(token))
     .header("Accept", "application/json");
@@ -684,13 +707,14 @@ async fn upload_image(
     name: String,
     mime: String,
     bytes: Vec<u8>,
+    trust: bool,
 ) -> Option<String> {
     let part = reqwest::multipart::Part::bytes(bytes)
         .file_name(name)
         .mime_str(&mime)
         .ok()?;
     let form = reqwest::multipart::Form::new().part("file", part);
-    let resp = client()
+    let resp = client_with(trust)
         .post(format!("{origin}/ghost/api/admin/images/upload/"))
         .header("Authorization", ghost::auth_header(token))
         .multipart(form)
@@ -715,10 +739,11 @@ async fn resolve_author(
     origin: &str,
     token: &str,
     wanted: &PublishAuthor,
+    trust: bool,
 ) -> (String, String, bool) {
     let known = wanted.known_ghost_author_id.as_deref().unwrap_or("");
     if known.len() == 24 && known.chars().all(|c| c.is_ascii_hexdigit()) {
-        let (status, _) = admin_get(origin, &format!("/ghost/api/admin/authors/{known}/"), token)
+        let (status, _) = admin_get(origin, &format!("/ghost/api/admin/authors/{known}/"), token, trust)
             .await
             .unwrap_or((0, String::new()));
         if (200..300).contains(&status) {
@@ -741,7 +766,7 @@ async fn resolve_author(
             crate::image::encode(&format!("name:['{}']", wanted.name.replace('\'', "\\'")))
         ),
     };
-    let (status, body) = admin_get(origin, &query, token)
+    let (status, body) = admin_get(origin, &query, token, trust)
         .await
         .unwrap_or((0, String::new()));
     if !(200..300).contains(&status) {
@@ -778,11 +803,13 @@ pub async fn publish(req: &PublishRequest) -> Value {
         url: req.url.clone(),
         admin_key: req.admin_key.clone(),
         site_ref: String::new(),
+        trust_cert: req.trust_cert,
     };
     let (origin, token) = match resolve(&target) {
         Ok(pair) => pair,
         Err(error) => return json!({ "ok": false, "error": error }),
     };
+    let trust = target.trust_cert;
     let slug = slug_of(&req.slug);
     if slug.is_empty() {
         return json!({ "ok": false, "error": "A slug is required." });
@@ -791,7 +818,7 @@ pub async fn publish(req: &PublishRequest) -> Value {
     let lookup = format!("/ghost/api/admin/posts/slug/{slug}/");
     let (mut post_id, mut updated_at, mut existing_url) =
         (String::new(), String::new(), String::new());
-    if let Ok((status, body)) = admin_get(&origin, &lookup, &token).await {
+    if let Ok((status, body)) = admin_get(&origin, &lookup, &token, trust).await {
         if (200..300).contains(&status) {
             if let Some(post) = post_from(&body) {
                 post_id = field(&post, "id");
@@ -821,7 +848,7 @@ pub async fn publish(req: &PublishRequest) -> Value {
         else {
             continue;
         };
-        let Some(uploaded) = upload_image(&origin, &token, name, mime, bytes).await else {
+        let Some(uploaded) = upload_image(&origin, &token, name, mime, bytes, trust).await else {
             continue;
         };
         let figure = format!(
@@ -872,7 +899,7 @@ pub async fn publish(req: &PublishRequest) -> Value {
 
     let mut author_result = Value::Null;
     if let Some(wanted) = req.author.as_ref().filter(|a| !a.name.is_empty()) {
-        let (id, note, matched) = resolve_author(&origin, &token, wanted).await;
+        let (id, note, matched) = resolve_author(&origin, &token, wanted, trust).await;
         if !id.is_empty() {
             body.insert("authors".into(), json!([{ "id": id }]));
         }
@@ -896,6 +923,7 @@ pub async fn publish(req: &PublishRequest) -> Value {
             &token,
             "PUT",
             Some(json!({ "posts": [put] })),
+            trust,
         )
         .await
         {
@@ -923,13 +951,14 @@ pub async fn publish(req: &PublishRequest) -> Value {
         &token,
         "POST",
         Some(payload),
+        trust,
     )
     .await
     {
         Err(error) => json!({ "ok": false, "error": error }),
         Ok((status, response)) => {
             if status == 422 {
-                if let Ok((ok_status, body)) = admin_get(&origin, &lookup, &token).await {
+                if let Ok((ok_status, body)) = admin_get(&origin, &lookup, &token, trust).await {
                     if (200..300).contains(&ok_status) {
                         if let Some(post) = post_from(&body) {
                             if !field(&post, "id").is_empty() {
@@ -995,6 +1024,9 @@ pub struct ReWeaveRequest {
     pub url: String,
     #[serde(default)]
     pub admin_key: String,
+    /// Accept an untrusted certificate for this origin (see GhostTarget).
+    #[serde(default)]
+    pub trust_cert: bool,
     #[serde(default)]
     pub post_id: Option<String>,
     #[serde(default)]
@@ -1022,11 +1054,13 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
         url: req.url.clone(),
         admin_key: req.admin_key.clone(),
         site_ref: String::new(),
+        trust_cert: req.trust_cert,
     };
     let (origin, token) = match resolve(&target) {
         Ok(pair) => pair,
         Err(error) => return fail("BAD_URL", &error),
     };
+    let trust = target.trust_cert;
     let post_id = req
         .post_id
         .as_deref()
@@ -1039,7 +1073,7 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
         (None, None) => return fail("BAD_URL", "A post id or slug is required."),
     };
 
-    let (status, body) = match admin_get(&origin, &query, &token).await {
+    let (status, body) = match admin_get(&origin, &query, &token, trust).await {
         Ok(pair) => pair,
         Err(error) => return fail("ERROR", &error),
     };
@@ -1090,6 +1124,7 @@ pub async fn reweave(req: &ReWeaveRequest) -> Value {
         &token,
         "PUT",
         Some(json!({ "posts": [lock] })),
+        trust,
     )
     .await
     {

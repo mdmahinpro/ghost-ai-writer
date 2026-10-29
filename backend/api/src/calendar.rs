@@ -538,6 +538,13 @@ pub fn publish_request(
     Ok(crate::ghost_api::PublishRequest {
         url,
         admin_key,
+        // The site's saved Ghost connection decides whether its certificate is
+        // accepted; the calendar publish inherits it rather than guessing.
+        trust_cert: site
+            .get("ghost")
+            .and_then(|ghost| ghost.get("trustCert"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         title: text(article, "title"),
         slug: text(article, "slug"),
         html: text(article, "html"),

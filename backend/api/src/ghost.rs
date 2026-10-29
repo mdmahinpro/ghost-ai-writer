@@ -15,8 +15,20 @@ pub struct PushResult {
 }
 
 pub fn client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
+    client_with_trust(false)
+}
+
+/// A client that will or will not verify the origin's certificate.
+///
+/// Some Ghost installs sit behind a panel that never issued a certificate for
+/// the CMS subdomain (Traefik's default self-signed one is the usual case). The
+/// operator can accept that explicitly per site; the strict client stays the
+/// default and nothing is ever sent by accident.
+pub fn client_with_trust(trust: bool) -> &'static reqwest::Client {
+    static STRICT: OnceLock<reqwest::Client> = OnceLock::new();
+    static TRUSTING: OnceLock<reqwest::Client> = OnceLock::new();
+    let slot = if trust { &TRUSTING } else { &STRICT };
+    slot.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(25))
             // Redirects are refused, not followed. Ghost is called with the
@@ -26,6 +38,7 @@ pub fn client() -> &'static reqwest::Client {
             // the pool of hosts that can see the key stays exactly the one the
             // operator configured.
             .redirect(reqwest::redirect::Policy::none())
+            .danger_accept_invalid_certs(trust)
             .build()
             .expect("ghost http client")
     })
@@ -251,15 +264,28 @@ impl std::fmt::Display for PushError {
 /// Push a passing article to Ghost. `status` is `"draft"` for SANDBOX-mode
 /// sites (created but unpublished) and `"published"` for LIVE. The returned
 /// Ghost `post.id` is stored on the article so a re-run never double-publishes.
+/// Where a post is going, and on what terms. Bundled so `push_post` keeps a
+/// readable signature now that accepting an untrusted certificate is part of
+/// the decision rather than a detail of the HTTP client.
+pub struct PushTarget<'a> {
+    pub url: Option<&'a str>,
+    pub admin_key: Option<&'a str>,
+    pub trust_cert: bool,
+}
+
 pub async fn push_post(
-    ghost_url: Option<&str>,
-    admin_key: Option<&str>,
+    target: PushTarget<'_>,
     title: &str,
     slug: &str,
     source_markdown: &str,
     feature_image: Option<&str>,
     status: &str,
 ) -> Result<PushResult, PushError> {
+    let PushTarget {
+        url: ghost_url,
+        admin_key,
+        trust_cert,
+    } = target;
     let (url, key) = match (ghost_url, admin_key) {
         (Some(u), Some(k)) if !u.trim().is_empty() && !k.trim().is_empty() => (u, k),
         _ => return Err(PushError::Unconfigured),
@@ -286,7 +312,7 @@ pub async fn push_post(
             body["feature_image"] = json!(img);
         }
     }
-    let resp = client()
+    let resp = client_with_trust(trust_cert)
         .post(format!("{}/posts", base(&url)))
         .header("Authorization", auth_header(key))
         .header("Content-Type", "application/json")
