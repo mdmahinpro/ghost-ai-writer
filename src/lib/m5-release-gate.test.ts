@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { DEFAULT_LIMITS, defaultAdSlots, type AiKey, type Article, type Persisted, type Site } from "./types.ts";
 import { THEMES, THEME_TOKENS, THEME_TOKEN_KEYS, contrastRatio } from "./themes.ts";
+import { siteStylesheet } from "./static-site.ts";
 import { AREAS, PALETTE_ACTIONS, SHELL_GROUPS, routeFileCandidates } from "./areas.ts";
 import { packWorkspace } from "./backup.ts";
 import { advance, submitKeywords, packageDeploy, routeDiffFor, keyBelongsTo, keyPool, usableKey } from "./engine.ts";
@@ -316,4 +317,66 @@ test("a key stored before scoping is not shared: it belongs to no workspace unti
   const data = { keys: [legacy, key({ id: "k_mine", siteId: "s1" })] } as unknown as Persisted;
   assert.equal(usableKey(data, undefined, 0, "s1")?.id, "k_mine");
   assert.equal(usableKey(data, "k_legacy", 0, "s1")?.id, "k_mine", "naming a foreign key id must not widen the pool");
+});
+
+/**
+ * Rule 7b: the published site has its own paper palette, and it drifted from the
+ * studio's in silence — the preview painted beige with dark-UI tokens and the
+ * published stylesheet used a third set of greys. Readers get one palette, so it
+ * lives in two files and this asserts they agree and that every pair of text on
+ * paper clears the reading floors.
+ */
+test("Rule 7b: the site paper palette matches between preview and published CSS and clears reading contrast", () => {
+  const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+  const pick = (block: string, keys: string[]) =>
+    Object.fromEntries(
+      keys.map((key) => {
+        const found = block.match(new RegExp(`--${key}:\\s*(#[0-9a-fA-F]{6})`));
+        assert.ok(found, `missing --${key}`);
+        return [key, found[1]!.toLowerCase()];
+      }),
+    );
+
+  const published = read("src/lib/static-site.ts").match(/:root \{[^}]*--bg:[^}]*\}/)?.[0] ?? "";
+  const previewCss = read("src/styles.css").match(/\.site-surface \{[\s\S]*?\}/)?.[0] ?? "";
+  assert.ok(published.includes("--bg"), "the published stylesheet must declare its palette");
+  assert.ok(previewCss.includes("--sp-bg"), "the preview surface must declare its palette");
+
+  const site = pick(published, ["bg", "card", "ink", "muted", "faint", "line", "accent"]);
+  const preview = pick(previewCss.replace(/--sp-/g, "--"), ["bg", "card", "ink", "muted", "faint", "line", "accent"]);
+  assert.deepEqual(preview, site, "the preview must render the palette the published site ships");
+
+  const floors: [string, string, number][] = [
+    ["ink", "bg", 7],
+    ["ink", "card", 7],
+    ["muted", "bg", 4.5],
+    ["muted", "card", 4.5],
+    ["faint", "bg", 4.5],
+    ["faint", "card", 4.5],
+    ["accent", "bg", 4.5],
+    ["accent", "card", 4.5],
+  ];
+  for (const [fg, bg, floor] of floors) {
+    const ratio = contrastRatio(site[fg]!, site[bg]!);
+    assert.ok(ratio >= floor, `${fg} on ${bg} is ${ratio.toFixed(2)}:1, must be ≥ ${floor}:1`);
+  }
+});
+
+/**
+ * Rule 7c: the published page is a reading surface, so its headings, table
+ * headers and credit line are part of the contract — not styling anyone can
+ * quietly revert to all-caps sans on a beige page.
+ */
+test("Rule 7c: the published stylesheet keeps one reading face, sentence-case headings and a credit line", () => {
+  const css = siteStylesheet();
+  assert.match(css, /article\.post h2[^{]*\{[^}]*font-family: inherit/, "headings inherit the reading face");
+  assert.doesNotMatch(
+    css,
+    /article\.post :is\(h1, h2, h3\)[^{]*\{[^}]*text-transform:\s*uppercase/,
+    "content headings must not shout",
+  );
+  const header = css.match(/article\.post thead th \{[^}]*\}/)?.[0] ?? "";
+  assert.match(header, /text-transform: none/, "table headers are read, not labelled");
+  assert.match(header, /color: var\(--ink\)/, "table headers carry the body ink");
+  assert.match(css, /\.credit \{/, "cards and posts carry the writer credit");
 });

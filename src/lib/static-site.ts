@@ -39,15 +39,52 @@ export function cardLedeText(article: {
   return text.slice(0, 118);
 }
 
+/**
+ * Long-form reading pace. 220 words a minute is the slow, careful read a
+ * research audience actually gives a 3,000-word guide; rounding up keeps a
+ * short page from promising "0 min".
+ */
+export function readingMinutes(words: number | undefined): number {
+  return Math.max(1, Math.round((words ?? 0) / 220));
+}
+
+/**
+ * The credit a card or a post carries: the writer, their expertise, the read
+ * time. Word and link counts are production metrics — they belong in the studio,
+ * not on a page a reader has to trust.
+ */
+export function cardCreditText(
+  article: { words?: number; authorName?: string; authorBeat?: string },
+  author?: { name?: string; role?: string; expertise?: string[] },
+): string {
+  const name = (author?.name || article.authorName || "").trim();
+  const beat = (author?.expertise?.[0] || article.authorBeat || author?.role || "").trim();
+  return [name, beat, `${readingMinutes(article.words)} min read`].filter(Boolean).join(" · ");
+}
+
+/** The credit for one article, resolved against the site's author records. */
+function creditFor(
+  article: { words?: number; authorId?: string; authorName?: string; authorBeat?: string },
+  authors: AuthorProfile[],
+): string {
+  const author =
+    authors.find((item) => item.id === article.authorId) ??
+    authors.find((item) => article.authorName && item.name === article.authorName);
+  const text = cardCreditText(article, author);
+  return text ? `<span class="credit">${esc(text)}</span>` : "";
+}
+
 function cardLede(article: { title?: string; keyword?: string; metaDescription?: string; excerpt?: string }): string {
   const text = cardLedeText(article);
   return text ? `<span class="lede">${esc(text)}</span>` : "";
 }
 
-function css(): string {
+/** The one stylesheet every published page links. Exported so the reading
+ * rules are assertable (Rule 7b) instead of assumed from a screenshot. */
+export function siteStylesheet(): string {
   return `
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap');
-    :root { color-scheme: light; --bg: #f7f3ea; --card: #fffdf8; --ink: #1b1813; --muted: #5b5449; --faint: #8a8171; --line: #e4dac6; --accent: #8a5a12; }
+    :root { color-scheme: light; --bg: #f7f3ea; --card: #fffdf8; --ink: #1b1813; --muted: #544c40; --faint: #6b6353; --line: #e4dac6; --accent: #7d4f0b; }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body { margin: 0; background: radial-gradient(1200px 620px at 50% -12%, #fffaf1, transparent 68%), var(--bg); color: var(--ink); font: 19px/1.75 "Newsreader", Georgia, "Iowan Old Style", serif; font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
@@ -69,16 +106,20 @@ function css(): string {
     article.post figure.article-hero { margin: 6px 0 26px; border-radius: 16px; overflow: hidden; box-shadow: 0 16px 36px -26px rgba(34, 24, 6, 0.55); background: #eee4cf; }
     article.post figure.article-hero img { aspect-ratio: 16/9; object-fit: cover; width: 100%; height: auto; }
     .card strong { font-weight: 600; line-height: 1.3; }
+    .credit { display: block; margin: 0 0 10px; font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 13px; line-height: 1.5; letter-spacing: 0; color: var(--muted); }
+    .card .credit { margin: 4px 0 0; font-size: 12.5px; }
     .meta { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 13px; letter-spacing: 0.04em; color: var(--muted); }
     main > h1 + p { color: var(--muted); max-width: 60ch; }
     footer { margin-top: 40px; padding: 28px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
     article.post { width: min(720px, 100%); }
     /* Article body: the full markdown-subset the generator can emit. */
     article.post p { margin: 0 0 18px; }
-    article.post h2, article.post h3, article.post h4 { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; line-height: 1.25; margin: 34px 0 10px; scroll-margin-top: 20px; }
-    article.post h2 { font-size: 26px; }
-    article.post h3 { font-size: 21px; margin-top: 26px; }
-    article.post h4 { font-size: 18px; margin-top: 22px; }
+    /* Headings stay in the reading face: a serif body under sans headings reads as
+       two documents stapled together, and all-caps headings slow a long read. */
+    article.post h2, article.post h3, article.post h4 { font-family: inherit; font-weight: 600; line-height: 1.24; letter-spacing: -0.005em; color: var(--ink); margin: 38px 0 12px; scroll-margin-top: 20px; }
+    article.post h2 { font-size: 30px; }
+    article.post h3 { font-size: 22px; margin-top: 30px; }
+    article.post h4 { font-size: 19px; margin-top: 24px; }
     article.post a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
     article.post ul, article.post ol { margin: 0 0 18px; padding-left: 22px; }
     article.post li { margin: 5px 0; }
@@ -95,8 +136,10 @@ function css(): string {
     article.post .table-scroll { overflow-x: auto; margin: 20px 0; -webkit-overflow-scrolling: touch; }
     article.post table { width: 100%; border-collapse: collapse; font-size: 16px; margin: 20px 0; }
     article.post .table-scroll table { margin: 0; }
-    article.post th, article.post td { border: 1px solid var(--line); padding: 9px 11px; text-align: left; vertical-align: top; }
-    article.post thead th { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; background: #efe6d2; }
+    article.post th, article.post td { border: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top; }
+    /* Table headers are read as words, not as labels: uppercase 13px on beige is
+       the lowest-contrast text on the page and it is the one that organises it. */
+    article.post thead th { font-family: inherit; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--ink); background: #efe6d2; }
     article.post tbody tr:nth-child(even) td { background: #faf5ea; }
     article.post blockquote { margin: 20px 0; padding: 12px 18px; border-left: 4px solid #d9cdb4; background: var(--card); border-radius: 0 12px 12px 0; color: var(--muted); font-style: italic; }
     article.post blockquote p:last-child { margin-bottom: 0; }
@@ -362,7 +405,7 @@ ${slot("site_top")}
       .map((article) => {
         const featured = article.images.find((image) => image.role === "featured") ?? article.images[0];
         const photo = featured ? `<img src="${esc(articleImageSrc(featured, article.keyword || article.title))}" alt="${esc(featured.alt || article.title)}" width="474" height="274" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : "";
-        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}${cardLede(article)}<strong>${esc(article.title)}</strong></a>`;
+        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}${cardLede(article)}<strong>${esc(article.title)}</strong>${creditFor(article, authors)}</a>`;
       })
       .join("\n")}
     ${feedAd}
@@ -371,7 +414,7 @@ ${slot("site_top")}
       .map((article) => {
         const featured = article.images.find((image) => image.role === "featured") ?? article.images[0];
         const photo = featured ? `<img src="${esc(articleImageSrc(featured, article.keyword || article.title))}" alt="${esc(featured.alt || article.title)}" width="474" height="274" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : "";
-        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}${cardLede(article)}<strong>${esc(article.title)}</strong></a>`;
+        return `<a class="card" href="./post/${esc(article.slug)}/">${photo}${cardLede(article)}<strong>${esc(article.title)}</strong>${creditFor(article, authors)}</a>`;
       })
       .join("\n")}
   </div>
@@ -382,7 +425,7 @@ ${bodyEnd}
 </body></html>`;
   // One shared stylesheet instead of re-inlining ~2.5 KB of CSS into every page:
   // smaller artifacts, smaller deploys, and a cached stylesheet across the site.
-  const files = [{ name: "assets/site.css", text: css() }, { name: "index.html", text: home }];
+  const files = [{ name: "assets/site.css", text: siteStylesheet() }, { name: "index.html", text: home }];
   for (const article of pages) {
     const html = rewriteMedia(article.html, (src) => assetPath(true, src));
     const author = authorOf(article);
@@ -430,6 +473,7 @@ ${slot("site_top")}
 <article class="post">
   ${slot("article_top")}
   <h1>${esc(article.title)}</h1>
+  <p class="credit">${esc(cardCreditText(article, author))}</p>
   ${authorBylineHtml(author, origin) ||
     authorNameBylineHtml(
       article.authorName ?? "",
@@ -494,7 +538,7 @@ ${bodyEnd}
     ${own
       .map(
         (article) =>
-          `<a class="card" href="../../post/${esc(article.slug)}/">${cardLede(article)}<strong>${esc(article.title)}</strong></a>`,
+          `<a class="card" href="../../post/${esc(article.slug)}/">${cardLede(article)}<strong>${esc(article.title)}</strong>${creditFor(article, [author])}</a>`,
       )
       .join("\n")}
   </div>

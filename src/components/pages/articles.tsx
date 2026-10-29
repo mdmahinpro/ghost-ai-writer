@@ -178,7 +178,12 @@ export function ArticlesPage() {
       {!rows.length ? (
         <Empty title="No articles" body="Completed jobs land here with a Ghost ledger, downloaded photos, and internal links." />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-line bg-elev">
+        // `overflow-clip`, not `overflow-hidden`: hidden makes this card the
+        // scrollport for the sticky group headers below, so their `top-14`
+        // (meant to clear the app bar) was measured from the card's own top edge
+        // and pushed each group header 23px down over its first row. Clip keeps
+        // the rounded corners without creating a scroll container.
+        <div className="overflow-clip rounded-xl border border-line bg-elev">
           <div className="flex items-center gap-2.5 border-b border-line bg-surface px-4 py-2 text-[10px] font-medium uppercase tracking-[0.12em] text-faint">
             <span aria-hidden="true" className="w-3.5 shrink-0" />
             <span className="hidden w-16 shrink-0 sm:inline">ID</span>

@@ -540,10 +540,10 @@ html[data-theme="paper"] {
   --sp-bg: #f7f3ea;
   --sp-card: #fffdf8;
   --sp-ink: #1b1813;
-  --sp-muted: #5b5449;
-  --sp-faint: #8a8171;
+  --sp-muted: #544c40;
+  --sp-faint: #6b6353;
   --sp-line: #e4dac6;
-  --sp-accent: #8a5a12;
+  --sp-accent: #7d4f0b;
   color-scheme: light;
   background: var(--sp-bg);
   color: var(--sp-ink);
@@ -603,4 +603,76 @@ html[data-theme="paper"] {
   .toast-countdown {
     animation: none;
   }
+}
+
+/*
+ * The preview is the published article, so it reads with the site's paper
+ * palette — not the studio's. `.reading-prose` was written against the dark UI
+ * tokens (--color-muted, --color-line, --color-elev), so inside the beige
+ * surface every heading, table header and border came out in a light grey-blue
+ * chosen to sit on #0d1015. Long-form reading wants one ink, one paper, and a
+ * heading scale you can scan: these rules re-point the reading styles at the
+ * site tokens and keep the published stylesheet's typography byte-for-byte in
+ * step (Rule 7b asserts both palettes agree).
+ */
+/* The studio sets a display face on headings; inside the preview the headline is
+   the published page's headline, and the published page is set in the reading
+   face end to end. */
+.site-surface :is(h1, h2, h3, h4, h5, h6) {
+  font-family: "Newsreader", Georgia, "Iowan Old Style", serif;
+}
+.site-surface .reading-prose {
+  max-width: 68ch;
+  font-size: 19px;
+  line-height: 1.75;
+  color: var(--sp-ink);
+}
+.site-surface .reading-prose :is(h1, h2, h3, h4) {
+  font-family: inherit;
+  font-weight: 600;
+  line-height: 1.24;
+  letter-spacing: -0.005em;
+  color: var(--sp-ink);
+  text-transform: none;
+}
+.site-surface .reading-prose h2 { font-size: 30px; margin-block: 38px 12px; }
+.site-surface .reading-prose h3 { font-size: 22px; margin-block: 30px 10px; }
+.site-surface .reading-prose h4 { font-size: 19px; margin-block: 24px 8px; }
+.site-surface .reading-prose a { color: var(--sp-accent); text-decoration: underline; text-underline-offset: 3px; }
+.site-surface .reading-prose strong { color: var(--sp-ink); font-weight: 700; }
+.site-surface .reading-prose :is(th, td) { border-color: var(--sp-line); }
+.site-surface .reading-prose thead th {
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sp-ink);
+  background: #efe6d2;
+}
+.site-surface .reading-prose tbody tr:nth-child(even) td { background: #faf5ea; }
+.site-surface .reading-prose tbody tr:hover { background: transparent; }
+.site-surface .reading-prose blockquote {
+  border-left-color: var(--sp-line);
+  background: var(--sp-card);
+  color: var(--sp-muted);
+}
+.site-surface .reading-prose pre { background: #f4efe3; border-color: var(--sp-line); }
+.site-surface .reading-prose code { background: #efe6d2; color: var(--sp-ink); }
+.site-surface .reading-prose figure.code-block figcaption {
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sp-muted);
+}
+.site-surface .reading-prose hr { border-top-color: var(--sp-line); }
+.site-surface .reading-prose del { color: var(--sp-muted); }
+.site-surface .reading-prose aside.callout { border-color: var(--sp-line); background: var(--sp-card); }
+.site-surface .reading-prose aside.callout .callout-title {
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sp-ink);
 }
