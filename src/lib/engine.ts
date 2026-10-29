@@ -971,6 +971,26 @@ export function localInventoryGhost(ghost: Site["ghost"], articles: Article[], s
   };
 }
 
+const STUDIO_CORPUS_NOTE =
+  "Ghost was not read, so the duplicate gate used this studio's own articles — sync the inventory for the full picture.";
+
+/**
+ * The corpus is an inventory of what is already on the site. When Ghost cannot
+ * supply it — not connected, no key, first run on a fresh workspace — the
+ * studio's own articles do, so a run is never refused for want of a read the
+ * operator cannot perform from the page they are on.
+ */
+export function completeCorpusFromStudio(data: Persisted, siteId: string, now: number): Persisted {
+  return {
+    ...data,
+    sites: data.sites.map((site) =>
+      site.id !== siteId || site.ghost.corpus === "COMPLETE"
+        ? site
+        : { ...site, ghost: localInventoryGhost(site.ghost, data.articles, site.id, now) },
+    ),
+  };
+}
+
 function makeJob(partial: Omit<Job, "stages" | "stageIndex" | "shots" | "tokens" | "costUsd" | "status"> & { status?: Job["status"] }): Job {
   return {
     ...partial,
@@ -1004,8 +1024,17 @@ export async function submitKeywords(
   // The corpus is the real dependency: a run needs something to check keywords
   // against. A Ghost that is not connected only means the publish stage will
   // hold the article instead of pushing it, so it must not block the writing.
-  if (site.ghost.corpus === "EMPTY") return { data, error: "Corpus is EMPTY. Sync inventory before a run, even if the site has zero posts." };
+  // The corpus answers one question: what is already on this site. A fresh
+  // workspace, or one whose Ghost has no key, has never read Ghost and sits
+  // EMPTY — and every run was then refused behind a state the operator cannot
+  // change from the page they are on. The studio's own articles answer that
+  // question, so complete the corpus from them and carry on, saying so.
   if (site.ghost.corpus === "SYNCING") return { data, error: "Inventory sync is still running." };
+  let corpusFromStudio = false;
+  if (site.ghost.corpus !== "COMPLETE") {
+    corpusFromStudio = true;
+    data = completeCorpusFromStudio(data, site.id, input.now);
+  }
   const lines = input.lines
     .split("\n")
     .map((l) => l.trim())
@@ -1149,8 +1178,8 @@ export async function submitKeywords(
   const queuedCount = jobs.filter((job) => job.status === "queued").length;
   const heldCount = jobs.filter((job) => job.status === "review-held").length;
   next.notice = {
-    tone: refused.length || heldCount ? "warn" : "ok",
-    text: `Run started: ${queuedCount} keywords queued.${refused.length ? ` ${refused.length} keywords refused by the duplicate gate.` : ""}${heldCount ? ` ${heldCount} held for review.` : ""}`,
+    tone: refused.length || heldCount || corpusFromStudio ? "warn" : "ok",
+    text: `Run started: ${queuedCount} keywords queued.${refused.length ? ` ${refused.length} keywords refused by the duplicate gate.` : ""}${heldCount ? ` ${heldCount} held for review.` : ""}${corpusFromStudio ? ` ${STUDIO_CORPUS_NOTE}` : ""}`,
   };
   return { data: next, runId };
 }
@@ -1391,7 +1420,9 @@ export async function queuePlan(
   const site = data.sites.find((s) => s.id === plan.siteId);
   if (!site) return { data, error: "Website missing." };
   // Queueing needs an inventory to gate the clusters against, not a live Ghost.
-  if (site.ghost.corpus !== "COMPLETE") return { data, error: "Sync inventory first. Runs are refused while the corpus is EMPTY." };
+  // A site that never read Ghost still has one: its own articles.
+  const corpusFromStudio = site.ghost.corpus !== "COMPLETE";
+  if (corpusFromStudio) data = completeCorpusFromStudio(data, site.id, now);
   const included = plan.clusters.filter((c) => !c.excluded);
   if (included.length < 2) return { data, error: "Keep at least two clusters. The pillar needs real pages to link to." };
   const preferred = opts?.modelKeyId && opts.modelKeyId !== "default" ? opts.modelKeyId : site.voice.modelKeyId;
@@ -1471,8 +1502,8 @@ export async function queuePlan(
   log(next, p.siteId, "ok", `Topic plan queued · clusters first · pillar waits · ${p.topic}`, now);
   const queuedTopics = clusterJobs.filter((job) => job.status === "queued").length;
   next.notice = {
-    tone: "ok",
-    text: `Queued ${queuedTopics} cluster topics, then the pillar. Clusters write first.`,
+    tone: corpusFromStudio ? "warn" : "ok",
+    text: `Queued ${queuedTopics} cluster topics, then the pillar. Clusters write first.${corpusFromStudio ? ` ${STUDIO_CORPUS_NOTE}` : ""}`,
   };
   return { data: next, runId };
 }

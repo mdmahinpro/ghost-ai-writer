@@ -468,6 +468,22 @@ test("a topic plan queues its clusters instead of refusing each one as a duplica
   assert.equal(queued.data.plans[0]!.status, "queued");
 });
 
+test("a topic plan queues on a workspace that never synced its inventory", async () => {
+  // The plan page has no sync control, so refusing here left the operator with a
+  // plan they could not run and an instruction they could not follow from where
+  // they stood. The corpus is only "what is already on this site", and the
+  // studio's own articles answer that.
+  const fresh = site({
+    ghost: { ...site().ghost, mode: "off", status: "disconnected", corpus: "EMPTY", inventory: [] },
+  });
+  const data = fixture({ sites: [fresh], plans: [topicPlan()] });
+  const queued = await queuePlan(data, "p1", 1000, { publishMode: "draft" });
+  assert.equal(queued.error, undefined, `queueing must not be refused: ${queued.error ?? ""}`);
+  assert.equal(queued.data.jobs.filter((job) => job.runId === queued.runId).length, 4);
+  assert.equal(queued.data.sites[0]!.ghost.corpus, "COMPLETE", "the corpus completes from the studio's own articles");
+  assert.match(queued.data.notice?.text ?? "", /Ghost was not read/);
+});
+
 test("a plan cluster that matches a page the site already carries is still refused", async () => {
   // The guard has to keep working: only the plan's own entries are dropped from
   // the corpus, not the articles the site already published.
@@ -499,8 +515,11 @@ test("a run is refused by an empty corpus, not by a Ghost that is merely disconn
   assert.equal(intake.error, undefined, `a broken Ghost connection must not block writing: ${intake.error ?? ""}`);
   assert.equal(intake.data.jobs.length, 1);
 
+  // A fresh workspace has never read Ghost, so its corpus sits EMPTY. Refusing
+  // there blocked the run behind a sync the operator cannot perform from the
+  // page they are on; the studio's own articles answer the same question.
   const empty = fixture({ sites: [site({ ghost: { ...broken, corpus: "EMPTY" } })] });
-  const refused = await submitKeywords(empty, {
+  const studioOnly = await submitKeywords(empty, {
     siteId: "s1",
     lines: "how to keep research notes that survive week three",
     publishMode: "draft",
@@ -508,5 +527,13 @@ test("a run is refused by an empty corpus, not by a Ghost that is merely disconn
     allowVariants: false,
     now: 1_000_000,
   });
-  assert.match(refused.error ?? "", /Corpus is EMPTY/);
+  assert.equal(
+    studioOnly.error,
+    undefined,
+    `an EMPTY corpus must complete from the studio's own articles: ${studioOnly.error ?? ""}`,
+  );
+  assert.equal(studioOnly.data.jobs.length, 1);
+  assert.equal(studioOnly.data.sites[0].ghost.corpus, "COMPLETE");
+  assert.equal(studioOnly.data.sites[0].ghost.inventorySource, "local-demo");
+  assert.match(studioOnly.data.notice?.text ?? "", /Ghost was not read/);
 });
