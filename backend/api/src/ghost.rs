@@ -356,6 +356,30 @@ pub async fn push_post(
 mod tests {
     use super::*;
 
+    /// The two clients must differ in exactly one way: whether an untrusted
+    /// certificate is accepted. Ignored by default because it needs the live
+    /// host, run it explicitly with `--ignored` when touching the TLS path.
+    #[tokio::test]
+    #[ignore = "network: needs a host serving an untrusted certificate"]
+    async fn an_accepted_certificate_reaches_ghost() {
+        let url = "https://cms.joovlin.com/ghost/api/admin/posts/?limit=1&fields=id";
+        let strict = client().get(url).send().await;
+        assert!(
+            strict.is_err(),
+            "the strict client must refuse an untrusted certificate"
+        );
+        let accepting = client_with_trust(true).get(url).send().await;
+        let response = accepting.expect("accepting the certificate must reach the host");
+        // Ghost answers 403 without a key; any HTTP status proves the handshake
+        // completed and the request actually arrived.
+        assert!(
+            response.status().is_success() || response.status().is_client_error(),
+            "expected an HTTP answer, got {}",
+            response.status()
+        );
+    }
+
+
     /// A followed 3xx would deliver the Authorization header to whatever host
     /// the redirect names. This exercises it for real: an axum server answers
     /// 302 and the redirect target records whether it was ever reached.
