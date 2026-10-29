@@ -1497,7 +1497,12 @@ export async function queuePlan(
     createdAt: now,
     status: "queued",
   });
-  p.status = "queued";
+  // The run was created as "queued" and only `advanceJob` ever re-rolled it —
+  // but a plan whose clusters are all refused never advances one, so the page
+  // sat on "queued" forever with nothing in flight and no control that helped.
+  const planRun = next.runs.find((run) => run.id === runId);
+  if (planRun) planRun.status = rollup([...clusterJobs, pillar]);
+  p.status = planRun && planRun.status === "failed" ? "failed" : "queued";
   p.runId = runId;
   log(next, p.siteId, "ok", `Topic plan queued · clusters first · pillar waits · ${p.topic}`, now);
   const queuedTopics = clusterJobs.filter((job) => job.status === "queued").length;

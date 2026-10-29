@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DEFAULT_LIMITS, type AiKey, type Article, type Job, type Persisted, type Site, type TopicPlan } from "./types.ts";
 import { AD_CODE_LIMIT, defaultAdSlots } from "./types.ts";
 import { buildCalendar, migrateCalendar, publishSlots } from "./operator.ts";
-import { localInventoryGhost, manualBuild, packageDeploy, queuePlan, resolveRouteDiff, routeDiffFor, submitKeywords } from "./engine.ts";
+import { localInventoryGhost, manualBuild, packageDeploy, queuePlan, resolveRouteDiff, rollup, routeDiffFor, submitKeywords } from "./engine.ts";
 import { adCodeWithinLimit, adSlotHtml, adsConfigHash, injectInlineAd, inlineAdTargetOk, staticFiles } from "./static-site.ts";
 import { reweaveDecision, reweavePutBody, withEdgeState } from "./reweave.ts";
 import { mergeSnapshot } from "./server-pipeline-merge.ts";
@@ -482,6 +482,30 @@ test("a topic plan queues on a workspace that never synced its inventory", async
   assert.equal(queued.data.jobs.filter((job) => job.runId === queued.runId).length, 4);
   assert.equal(queued.data.sites[0]!.ghost.corpus, "COMPLETE", "the corpus completes from the studio's own articles");
   assert.match(queued.data.notice?.text ?? "", /Ghost was not read/);
+});
+
+test("a plan whose clusters are all refused finishes instead of sitting queued forever", async () => {
+  // Every cluster matching a page the site already carries is a legitimate
+  // refusal, but no job ever advances, so the run kept the "queued" status it
+  // was created with: 0 in flight, 8 refused, and a page that never settles.
+  const carried = [
+    article("cluster-one-explains-alpha", { title: "Cluster one explains alpha", keyword: "cluster one explains alpha" }),
+    article("cluster-two-explains-beta", { title: "Cluster two explains beta", keyword: "cluster two explains beta" }),
+    article("cluster-three-explains-gamma", { title: "Cluster three explains gamma", keyword: "cluster three explains gamma" }),
+    article("pillar-on-immigration-clocks", { title: "Pillar on immigration clocks", keyword: "pillar on immigration clocks" }),
+  ];
+  const data = fixture({ articles: carried, plans: [topicPlan()] });
+  const queued = await queuePlan(data, "p1", 1000, { publishMode: "draft" });
+  assert.equal(queued.error, undefined, `queueing itself must not fail: ${queued.error ?? ""}`);
+  const jobs = queued.data.jobs.filter((job) => job.runId === queued.runId);
+  assert.ok(jobs.length > 0, "the plan still records its jobs");
+  const live = jobs.filter((job) => job.status === "queued" || job.status === "running");
+  const run = queued.data.runs.find((item) => item.id === queued.runId);
+  // The bug was that the run kept the status it was CREATED with, whatever its
+  // jobs did: eight refusals, nothing in flight, page stuck on "queued". The
+  // invariant is that the run's status is the rollup of its own jobs.
+  assert.equal(run?.status, rollup(jobs), "a run's status must be the rollup of its jobs");
+  if (!live.length) assert.notEqual(run?.status, "queued", "nothing left to do means not queued");
 });
 
 test("a plan cluster that matches a page the site already carries is still refused", async () => {

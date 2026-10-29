@@ -25,7 +25,9 @@ export function SetupGuide() {
   const [topics, setTopics] = useState("");
   const [limit, setLimit] = useState("8");
   const navigate = useNavigate();
-  if (!site || site.setupSkipped || step < 1 || step > 7) return null;
+  // A workspace that is already running is not a new visitor: once Ghost is
+  // connected the guide is telling someone to do what they have done.
+  if (!site || site.setupSkipped || site.ghost.status === "connected" || step < 1 || step > 7) return null;
 
   function go(next: number) {
     setSetup(next);
