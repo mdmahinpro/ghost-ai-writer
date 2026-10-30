@@ -128,9 +128,10 @@ export async function generateDraft(input: {
       ok: false,
       status: 200,
       error:
-        "The model returned no usable draft (fewer than 80 characters). This usually means the " +
-        "answer was cut off by the provider's output limit — raise max_tokens — or the model " +
-        "refused the prompt.",
+        "The model returned no usable draft (fewer than 80 characters). Two causes: the " +
+        "answer was cut off at the provider's output limit, or the model answered with " +
+        "nothing at all — usually a reasoning model spending the whole budget before its " +
+        "first visible token. The article is retried, not lost.",
     };
   }
   return result;

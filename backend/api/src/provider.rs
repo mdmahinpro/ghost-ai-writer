@@ -173,6 +173,11 @@ pub enum EngineError {
     /// is a larger `max_tokens`, and the message needs to say so instead of
     /// surfacing as a JSON parse error.
     Truncated { tokens_out: i64 },
+    /// The provider answered 200 with no text at all. Distinct from `Truncated`
+    /// (which has an answer, cut short) and from `Malformed` (which has one in
+    /// the wrong shape): here there is nothing to repair, and the job is worth
+    /// running again rather than reporting as a broken draft.
+    Empty,
 }
 
 impl std::fmt::Display for EngineError {
@@ -187,6 +192,12 @@ impl std::fmt::Display for EngineError {
                  was cut off mid-JSON. Raise this provider's max_tokens (a 2,000-word draft needs \
                  about 6,000) and run the job again."
             ),
+            EngineError::Empty => write!(
+                f,
+                "the provider answered with no text at all — not a cut-off answer, an empty one. \
+                 That is usually a reasoning model spending its whole output budget before the \
+                 first visible token, a rejected prompt shape, or a key with no quota left."
+            ),
         }
     }
 }
@@ -197,6 +208,10 @@ impl EngineError {
     pub fn retryable(&self) -> bool {
         match self {
             EngineError::Transport(_) => true,
+            // An empty answer is not a defect in the request: the same call
+            // often answers on a second attempt, and the attempt costs only the
+            // prompt.
+            EngineError::Empty => true,
             EngineError::Http(code, _) => *code == 429 || *code >= 500,
             _ => false,
         }
@@ -610,6 +625,12 @@ impl HttpEngine {
             .first()
             .and_then(|c| c.message.content.clone())
             .ok_or_else(|| EngineError::Malformed("empty choices[0].message.content".into()))?;
+        // A 200 with no text is not a draft, and it used to pass as one: the
+        // stage stored a stub, the caller reported "fewer than 80 characters",
+        // and the operator was told to raise a budget that was never the issue.
+        if text.trim().is_empty() {
+            return Err(EngineError::Empty);
+        }
 
         // A `length` finish means the answer was cut off at max_tokens. For a
         // JSON stage that yields a truncated body, which surfaces downstream as
@@ -798,6 +819,7 @@ pub fn safe_message(e: &EngineError) -> String {
         EngineError::Http(code, _) => format!("provider returned http {code}"),
         EngineError::Transport(_) => "provider unreachable".to_string(),
         EngineError::Malformed(_) => "provider returned an unexpected response".to_string(),
+        EngineError::Empty => "the provider returned no text at all for this call".to_string(),
         // Not sensitive: it contains no provider body and naming the real cause
         // is the whole point, since "invalid JSON" sent people looking for a
         // format bug when the answer had simply been cut off at the budget.
@@ -1150,6 +1172,23 @@ pub async fn list_providers(
 
 #[cfg(test)]
 mod tests {
+
+    /// An empty answer is not a broken request: it must be retried, and the
+    /// message must not send the operator to raise a budget that was not the
+    /// problem. This is the failure the run page reported as "fewer than 80
+    /// characters ... raise max_tokens".
+    #[test]
+    fn an_empty_answer_is_retryable_and_named_for_what_it_is() {
+        let empty = EngineError::Empty;
+        assert!(empty.retryable(), "an empty answer must be retried");
+        let message = safe_message(&empty);
+        assert!(message.contains("no text"), "got: {message}");
+        assert!(
+            !message.contains("max_tokens"),
+            "an empty answer must not be reported as a budget problem: {message}"
+        );
+    }
+
     use super::*;
 
     #[test]
